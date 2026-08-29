@@ -13,6 +13,7 @@ import { buildPayload, pruneSteps } from '../src/features/mcp/send.js';
 import { exportToJSON } from '../src/core/export/json.js';
 import { CAPPED_ID } from '../src/core/react/table.js';
 import type { ComponentSource, FlowReact, Step } from '../src/shared/types.js';
+import { pos1 } from '../src/core/react/positions.js';
 
 const NOW = 1_700_000_000_000;
 
@@ -38,7 +39,7 @@ const resolved = (name: string, source: string): ComponentSource => ({
   status: 'resolved',
   via: 'bundle-search',
   source,
-  line: 34,
+  line: pos1(34),
 });
 
 const react = (components: Record<string, ComponentSource>): FlowReact => ({

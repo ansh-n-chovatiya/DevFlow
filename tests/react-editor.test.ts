@@ -15,6 +15,7 @@ import {
   isEditorScheme,
   toAbsolutePath,
 } from '../src/core/react/editor.js';
+import { pos0, pos1 } from '../src/core/react/positions.js';
 import type { ComponentSource } from '../src/shared/types.js';
 
 const VSCODE = EDITORS.vscode.template;
@@ -50,24 +51,36 @@ describe('toAbsolutePath', () => {
 });
 
 describe('buildEditorUrl', () => {
-  it('treats the stored line as 1-based', () => {
-    // The divergence from react-source-locator: source-map positions were
-    // converted once at the edge, so {line1} is the number as stored.
-    const url = buildEditorUrl(VSCODE, { path: '/repo/src/Cart.tsx', line: 34, column: 3 });
+  it('treats the stored line as 1-based, and takes nothing else', () => {
+    // D1. The two copies of this file meant opposite things by {line1}: one was
+    // handed a 0-based map position and added one here, the other was handed a
+    // number already converted at the source-map edge. `Pos1` is what makes the
+    // wrong one a compile error rather than a file that opens one line off.
+    const url = buildEditorUrl(VSCODE, {
+      path: '/repo/src/Cart.tsx',
+      line: pos1(34),
+      column: pos1(3),
+    });
     expect(url).toBe('vscode://file//repo/src/Cart.tsx:34:3');
+
+    // @ts-expect-error a raw number has no base, and that is the whole point
+    buildEditorUrl(VSCODE, { path: '/repo/src/Cart.tsx', line: 34 });
   });
 
   it('offers 0-based placeholders one lower', () => {
     const url = buildEditorUrl('ed://{path}#L{line}C{col}', {
       path: '/repo/a.tsx',
-      line: 34,
-      column: 3,
+      line: pos1(34),
+      column: pos1(3),
     });
     expect(url).toBe('ed:///repo/a.tsx#L33C2');
   });
 
-  it('never produces a negative position from a line the map gave as 0', () => {
-    const url = buildEditorUrl('ed://{path}#L{line}', { path: '/repo/a.tsx', line: 0 });
+  it('never produces a negative position, whatever arrives', () => {
+    // `pos1` floors at 1 for exactly this reason, so the 0-based placeholder
+    // floors at 0. A map that reported line 0 and a stored value that was never
+    // converted both end up here, and neither can print `-1`.
+    const url = buildEditorUrl('ed://{path}#L{line}', { path: '/repo/a.tsx', line: pos1(0) });
     expect(url).toBe('ed:///repo/a.tsx#L0');
   });
 
@@ -77,7 +90,7 @@ describe('buildEditorUrl', () => {
   });
 
   it('is null with no template, which is what an empty custom field means', () => {
-    expect(buildEditorUrl('', { path: '/repo/a.tsx', line: 1 })).toBeNull();
+    expect(buildEditorUrl('', { path: '/repo/a.tsx', line: pos1(1) })).toBeNull();
   });
 
   it('refuses a template that would open a web page', () => {
@@ -123,8 +136,8 @@ describe('componentEditorUrl', () => {
     name: 'Cart',
     status: 'resolved',
     source: 'src/Cart.tsx',
-    line: 34,
-    column: 2,
+    line: pos1(34),
+    column: pos1(2),
   };
 
   it('links a resolved component to its file and line', () => {
@@ -150,7 +163,7 @@ describe('componentEditorUrl', () => {
     const compiled: ComponentSource = {
       name: 'Cart',
       status: 'compiled-only',
-      compiled: { url: 'https://shop.test/app.js', line: 1, column: 245 },
+      compiled: { url: 'https://shop.test/app.js', line: pos0(1), column: pos0(245) },
     };
     expect(componentEditorUrl(compiled, link)).toBeNull();
   });

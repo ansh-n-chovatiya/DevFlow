@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { clearResolverCaches, resolvePending, type ResolveDeps } from '../src/features/react/resolver.js';
 import type { ComponentNeedle, ComponentSource } from '../src/shared/types.js';
 import { sourceMapJson } from './helpers/sourcemap-fixture.js';
+import { pos1 } from '../src/core/react/positions.js';
 
 const PAGE = 'https://shop.test/products/42';
 const BUNDLE_URL = 'https://shop.test/assets/app.js';
@@ -327,7 +328,7 @@ describe('resolvePending', () => {
       status: 'resolved',
       via: 'debug-source',
       source: 'src/Cart.tsx',
-      line: 12,
+      line: pos1(12),
     };
 
     const result = await resolvePending(

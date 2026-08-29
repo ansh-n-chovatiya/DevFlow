@@ -3,11 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   collectChain,
   findNearestComponentFiber,
+  getAllDOMNodes,
+  getComponentFn,
   getDisplayName,
   getFiber,
+  getFirstDOMNode,
   hasReactRoot,
   interactionTarget,
-  unwrapSettledLazy,
+  unwrapLazy,
   type Fiber,
 } from '../src/core/react/fiber.js';
 import { MAX_COMPONENT_CHAIN } from '../src/shared/constants.js';
@@ -62,21 +65,99 @@ describe('getDisplayName', () => {
   });
 });
 
-describe('unwrapSettledLazy', () => {
+describe('unwrapLazy, and D2', () => {
   /*
-   * The whole reason this diverges from react-source-locator: calling `_init`
-   * can start a dynamic import, which would mean recording a page changes what
-   * that page loads. There is no `force` flag here precisely so no call site can.
+   * The divergence the merged core had to resolve. Calling `_init` can start a
+   * dynamic import: on a pick that is what the user asked for, and on the
+   * recorder's capture path it means the act of recording changes what the page
+   * loads. One extension always forced and the other could not, so `force` is
+   * now required with no default and every call site says which it is.
    */
-  it('never initialises a payload that has not settled', () => {
+  it('never initialises a payload that has not settled, unless forced', () => {
     const init = vi.fn();
-    expect(unwrapSettledLazy({ _payload: { _status: 0 }, _init: init } as never)).toBeNull();
+    const lazy = { _payload: { _status: 0 }, _init: init };
+
+    expect(unwrapLazy(lazy as never, { force: false })).toBeNull();
     expect(init).not.toHaveBeenCalled();
+  });
+
+  it('initialises an unsettled payload when a pick asks it to', () => {
+    const Modal = function Modal() {};
+    const init = vi.fn(() => Modal);
+
+    expect(unwrapLazy({ _payload: { _status: 0 }, _init: init }, { force: true })).toBe(Modal);
+    expect(init).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a still-pending payload as no function rather than throwing', () => {
+    // `_init` throws the promise React suspends on. That is a fact about the
+    // page — the chunk has not arrived — not a failure of the walk.
+    const init = vi.fn(() => {
+      throw new Error('pending');
+    });
+    expect(unwrapLazy({ _payload: { _status: 0 }, _init: init }, { force: true })).toBeNull();
   });
 
   it('reads a settled payload, including a module default export', () => {
     const Modal = function Modal() {};
-    expect(unwrapSettledLazy({ _payload: { _status: 1, _result: { default: Modal } } })).toBe(Modal);
+    expect(unwrapLazy({ _payload: { _status: 1, _result: { default: Modal } } }, { force: false })).toBe(
+      Modal,
+    );
+  });
+
+  it('forces through getComponentFn only when told to', () => {
+    const init = vi.fn(() => function Modal() {});
+    const f = fiber({ _payload: { _status: 0 }, _init: init });
+
+    expect(getComponentFn(f, { force: false })).toBeNull();
+    expect(init).not.toHaveBeenCalled();
+
+    expect(getComponentFn(f, { force: true })).toBeTypeOf('function');
+    expect(init).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not force merely to put a name on screen', () => {
+    // `getDisplayName` takes no options on purpose: naming a component is not a
+    // reason to make the page fetch a chunk, whatever the caller of
+    // `getComponentFn` decided a moment earlier.
+    const init = vi.fn();
+    expect(getDisplayName(fiber({ _payload: { _status: 0 }, _init: init }))).toBe('Lazy(loading…)');
+    expect(init).not.toHaveBeenCalled();
+  });
+});
+
+describe('the capture path never forces', () => {
+  /*
+   * D2's standing proof, and the one that matters: not that `force: false`
+   * exists, but that the path a recording actually takes passes it. A flow has
+   * to describe the session it claims to, and a lazy chunk fetched because
+   * somebody clicked while recording is a page load the user never caused.
+   */
+  it('walks a chain past an unsettled lazy component without initialising it', () => {
+    const init = vi.fn(() => function Modal() {});
+
+    document.body.innerHTML = '<div id="host"></div>';
+    const host = document.getElementById('host')!;
+    const app = fiber(function App() {});
+    const lazy = fiber({ _payload: { _status: 0 }, _init: init }, app);
+    const inner = fiber(function Modal() {}, lazy);
+    attach(host, fiber('div', inner));
+
+    const { entries } = collectChain(host);
+
+    expect(init).not.toHaveBeenCalled();
+    // Still reported, by name, with no function to build a needle from.
+    expect(entries.map((e) => e.name)).toEqual(['App', 'Lazy(loading…)', 'Modal']);
+    expect(entries[1].fn).toBeNull();
+  });
+
+  it('does not force while searching for the nearest component either', () => {
+    const init = vi.fn(() => function Modal() {});
+    document.body.innerHTML = '<div id="host"><span id="icon"></span></div>';
+    attach(document.getElementById('host')!, fiber({ _payload: { _status: 0 }, _init: init }));
+
+    findNearestComponentFiber(document.getElementById('icon')!);
+    expect(init).not.toHaveBeenCalled();
   });
 });
 
@@ -94,6 +175,78 @@ describe('findNearestComponentFiber', () => {
   it('is null when nothing above the element is React', () => {
     document.body.innerHTML = '<div><span id="icon"></span></div>';
     expect(findNearestComponentFiber(document.getElementById('icon')!)).toBeNull();
+  });
+
+  it('answers a repeat from the caller\'s cache without walking again', () => {
+    // The highlight re-runs this on every animation frame over the same nodes.
+    // The cache is the caller's because `core/` holds no module state.
+    document.body.innerHTML = '<div id="host"><span id="icon"></span></div>';
+    const host = document.getElementById('host')!;
+    const icon = document.getElementById('icon')!;
+    const cart = fiber(function Cart() {});
+    attach(host, fiber('div', cart));
+
+    const cache = new WeakMap<Element, Fiber | null>();
+    expect(findNearestComponentFiber(icon, undefined, cache)).toBe(cart);
+
+    // Detaching the fiber would change the answer, so a second call that still
+    // returns it can only have come from the cache.
+    delete (host as unknown as Record<string, Fiber>)['__reactFiber$k3n1p'];
+    expect(findNearestComponentFiber(icon, undefined, cache)).toBe(cart);
+    expect(findNearestComponentFiber(icon)).toBeNull();
+  });
+
+  it('caches a miss too, so a non-React subtree is not re-walked', () => {
+    document.body.innerHTML = '<div><span id="icon"></span></div>';
+    const icon = document.getElementById('icon')!;
+    const cache = new WeakMap<Element, Fiber | null>();
+
+    expect(findNearestComponentFiber(icon, undefined, cache)).toBeNull();
+    expect(cache.get(icon)).toBeNull();
+  });
+});
+
+describe('host nodes, which a highlight is sized from', () => {
+  /** A fiber whose stateNode is a real element, as React leaves a host fiber. */
+  function host(el: Element, child: Fiber | null = null, sibling: Fiber | null = null): Fiber {
+    return { type: el.tagName.toLowerCase(), return: null, child, sibling, stateNode: el };
+  }
+
+  it('takes the component\'s own node when it has one', () => {
+    const el = document.createElement('div');
+    expect(getFirstDOMNode(host(el))).toBe(el);
+  });
+
+  it('finds the nearest host node below a component that renders one', () => {
+    const inner = document.createElement('span');
+    const component = fiber(function Cart() {});
+    component.child = host(inner);
+
+    expect(getFirstDOMNode(component)).toBe(inner);
+  });
+
+  it('is null for a component that rendered nothing at all', () => {
+    expect(getFirstDOMNode(fiber(function Empty() {}))).toBeNull();
+  });
+
+  it('collects every top-level node of a fragment, not just the first', () => {
+    // The case the single-node version gets wrong: a component that returns
+    // siblings would be highlighted as though it were only its first child.
+    const a = document.createElement('p');
+    const b = document.createElement('p');
+    const component = fiber(function Rows() {});
+    component.child = host(a, null, host(b));
+
+    expect(getAllDOMNodes(component)).toEqual([a, b]);
+  });
+
+  it('stops at the limit rather than outlining a thousand rows', () => {
+    let first: Fiber | null = null;
+    for (let i = 0; i < 10; i++) first = host(document.createElement('li'), null, first);
+    const component = fiber(function List() {});
+    component.child = first;
+
+    expect(getAllDOMNodes(component, 3)).toHaveLength(3);
   });
 });
 

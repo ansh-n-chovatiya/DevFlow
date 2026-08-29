@@ -1,23 +1,35 @@
 /**
- * Turning a recorded source path into a link that opens the file.
+ * Turning a resolved source path into a link that opens the file.
  *
- * Ported from react-source-locator `src/panel/settings.ts` @ 6eb7a30 — the
- * `EDITORS` table, `toAbsolutePath` and `buildEditorUrl`. Divergences:
+ * One editor table and one URL builder, where there were two. They disagreed
+ * about the only thing that mattered:
  *
- *   - **Lines arrive 1-based.** `ComponentSource.line` was converted once at
- *     the source-map edge, so `{line1}` is the number as stored and
- *     `{line}` is one less. Upstream takes 0-based positions and adds. Getting
- *     this backwards opens the file one line off, every time, silently.
- *   - **No `managed` policy layer.** Upstream lets an administrator push an
- *     editor org-wide; a recorder has no such deployment story, and the setting
- *     lives in the same `chrome.storage.sync` shape as everything else here.
- *   - **The template is validated, not just filled.** The URL is handed to
- *     `chrome.tabs.create`, so a template that produced `https://…` would make
- *     a settings field into a way to open arbitrary pages.
+ *   **D1 · `{line1}` is the line as stored.** `EditorTarget` accepts `Pos1` and
+ *   nothing else. One copy took 0-based positions and added one while filling
+ *   the template; the other converted once at the source-map edge and filled the
+ *   number as it stood. Same placeholder, same file name, opposite meanings —
+ *   and copying either version into the other opened every file one line off,
+ *   silently, forever. `lookupOriginal` hands back `Pos0` now and `toOneBased`
+ *   is applied once, at whichever surface is about to show or link the number.
+ *   Handing a `Pos0` to this is a compile error, which is the guarantee a
+ *   `base: 0 | 1` argument could never have given.
+ *
+ *   **The template is validated, not just filled.** The URL is handed to
+ *   `chrome.tabs.create`, so a template that produced `https://…` would make a
+ *   settings field into a way to open arbitrary pages. The other copy filled the
+ *   template and returned whatever came out; `isEditorScheme` is the check that
+ *   replaces that.
+ *
+ * The managed-policy layer that lets an administrator push an editor and project
+ * root org-wide is not lost with the second copy — it comes back in
+ * `features/settings/` (D7), which is where reading `chrome.storage.managed` is
+ * allowed. It could never have lived here: `core/` is bundled into a Node
+ * process with no `chrome` object at all.
  *
  * Pure — no DOM, no Chrome.
  */
 
+import { pos1, type Pos1 } from './positions.js';
 import type { ComponentSource } from '../../shared/types.js';
 
 /** `{path}` is absolute; `{line}`/`{col}` are 0-based, `{line1}`/`{col1}` are 1-based. */
@@ -27,8 +39,13 @@ export interface EditorDefinition {
 }
 
 /**
- * Kept in step with the sibling extension's table, in the same order, so that
- * someone who has both does not have to learn two lists.
+ * The editors, in the order the settings screen offers them.
+ *
+ * This was two tables, hand-kept in step and in the same order so that someone
+ * running both extensions did not have to learn two lists. They still matched
+ * entry for entry when the merge took them, which is why nothing in this file
+ * reconciles anything — it is one of the two copies, kept, and the other
+ * deleted.
  */
 export const EDITORS: Record<string, EditorDefinition> = {
   vscode: { label: 'VS Code', template: 'vscode://file/{path}:{line1}:{col1}' },
@@ -92,9 +109,13 @@ export function isEditorScheme(url: string): boolean {
 export interface EditorTarget {
   /** Absolute local path. */
   path: string;
-  /** 1-based, as stored on `ComponentSource`. */
-  line?: number;
-  column?: number;
+  /**
+   * 1-based, as stored on `ComponentSource` — and typed that way, not just
+   * documented. This is the D1 boundary: a source-map position reaches it only
+   * through `toOneBased`.
+   */
+  line?: Pos1;
+  column?: Pos1;
 }
 
 /**
@@ -108,8 +129,10 @@ export interface EditorTarget {
 export function buildEditorUrl(template: string, target: EditorTarget): string | null {
   if (!template) return null;
 
-  const line = target.line ?? 1;
-  const column = target.column ?? 1;
+  // `pos1` and not the literal `1`: an assertion, not arithmetic, and the one
+  // spelling that says which base the fallback is in.
+  const line = target.line ?? pos1(1);
+  const column = target.column ?? pos1(1);
 
   const url = template
     .replace(/\{path\}/g, target.path)

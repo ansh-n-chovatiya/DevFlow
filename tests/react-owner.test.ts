@@ -6,6 +6,7 @@ import {
   isSharedPrimitivePath,
 } from '../src/core/react/classify.js';
 import type { ComponentSource } from '../src/shared/types.js';
+import { pos1 } from '../src/core/react/positions.js';
 
 function resolved(name: string, source: string): ComponentSource {
   return {
@@ -13,7 +14,7 @@ function resolved(name: string, source: string): ComponentSource {
     status: 'resolved',
     via: 'bundle-search',
     source,
-    line: 10,
+    line: pos1(10),
     ...(isDependencyPath(source) ? { dependency: true } : {}),
   };
 }

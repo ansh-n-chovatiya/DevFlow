@@ -1,28 +1,39 @@
 /**
  * Finding a component's compiled position inside a bundle.
  *
- * Ported from react-source-locator `src/core/bundle-search.ts` @ 314488d, with
- * two divergences:
+ * The one bundle search, and it is handed text rather than fetching any. That is
+ * D4: `src/core/` is bundled into `mcp-server/core.js` for a Node process with
+ * no `chrome` object, so a `fetch` or a `chrome.*` in here fails
+ * `npm run build:mcp` — the purity rule is CI-enforced, not a convention. The
+ * copy that listed the page's resources and loaded them itself is replaced by
+ * `BundleProvider`, which is also what owns the concurrency, size and cache
+ * budgets those loads have to respect. What is left is a function over a string,
+ * which is also what makes it testable with no browser at all.
  *
- *   1. **No resource listing and no fetching.** Upstream asks DevTools for the
- *      page's resources and loads them itself. FlowSnap has no DevTools page, so
- *      the script inventory is collected in the page (`features/react/inventory.ts`)
- *      and the bundle text is fetched by the worker. This module is handed text
- *      and searches it — which also makes it pure, and testable without a browser.
- *   2. **Needle building lives in `needle.ts`**, because it runs in the page on
- *      the click path while this runs in the worker minutes later.
+ * Needle building lives in `needle.ts`, because it runs in the page on the click
+ * path while this runs in the worker, or in the panel, some time afterwards.
+ *
+ * Positions are `Pos0`: a position in a served bundle, which is what
+ * `ComponentSource.compiled` carries and what DevTools' own Sources API takes.
+ * Nothing here ever crosses to a 1-based number — see `positions.ts`.
  *
  * Pure — no DOM, no Chrome, no network.
  */
 
 import { MAX_MATCHES_TRACKED } from '../../shared/constants.js';
 import type { Needle } from './needle.js';
+import { pos0, type Pos0, type Position0 } from './positions.js';
 
-/** Converts a character offset into a 0-based line/column pair. */
-export function offsetToLineColumn(
-  content: string,
-  offset: number,
-): { line: number; column: number } {
+/**
+ * Converts a character offset into a line/column pair.
+ *
+ * 0-based on both axes, and branded so: this is a position in generated code,
+ * and the only two things that ever read one are a source map lookup and
+ * DevTools' Sources panel, both of which are 0-based too. The conversion to
+ * something a person reads happens once, much later, on the *original* position
+ * this one is mapped to.
+ */
+export function offsetToLineColumn(content: string, offset: number): Position0 {
   let line = 0;
   let lineStart = 0;
 
@@ -33,7 +44,7 @@ export function offsetToLineColumn(
     }
   }
 
-  return { line, column: offset - lineStart };
+  return { line: pos0(line), column: pos0(offset - lineStart) };
 }
 
 /** Counts occurrences of `text`, stopping at `cap` so huge bundles stay cheap. */
@@ -55,13 +66,13 @@ export function countOccurrences(content: string, text: string, cap = MAX_MATCHE
 
 export interface BundleHit {
   /**
-   * 0-based position of the function's start in the bundle text — or, when a
-   * body-needle hit could not be walked back to one, of the hit itself. Either
-   * way it is a position *inside* the component's compiled code, which is the
-   * property the source map lookup depends on. See `searchBundle`.
+   * Position of the function's start in the bundle text — or, when a body-needle
+   * hit could not be walked back to one, of the hit itself. Either way it is a
+   * position *inside* the component's compiled code, which is the property the
+   * source map lookup depends on. See `searchBundle`.
    */
-  line: number;
-  column: number;
+  line: Pos0;
+  column: Pos0;
   /** Distinct occurrences in this bundle, capped at `MAX_MATCHES_TRACKED`. */
   matchCount: number;
   /** The needle that hit, so later bundles can be checked for the same text. */

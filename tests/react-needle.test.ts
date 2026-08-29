@@ -1,8 +1,55 @@
 import { describe, expect, it } from 'vitest';
-import { buildNeedle } from '../src/core/react/needle.js';
+import { buildNeedle, needleRejection } from '../src/core/react/needle.js';
 import { MAX_FN_SOURCE_LEN, NEEDLE_BODY_LEN, NEEDLE_HEAD_LEN } from '../src/shared/constants.js';
 
+describe('needleRejection', () => {
+  /*
+   * The two refusals are different facts and the caller says different things
+   * about them, which is why this is a named answer rather than an empty
+   * result. `[native code]` appears in no bundle at all, so searching every
+   * script for it spends a full pass to report "not found" — which reads like a
+   * bug in the search rather than a fact about the function.
+   */
+  it('names native code as the reason, not length', () => {
+    expect(needleRejection('function bound Widget() { [native code] }')).toBe('native');
+  });
+
+  it('names length for a source too short to identify anything', () => {
+    expect(needleRejection('()=>1')).toBe('too-short');
+  });
+
+  it('passes an ordinary component source', () => {
+    expect(needleRejection('function Widget(props){return null}')).toBeNull();
+  });
+});
+
 describe('buildNeedle', () => {
+  it('carries the rejection with the refusal, so the caller needs no second call', () => {
+    const source = 'function bound Widget() { [native code] }';
+    const result = buildNeedle(source);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe(needleRejection(source));
+  });
+
+  it('anchors the head at offset 0, so a hit on it is the function start', () => {
+    const source = 'function Widget(props){return createElement("div",null,props.children)}';
+    const result = buildNeedle(source);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(source.indexOf(result.needle.head)).toBe(0);
+  });
+
+  it('places the body needle exactly at bodyOffset, or hit positions skew', () => {
+    const source = 'function Widget(props){return createElement("div",null,props.children)}';
+    const result = buildNeedle(source);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { body, bodyOffset } = result.needle;
+    expect(body).toBeDefined();
+    expect(source.slice(bodyOffset, bodyOffset! + body!.length)).toBe(body);
+  });
+
   it('takes the head of the source verbatim, so it matches the bundle byte for byte', () => {
     const source = `function Cart(){${'x'.repeat(500)}}`;
     const result = buildNeedle(source);

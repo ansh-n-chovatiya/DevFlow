@@ -18,6 +18,10 @@ describe('offsetToLineColumn', () => {
     expect(offsetToLineColumn('abc\ndef', 6)).toEqual({ line: 1, column: 2 });
   });
 
+  it('lands on the next line for an offset immediately after a newline', () => {
+    expect(offsetToLineColumn('ab\n', 3)).toEqual({ line: 1, column: 0 });
+  });
+
   it('keeps everything on line 0 for a minified bundle', () => {
     expect(offsetToLineColumn('a'.repeat(90_000), 88_214)).toEqual({ line: 0, column: 88_214 });
   });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CAPPED_ID, isAbsolutePath, mergeComponents } from '../src/core/react/table.js';
 import type { CapturedComponent } from '../src/shared/messages.js';
 import type { ComponentNeedle, ComponentSource } from '../src/shared/types.js';
+import { pos1 } from '../src/core/react/positions.js';
 
 function empty(): { table: Record<string, ComponentSource>; needles: Record<string, ComponentNeedle> } {
   return { table: {}, needles: {} };
@@ -33,7 +34,7 @@ describe('mergeComponents', () => {
     const component: CapturedComponent = {
       id: 'dev1',
       name: 'Cart',
-      debugSource: { source: 'src/Cart.tsx', line: 19, column: 3 },
+      debugSource: { source: 'src/Cart.tsx', line: pos1(19), column: pos1(3) },
     };
 
     const result = mergeComponents([component], 'https://app.test', table, needles);
@@ -52,7 +53,7 @@ describe('mergeComponents', () => {
     const component: CapturedComponent = {
       id: 'dev2',
       name: 'App',
-      debugSource: { source: '/Users/me/proj/src/App.tsx', line: 1, column: 1 },
+      debugSource: { source: '/Users/me/proj/src/App.tsx', line: pos1(1), column: pos1(1) },
     };
 
     const result = mergeComponents([component], 'https://app.test', table, needles);
@@ -68,7 +69,7 @@ describe('mergeComponents', () => {
 
   it('never downgrades an entry that already carries an answer', () => {
     const table: Record<string, ComponentSource> = {
-      abc123: { name: 'Cart', status: 'resolved', source: 'src/Cart.tsx', line: 19 },
+      abc123: { name: 'Cart', status: 'resolved', source: 'src/Cart.tsx', line: pos1(19) },
     };
     const result = mergeComponents([withNeedle], 'https://app.test', table, {});
     expect(result.table.abc123.status).toBe('resolved');

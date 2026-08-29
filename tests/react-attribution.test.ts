@@ -11,6 +11,7 @@ import {
 } from '../src/core/react/attribution.js';
 import { CAPPED_ID } from '../src/core/react/table.js';
 import type { ComponentSource, Step } from '../src/shared/types.js';
+import { pos0, pos1 } from '../src/core/react/positions.js';
 
 const step = (chain: string[] | null, over: Partial<Step> = {}): Step =>
   ({
@@ -33,7 +34,7 @@ const resolved = (name: string, source: string, line = 34): ComponentSource => (
   status: 'resolved',
   via: 'bundle-search',
   source,
-  line,
+  line: pos1(line),
 });
 
 describe('referencedComponentIds', () => {
@@ -123,7 +124,11 @@ describe('formatSource', () => {
     const component: ComponentSource = {
       name: 'PriceTag',
       status: 'compiled-only',
-      compiled: { url: 'https://cdn.example.com/assets/index-8f2a.js', line: 1, column: 88_214 },
+      compiled: {
+        url: 'https://cdn.example.com/assets/index-8f2a.js',
+        line: pos0(1),
+        column: pos0(88_214),
+      },
     };
 
     expect(formatSource(component)).toBe('/assets/index-8f2a.js:1:88214');
@@ -138,7 +143,7 @@ describe('countComponents', () => {
   const table: Record<string, ComponentSource> = {
     a: resolved('A', 'src/A.tsx'),
     b: resolved('B', 'src/B.tsx'),
-    c: { name: 'C', status: 'ambiguous', source: 'src/C.tsx', line: 3, matchCount: 2 },
+    c: { name: 'C', status: 'ambiguous', source: 'src/C.tsx', line: pos1(3), matchCount: 2 },
     d: { name: 'D', status: 'not-found' },
     [CAPPED_ID]: { name: 'FlowSnap', status: 'skipped' },
   };

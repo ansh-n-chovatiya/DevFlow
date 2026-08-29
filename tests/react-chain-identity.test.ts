@@ -25,6 +25,7 @@ import { mergeComponents } from '../src/core/react/table.js';
 import { MAX_COMPONENT_CHAIN } from '../src/shared/constants.js';
 import type { CapturedComponent } from '../src/shared/messages.js';
 import type { ComponentNeedle, ComponentSource } from '../src/shared/types.js';
+import { pos1 } from '../src/core/react/positions.js';
 
 function fiber(type: unknown, parent: Fiber | null = null, debugSource?: DebugSource): Fiber {
   return {
@@ -136,7 +137,7 @@ describe('mergeComponents, given a placeholder id', () => {
     const component: CapturedComponent = {
       id: nameOnlyId('Anonymous'),
       name: 'Anonymous',
-      debugSource: { source: 'src/App.tsx', line: 11, column: 5 },
+      debugSource: { source: 'src/App.tsx', line: pos1(11), column: pos1(5) },
     };
 
     const { table: t, needles } = table();
@@ -180,7 +181,7 @@ describe('pickOwner, with a placeholder in the chain', () => {
         status: 'resolved',
         via: 'debug-source',
         source: 'src/App.tsx',
-        line: 11,
+        line: pos1(11),
       },
       mui: {
         name: 'ButtonBase',
