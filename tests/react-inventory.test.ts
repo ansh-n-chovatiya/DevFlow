@@ -40,6 +40,14 @@ describe('isSearchableUrl', () => {
     expect(isSearchableUrl('data:text/javascript,void 0')).toBe(false);
     expect(isSearchableUrl('chrome-extension://abc/content.js')).toBe(false);
   });
+
+  it('leaves file: to the one provider that can read it', () => {
+    // The DevTools provider adds `file:` on top of this, because it reads out
+    // of the DevTools cache rather than fetching. Widening the shared rule
+    // instead would put local URLs in the worker's inventory, where every
+    // component filed under one reports a fetch failure as its reason.
+    expect(isSearchableUrl('file:///Users/me/app/dist/app.js')).toBe(false);
+  });
 });
 
 describe('mergeScripts', () => {

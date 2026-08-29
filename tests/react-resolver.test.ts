@@ -1,7 +1,20 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { pos1 } from '../src/core/react/positions.js';
+import { bundleBudget, createWorkerProvider } from '../src/features/react/providers/worker.js';
 import { clearResolverCaches, resolvePending, type ResolveDeps } from '../src/features/react/resolver.js';
+import { resolve as resolveSettings } from '../src/features/settings/resolve.js';
+import { flowError } from '../src/shared/errors.js';
 import type { ComponentNeedle, ComponentSource } from '../src/shared/types.js';
 import { sourceMapJson } from './helpers/sourcemap-fixture.js';
+
+/**
+ * The shipped budget, derived from the field table rather than retyped.
+ *
+ * `docs/CONTRACTS.md` §3.2 is explicit that these five numbers have exactly one
+ * source; a test that spelled them out again would be a second one, and the
+ * first thing it would stop catching is a default that moved.
+ */
+const BUDGET = bundleBudget(resolveSettings({}));
 
 const PAGE = 'https://shop.test/products/42';
 const BUNDLE_URL = 'https://shop.test/assets/app.js';
@@ -31,19 +44,35 @@ interface Harness {
   fetched: string[];
 }
 
+/**
+ * A real `WorkerProvider` over a fake web.
+ *
+ * The stub is at `fetchText`, not at the provider, so every one of these tests
+ * runs through the actual bundle cache, the actual in-flight dedupe and the
+ * actual size caps — which is the point of the seam. Stubbing `BundleProvider`
+ * itself would leave the thing that now owns all three untested from here.
+ *
+ * The inventory is empty because a resolve pass never asks for it: it works
+ * from the snapshot on `ResolveInput`, so that the answers it writes down stay
+ * pinned to the inventory size they were reached with.
+ */
 function harness(files: Record<string, string>): Harness {
   const fetched: string[] = [];
-  return {
-    fetched,
-    deps: {
-      fetchText: (url) => {
-        fetched.push(url);
-        const text = files[url];
-        return Promise.resolve(text === undefined ? { ok: false as const } : { ok: true as const, value: text });
-      },
-      now: () => 0,
+
+  const provider = createWorkerProvider(BUDGET, {
+    scripts: {},
+    fetchText: (url) => {
+      fetched.push(url);
+      const text = files[url];
+      return Promise.resolve(
+        text === undefined
+          ? { ok: false as const, error: flowError('RESOURCE_UNFETCHABLE', url) }
+          : { ok: true as const, value: text },
+      );
     },
-  };
+  });
+
+  return { fetched, deps: { provider, now: () => 0 } };
 }
 
 /**
@@ -72,11 +101,15 @@ function input(overrides: Partial<Parameters<typeof resolvePending>[0]> = {}) {
 beforeEach(() => clearResolverCaches());
 
 describe('resolvePending', () => {
-  it('resolves a component to its original file, 1-based', () => {
+  it('resolves a component to its original file, 1-based — and its compiled one 0-based', () => {
     const { deps } = harness({ [BUNDLE_URL]: BUNDLE, [MAP_URL]: MAP });
 
     return resolvePending(input(), deps).then((result) => {
       expect(result.changed).toBe(true);
+      // D1, both halves of it in one assertion. The fixture's mapping is
+      // 0-based `33:2`, and what a person reads is `34:3` — converted once,
+      // here, by `toOneBased`. `compiled` does not convert: it is an offset
+      // into the minified bundle and DevTools' Sources panel wants it 0-based.
       expect(result.components.cart).toEqual({
         name: 'Cart',
         status: 'resolved',
@@ -84,7 +117,7 @@ describe('resolvePending', () => {
         source: 'src/cart/Cart.tsx',
         line: 34,
         column: 3,
-        compiled: { url: BUNDLE_URL, line: 2, column: 1 },
+        compiled: { url: BUNDLE_URL, line: 1, column: 0 },
       });
     });
   });
@@ -143,7 +176,7 @@ describe('resolvePending', () => {
     const result = await resolvePending(input(), deps);
     expect(result.components.cart).toMatchObject({
       status: 'compiled-only',
-      compiled: { url: BUNDLE_URL, line: 2, column: 1 },
+      compiled: { url: BUNDLE_URL, line: 1, column: 0 },
     });
     expect(result.components.cart.detail).toMatch(/no source map/);
     expect(result.components.cart.source).toBeUndefined();
@@ -156,7 +189,7 @@ describe('resolvePending', () => {
     const noMap = await resolvePending(input(), missing.deps);
     expect(noMap.components.cart).toMatchObject({ status: 'map-error' });
     expect(noMap.components.cart.detail).toMatch(/404 or private/);
-    expect(noMap.components.cart.compiled).toEqual({ url: BUNDLE_URL, line: 2, column: 1 });
+    expect(noMap.components.cart.compiled).toEqual({ url: BUNDLE_URL, line: 1, column: 0 });
 
     clearResolverCaches();
     const badMap = await resolvePending(input(), broken.deps);
@@ -322,12 +355,16 @@ describe('resolvePending', () => {
 
   it('leaves an already-answered component alone', async () => {
     const { deps, fetched } = harness({ [BUNDLE_URL]: BUNDLE, [MAP_URL]: MAP });
+    // `pos1` rather than a bare 12: this stands in for a `ComponentSource` read
+    // back out of storage, which `docs/CONTRACTS.md` §1 names as one of the
+    // three places the assertion is legitimate. It adds no arithmetic — it
+    // states what the stored number already was.
     const answered: ComponentSource = {
       name: 'Cart',
       status: 'resolved',
       via: 'debug-source',
       source: 'src/Cart.tsx',
-      line: 12,
+      line: pos1(12),
     };
 
     const result = await resolvePending(
