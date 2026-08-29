@@ -276,8 +276,21 @@
         <div id="result-card-slot"></div>
 
         <!--
+          The picked component's own code, so it sits with the card that named it
+          rather than below the controls that filter something else. Collapsed by
+          default: the answer is the path, and the source is the confirmation.
+        -->
+        <details id="preview-wrap" class="preview" hidden>
+          <summary class="preview-summary">Source preview</summary>
+          <pre class="preview-code"><code id="preview-code"></code></pre>
+        </details>
+
+        <!--
           Filtering belongs to the panel rather than to the card: it acts on the
-          trees below, and no other surface that renders a card has them.
+          trees below, and no other surface that renders a card has them. Kept
+          directly above those trees — a filter field and a row of category chips
+          separated from the list they act on read as page furniture rather than
+          as its controls.
         -->
         <div class="result-filters">
           <div class="filter-field">
@@ -309,11 +322,6 @@
             aria-label="Hide component categories"
           ></div>
         </div>
-
-        <details id="preview-wrap" class="preview" hidden>
-          <summary class="preview-summary">Source preview</summary>
-          <pre class="preview-code"><code id="preview-code"></code></pre>
-        </details>
 
         <!--
           The two tree sections are keyed by `TreeGroup` — 'ancestry' and

@@ -37,3 +37,40 @@ describe('the settings drawer can find every element it addresses', () => {
     expect(ids).toContain(id);
   });
 });
+
+/**
+ * Reading order in the result view, which no view-model test can see.
+ *
+ * The blocks are flex children of one column with a gap, so their order is the
+ * document's and nothing else's — a paste in the wrong place moves the UI and
+ * fails no gate. Two groupings are being asserted, and each is an argument:
+ * `Source preview` is the picked component's own code and belongs to the card
+ * that named it, while the filter field and the category chips act on the trees
+ * and belong immediately above them. They shipped interleaved — the filters sat
+ * between the card and a preview they do not filter, which left the chips
+ * stranded from the list they control.
+ */
+describe('the result view reads top to bottom', () => {
+  const order = ['result-card-slot', 'preview-wrap', 'tree-filter', 'category-chips'];
+
+  it.each(order.slice(1).map((id, index) => [order[index], id]))(
+    '#%s comes before #%s',
+    (before, after) => {
+      const first = html.indexOf(`id="${before}"`);
+      const second = html.indexOf(`id="${after}"`);
+
+      expect(first).toBeGreaterThan(-1);
+      expect(second).toBeGreaterThan(first);
+    },
+  );
+
+  it('puts both tree sections last', () => {
+    for (const id of order) {
+      expect(html.indexOf(`id="${id}"`)).toBeLessThan(html.indexOf('id="ancestry-section"'));
+    }
+
+    expect(html.indexOf('id="ancestry-section"')).toBeLessThan(
+      html.indexOf('id="sibling-section"'),
+    );
+  });
+});

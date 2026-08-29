@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**The panel's result view reads in the right order.** `Source preview` is the
+picked component's own code, so it now sits directly under the card that named
+it. The filter field and the category chips move down to where they belong —
+immediately above the trees they act on. They used to be interleaved: the
+filters sat between the card and a preview they do not filter, which left the
+chips stranded from the list they control.
+
 **One copy button on the result card, not two.** `onCopyPath` turned the path
 line into a button — the path is its text, `Copy path` is its label, and the copy
 icon sits at the end of the very string it copies — and *also* added a `Copy` to
