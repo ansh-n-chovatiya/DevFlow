@@ -438,6 +438,32 @@ body {
   border: 0;
 }
 
+/**
+ * The concept a run of rail rows sits under.
+ *
+ * Four of these over eleven groups. Deliberately the quietest thing in the rail
+ * — smaller, faint, uppercase, and not clickable — because it is a label on a
+ * run of destinations rather than a destination, and a heading that looked like
+ * a row would be a row that does nothing when pressed.
+ *
+ * The first one carries no top margin: a gap above the first heading would push
+ * the rail out of line with the first group heading beside it, which is the one
+ * alignment on this screen the eye actually checks.
+ */
+.rail__concept {
+  margin: var(--space-3) 0 var(--space-1);
+  padding: 0 var(--space-2);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.rail__concept:first-child {
+  margin-top: 0;
+}
+
 /* ── Group header ───────────────────────────────────────────────────────────
  * There is one of these. Not one per tab, not a variant for search results and
  * another for Advanced — the drift the generated screens have is exactly what
@@ -1497,4 +1523,47 @@ body {
   border-radius: 2px;
   background: var(--accent-soft);
   color: inherit;
+}
+
+/* ── The panel's settings drawer ────────────────────────────────────────────
+ * The ninth primitive's stylesheet, and almost all of it is absence: the rows
+ * inside are `.setting-row`, unchanged, because a row that looked different in
+ * the drawer would be the second visual vocabulary this merge exists to avoid.
+ * What is here is the column those rows sit in and the two things the page has
+ * no equivalent of — the policy line, and the way out to the rest.
+ *
+ * The narrow-window tuning lives in `src/ui/locator/settings-drawer.css`, which
+ * is the stylesheet the panel loads. It restyles the classes below; it declares
+ * none of its own, because a class it declared would be a class this file could
+ * not account for.
+ */
+
+.drawer-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/**
+ * Above the list, not only on the rows it applies to.
+ *
+ * The locked rows are not adjacent and are not most of them, and a person
+ * opening a short list reads its shape before any of its notes. The per-row
+ * sentence still says which ones; this says that the answer to "why can I not
+ * change this" is the same answer each time.
+ */
+.drawer-settings__policy {
+  margin: 0;
+}
+
+/**
+ * The way out, at the foot and full width.
+ *
+ * Full width because it is the end of the list rather than an action on the
+ * last row of it, and a compact button floated at one edge down there reads as
+ * belonging to whatever setting happens to be above it.
+ */
+.drawer-settings__more {
+  justify-content: center;
+  width: 100%;
 }

@@ -82,6 +82,7 @@ describe('no surface resolves its settings once, at import time', () => {
     'src/ui/settings/components.ts',
     'src/ui/settings/view.ts',
     'src/ui/settings/file-view.ts',
+    'src/ui/locator/settings-drawer.ts',
     'src/ui/popup/main.ts',
     'src/ui/viewer/main.ts',
     'src/ui/viewer/review.ts',

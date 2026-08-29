@@ -233,12 +233,22 @@ describe('filter tokens become chips', () => {
 });
 
 describe('a setting that cannot do anything says so', () => {
-  it('greys the three React fields that follow the master switch', () => {
+  /*
+   * Two rows, not four.
+   *
+   * The project root and the editor used to hang off `reactCapture` as well, and
+   * that stopped being true when the panel arrived: picking a component resolves
+   * a file and offers to open it whether or not a single step is ever recorded.
+   * Greying them under a sentence about recording would have switched off the
+   * two fields a picker user depends on, and given a reason that names a feature
+   * they may never use.
+   */
+  it('greys only what the master switch actually governs', () => {
     const off = model({ reactCapture: false });
     const react = off.groups.find((group) => group.info.id === 'react')!;
 
     const inert = react.rows.filter((row) => row.disabled).map((row) => row.field.key);
-    expect(inert).toEqual(['reactResolve', 'projectRoot', 'editor', 'customEditorTemplate']);
+    expect(inert).toEqual(['reactResolve', 'customEditorTemplate']);
 
     for (const row of react.rows.filter((entry) => entry.disabled)) {
       expect(row.disabledReason, row.field.key).toBeTruthy();

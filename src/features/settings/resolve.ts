@@ -103,15 +103,45 @@ export function resolveField(field: Field, value: unknown): unknown {
  * lost — it is still in storage, and `passthrough()` returns it — but it is not
  * handed to the recorder, because nothing here can clamp a field it has no
  * description of.
+ *
+ * ## Three layers, and why the third is an argument
+ *
+ * ```
+ * DEFAULTS  ←  user overrides (sync)  ←  managed overrides (managed)
+ * ```
+ *
+ * `managed` is `chrome.storage.managed`: an administrator pushing an editor and
+ * a project root across an organisation, which is a thing the sibling extension
+ * has always supported and a merge that dropped it would have broken silently,
+ * for exactly the deployments least able to notice.
+ *
+ * It arrives as an argument rather than being read here, and that is the whole
+ * of the design. This file is bundled into `mcp-server/core.js` for a Node
+ * process with no `chrome` object; a `chrome.storage.managed.get` in it would
+ * fail at import time in a package that has no typecheck over it. Purity is not
+ * a preference here, it is what makes the one validator importable by both
+ * sides. `features/settings/managed.ts` does the reading.
+ *
+ * Managed wins, which is the point of a policy: an administrator's answer is not
+ * a suggestion the user's own choice is allowed to outrank. A managed value is
+ * clamped like any other, because a hand-written policy file is exactly as
+ * capable of holding 9,000 where the maximum is 5,000 as a hand-edited profile.
  */
-export function resolve(overrides: Overrides | null | undefined): Settings {
+export function resolve(
+  overrides: Overrides | null | undefined,
+  managed?: Overrides | null,
+): Settings {
   const source = overrides ?? {};
+  const policy = managed ?? {};
   const out: Record<string, unknown> = {};
 
   for (const field of FIELDS) {
-    out[field.key] = Object.hasOwn(source, field.key)
-      ? resolveField(field, source[field.key])
-      : DEFAULTS[field.key];
+    const layer = Object.hasOwn(policy, field.key)
+      ? policy
+      : Object.hasOwn(source, field.key)
+        ? source
+        : null;
+    out[field.key] = layer ? resolveField(field, layer[field.key]) : DEFAULTS[field.key];
   }
 
   return out as Settings;
