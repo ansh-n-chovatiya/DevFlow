@@ -1,9 +1,17 @@
 /**
- * MV3 service worker: screenshot capture, step persistence, badge, MCP export.
+ * MV3 service worker: screenshot capture, step persistence, badge, MCP export,
+ * and everything the two locate surfaces cannot do from where they stand.
  *
  * Every Chrome call goes through `src/chrome/`, so failures arrive as values.
  * The worker's job is to decide what a failure means for the recording — most
  * of the time "save the step without an image and tell the user why".
+ *
+ * The second half of that job came from react-source-locator, and is the reason
+ * locating is reachable from either door. A DevTools panel cannot read a
+ * cross-origin bundle and has no scripting relationship with the page at all;
+ * a popup has none either beyond this worker. So the worker fetches on their
+ * behalf and relays their pick messages to the tab's content script, and both
+ * surfaces send the same messages to get the same work done.
  */
 
 import { annotateScreenshot } from './annotator.js';
@@ -20,7 +28,15 @@ import { deliverMachineSettings } from '../features/mcp/machine.js';
 import type { RecordingSettings } from '../features/settings/fields.js';
 import { shotPatch, sweep as sweepShots, withoutImages } from '../features/flows/shots.js';
 import { captureVisibleTab, sendToTab } from '../chrome/tabs.js';
-import type { OpenEditorResponse, WorkerRequest } from '../shared/messages.js';
+import { fetchText } from '../chrome/fetch.js';
+import type { Result } from '../shared/result.js';
+import type {
+  ComponentSourceResponse,
+  ContentRequest,
+  FetchContentResponse,
+  OpenEditorResponse,
+  WorkerRequest,
+} from '../shared/messages.js';
 import { isEditorScheme } from '../core/react/editor.js';
 import {
   BADGE_COLOR,
@@ -649,6 +665,144 @@ function closeWhenLaunched(tabId: number, timeoutMs: number): void {
   const timer = setTimeout(close, timeoutMs);
 }
 
+// ── The DevTools panel, and the pick relay ───────────────────────────────────
+
+/**
+ * The name the DevTools page connects with, before `:<tabId>` is appended.
+ *
+ * Mirrored from `devtools/index.ts`, which explains why the tab id rides in the
+ * name. The literal is repeated rather than shared because `src/shared/` was
+ * frozen in Wave 0 and this constant did not exist then; `tests/devtools.test.ts`
+ * asserts the two copies still agree, since a drift here fails silently — no
+ * panel ever registers and every close leaks whatever the panel armed.
+ */
+const DEVTOOLS_PORT = 'devflow-devtools';
+
+/**
+ * Tabs a DevTools panel is currently inspecting.
+ *
+ * This is the whole of the worker's per-panel state, and it is emptied by the
+ * port disconnect below. It exists so that a disconnect is attributable and
+ * idempotent: only a tab this worker saw a panel open on gets its pick
+ * cancelled, so a duplicate or late disconnect cannot reach across and cancel a
+ * pick the popup armed afterwards.
+ *
+ * Rebuilt rather than persisted. The worker is killed at Chrome's discretion,
+ * which takes the set and the ports with it — and the DevTools page reconnects
+ * and re-announces itself, so the two come back together or not at all.
+ */
+const panelTabs = new Set<number>();
+
+/**
+ * Fetches script or source-map text for a surface that cannot fetch it itself.
+ *
+ * A DevTools panel is subject to CORS like any page; the worker holds
+ * `<all_urls>` and is not. `WorkerProvider` does not come through here — it
+ * already runs in the worker — so this exists for `DevtoolsProvider` alone.
+ *
+ * Goes through `chrome/fetch.ts` rather than calling `fetch` the way the
+ * locator's worker did, which buys three things the locator's copy did not
+ * have: the scheme check (a page chooses the URLs it loads, and `file:` or
+ * `chrome-extension:` is not one this extension will read on its behalf), the
+ * size ceiling, and failure as a `FlowError` like every other Chrome call here.
+ */
+async function fetchForPanel(url: string): Promise<FetchContentResponse> {
+  /*
+   * Live, and the same ceiling the recorder's resolver spends.
+   *
+   * `react.maxResourceBytes` was `MAX_RESOURCE_BYTES` in one repo and a setting
+   * in the other, at the same value — §3.2 of the contracts is what stops it
+   * being two numbers again. Read per call because the worker is restarted at
+   * Chrome's discretion, and a value read at import would be the compiled-in
+   * default for the rest of the profile's life.
+   */
+  const settings = await loadSettings();
+  const read = await fetchText(url, settings['react.maxResourceBytes']);
+  if (read.ok) return { ok: true, content: read.value };
+
+  /*
+   * The sentence, then the cause.
+   *
+   * `FlowError.message` is written for the person looking at the result — this
+   * one ends up explaining why a component has no source file — and "HTTP 404"
+   * on its own says nothing about what was being read or what it cost them.
+   * `detail` is appended rather than substituted so the console still has the
+   * raw reason.
+   */
+  const { message, detail } = read.error;
+  return { ok: false, content: '', error: detail ? `${message} (${detail})` : message };
+}
+
+/**
+ * Hands a UI surface's request to the tab's content script.
+ *
+ * The popup and the panel both send `START_PICK` and the rest with an explicit
+ * `tabId`, because neither is a tab: `sender.tab` is undefined for everything
+ * they send, so there is no "the tab this came from" to infer. The content
+ * script is the far end (Package C) and pushes a control message to the agent.
+ *
+ * A tab that does not answer is not an error worth a `lastError` banner — it is
+ * a tab that navigated to `chrome://`, or was open before the extension was
+ * installed. The caller is told the request did not land and says so in its own
+ * words; the console gets the code.
+ */
+async function relayToTab<T>(tabId: number, request: ContentRequest): Promise<Result<T>> {
+  const answer = await sendToTab<T>(tabId, request);
+  if (!answer.ok) {
+    console.warn(`FlowSnap: ${request.type} did not reach tab ${tabId} (${answer.error.code})`);
+  }
+  return answer;
+}
+
+/**
+ * Cleans up after a panel that has gone away.
+ *
+ * The pick is the thing that outlives it. Picking is armed in the page, where
+ * nothing can observe DevTools closing, so a panel closed mid-pick leaves the
+ * agent's capture-phase listeners and its crosshair cursor on a page the user
+ * now cannot click anything on. `PICK_TIMEOUT_MS` eventually releases it, but
+ * two minutes of that is a bug report rather than a cleanup story.
+ *
+ * The agent itself is left exactly where it is. react-source-locator's worker
+ * tore its agent out of the page here, because that agent existed only for the
+ * panel and had been `eval`-ed in on demand. DevFlow's is a manifest content
+ * script that is also the recorder — the tab still needs it, and there is
+ * nothing to inject again if it were removed.
+ *
+ * Sent unconditionally for a tab that had a panel, rather than tracked
+ * per-pick: cancelling a pick nobody armed is a no-op the agent already
+ * handles, while missing one that was armed is the failure this exists for.
+ */
+function closePanel(tabId: number): void {
+  if (!panelTabs.delete(tabId)) return;
+  void relayToTab(tabId, { type: 'CANCEL_PICK' });
+}
+
+/*
+ * The DevTools page holds this port open for its lifetime, so a disconnect
+ * means DevTools was closed — or the tab went away, or the worker was killed.
+ * It is the only signal there is: page context cannot observe any of them.
+ *
+ * The tab id rides in the port's name because a port from a DevTools page
+ * carries no `sender.tab`, and correlating a disconnect with a separately-sent
+ * `DEVTOOLS_OPENED` would be a race the moment two DevTools windows are open on
+ * two tabs.
+ */
+chrome.runtime.onConnect.addListener((port) => {
+  const [name, rawTabId] = port.name.split(':');
+  if (name !== DEVTOOLS_PORT) return;
+
+  const tabId = Number(rawTabId);
+  if (!Number.isInteger(tabId)) return;
+
+  panelTabs.add(tabId);
+  port.onDisconnect.addListener(() => {
+    // Read, or Chrome logs "Unchecked runtime.lastError" on every disconnect.
+    void chrome.runtime.lastError;
+    closePanel(tabId);
+  });
+});
+
 // ── MCP auto-export ──────────────────────────────────────────────────────────
 
 async function autoExportToMcp(steps: Step[]): Promise<void> {
@@ -773,8 +927,20 @@ chrome.storage.onChanged.addListener((changes, area) => {
   });
 });
 
-/** A tab that goes away cannot claim its pre-capture. */
-chrome.tabs.onRemoved.addListener((tabId) => precaptures.delete(tabId));
+/**
+ * A tab that goes away cannot claim its pre-capture, and has no page left to
+ * clean up.
+ *
+ * The panel record is dropped directly rather than through `closePanel`, which
+ * would relay a `CANCEL_PICK` to a page that is not there to receive it. The
+ * two events race — Chrome does not order a tab's removal against its DevTools
+ * port disconnecting — and whichever arrives first makes the other a no-op,
+ * because `closePanel` only acts on a tab still in the set.
+ */
+chrome.tabs.onRemoved.addListener((tabId) => {
+  precaptures.delete(tabId);
+  panelTabs.delete(tabId);
+});
 
 chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendResponse) => {
   if (!message?.type) return;
@@ -970,6 +1136,61 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
 
     case 'OPEN_EDITOR': {
       void openEditor(message.url).then(sendResponse);
+      return true;
+    }
+
+    case 'FETCH_CONTENT': {
+      void fetchForPanel(message.url).then(sendResponse);
+      return true;
+    }
+
+    case 'DEVTOOLS_OPENED': {
+      /*
+       * The panel telling the worker which tab it is looking at.
+       *
+       * Also sent on every reconnect, which is what repopulates this after the
+       * worker has been killed and restarted underneath an open DevTools
+       * window — see `connect()` in `devtools/index.ts`. Adding a tab that is
+       * already there is the ordinary case, not a duplicate to guard against:
+       * the set is what makes the close attributable, not a count of panels.
+       */
+      panelTabs.add(message.tabId);
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    case 'START_PICK': {
+      void relayToTab(message.tabId, { type: 'START_PICK' }).then((answer) =>
+        sendResponse({ ok: answer.ok }),
+      );
+      return true;
+    }
+
+    case 'CANCEL_PICK': {
+      void relayToTab(message.tabId, { type: 'CANCEL_PICK' }).then((answer) =>
+        sendResponse({ ok: answer.ok }),
+      );
+      return true;
+    }
+
+    case 'READ_COMPONENT_SOURCE': {
+      const { tabId, group, index } = message;
+      // `null` is an ordinary answer, not a failure: a native function and an
+      // unsettled lazy both have no source text to read, and so does a tab that
+      // has navigated since the pick. The caller says why there is no source.
+      void relayToTab<ComponentSourceResponse>(tabId, {
+        type: 'READ_COMPONENT_SOURCE',
+        group,
+        index,
+      }).then((answer) => sendResponse(answer.ok ? (answer.value ?? { source: null }) : { source: null }));
+      return true;
+    }
+
+    case 'HIGHLIGHT_COMPONENT': {
+      const { tabId, group, index } = message;
+      void relayToTab(tabId, { type: 'HIGHLIGHT_COMPONENT', group, index }).then((answer) =>
+        sendResponse({ ok: answer.ok }),
+      );
       return true;
     }
 

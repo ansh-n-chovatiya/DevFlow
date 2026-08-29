@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "FlowSnap — AI Flow Recorder",
+  "name": "DevFlow — Record & Locate",
   "version": "3.0.0",
-  "description": "Record browser flows and export them as AI-ready context for Claude",
+  "description": "Record browser flows as AI-ready context, and pick any component on the page to open the source it was written in.",
   "minimum_chrome_version": "116",
+  "devtools_page": "devtools.html",
   "permissions": [
     "activeTab",
     "tabs",

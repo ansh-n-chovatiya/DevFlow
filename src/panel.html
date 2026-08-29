@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DevFlow</title>
+
+    <!--
+      The panel's stylesheets, in cascade order, linked from the document the way
+      every other page in this extension links its own.
+
+      The shared sheet comes first and is named explicitly rather than left to
+      arrive through someone else's `@import`: every sheet below is written
+      against `.btn`, `.banner`, `.empty`, `.chip`, `.spinner`, `.icon`,
+      `.sr-only` and `kbd` meaning what they mean in the popup, and a page whose
+      shell arrives transitively is a page that loses it the day that import
+      moves.
+
+      The result card is linked *before* the panel's own sheets rather than
+      after, which is the one place this order is not simply "general to
+      specific". `components/result-card.css` opens with its own
+      `@import '../styles/index.css'`, because it is a component that has to
+      work on three pages and cannot assume any of them loaded the shell. So
+      linking it last would replay the whole shared sheet after the panel's
+      overrides and quietly win every tie at equal specificity — concretely, the
+      shared `code, kbd, pre, samp` rule would take the panel's keycaps back off
+      `--text-label` and onto `--text-code`. Nothing after the card's sheet
+      styles the card, so moving it up costs nothing.
+
+      Package G: the stylesheets are linked here, so `ui/locator/main.ts` must
+      not import them as well — a second copy of the shared set in one bundle is
+      a cascade nobody wrote.
+    -->
+    <link rel="stylesheet" href="./ui/styles/index.css" />
+    <link rel="stylesheet" href="./ui/components/result-card.css" />
+    <link rel="stylesheet" href="./ui/locator/styles/base.css" />
+    <link rel="stylesheet" href="./ui/locator/styles/chrome.css" />
+    <link rel="stylesheet" href="./ui/locator/styles/idle.css" />
+    <link rel="stylesheet" href="./ui/locator/styles/picking.css" />
+    <link rel="stylesheet" href="./ui/locator/styles/locating.css" />
+    <link rel="stylesheet" href="./ui/locator/styles/result.css" />
+    <link rel="stylesheet" href="./ui/locator/styles/error.css" />
+  </head>
+  <body>
+    <!--
+      Two class vocabularies meet here, and the boundary is deliberate.
+
+      Anything the whole product already has — `btn`, `banner`, `empty`, `chip`,
+      `input`, `spinner`, `label`, `mono`, `sr-only` — uses the shared
+      component's own name, so a button in this panel is the same object as a
+      button in the popup rather than a lookalike. Anything that exists only in
+      a panel — the views, the picking stage, the status bar, the drawers, the
+      trees — keeps the names the locator's stylesheets used, because those were
+      re-skinned rather than rewritten.
+
+      Icons are declared by name and filled in by `hydrateIcons()`. The
+      hand-drawn SVG sprite this page used to open with — thirteen symbols and a
+      `<use>` for each — is gone; every glyph resolves through the icon manifest
+      in docs/CONTRACTS.md §5 instead, to a Lucide name the rest of the product
+      already draws. Where a rule has to reach the drawing itself the class goes
+      on the placeholder and the rule targets `.icon` inside it; where it only
+      needs the drawing sized or tinted, `data-icon-class` puts the class on the
+      generated `<svg>`. Each use below follows whichever its stylesheet expects.
+
+      Views are switched by the `hidden` attribute, which base.css gives the
+      weight to actually hide something.
+    -->
+    <main id="main">
+      <!--
+        Idle — the panel with nothing picked yet.
+
+        An empty state, not a hero: what this surface is for, why it is blank,
+        and the one thing to do about it, in the same block the flow library and
+        the review use. The product's identity is in the toolbar icon and the
+        DevTools tab strip; a second logo and a spinning mark here would be
+        branding the panel rather than orienting the reader.
+      -->
+      <section id="view-idle" class="view view-center surface-grid idle-view">
+        <div class="empty">
+          <span data-icon="atom" data-icon-class="empty__icon"></span>
+          <p class="empty__title">Nothing picked yet</p>
+          <p class="empty__body">
+            Pick a component on the page to see the file and line it was written
+            in, the components around it, and a way straight into your editor.
+          </p>
+
+          <button id="pick-btn" class="btn btn--primary idle-action" type="button">
+            <span data-icon="crosshair"></span>
+            <span>Pick component</span>
+          </button>
+        </div>
+
+        <!-- A footnote, outside the empty state's stack, not a second sentence. -->
+        <p class="idle-tip">Press <kbd>P</kbd> to pick, <kbd>Esc</kbd> to cancel.</p>
+      </section>
+
+      <!-- Picking — the picker is armed; the interaction happens on the page. -->
+      <section id="view-picking" class="view surface-grid picking-view" hidden>
+        <div class="picking-bar">
+          <span class="spinner picking-spinner" aria-hidden="true"></span>
+
+          <div class="picking-copy" aria-live="polite">
+            <h2 id="picking-title" class="picking-title">Hover to highlight — click to pick</h2>
+            <p id="picking-sub" class="picking-sub">
+              Move the pointer over a component on the page.
+            </p>
+          </div>
+
+          <button
+            id="cancel-pick-btn"
+            class="btn btn--secondary btn--compact picking-cancel"
+            type="button"
+            title="Stop picking"
+          >
+            <span>Cancel</span>
+            <kbd>Esc</kbd>
+          </button>
+        </div>
+
+        <!-- Decorative diagram of the gesture: a page, a selection, a cursor. -->
+        <div class="picking-stage" aria-hidden="true">
+          <div class="picking-rail">
+            <span class="picking-line"></span>
+            <span class="picking-line"></span>
+            <span class="picking-line"></span>
+            <span class="picking-line"></span>
+          </div>
+
+          <div class="picking-body">
+            <div class="picking-sel">
+              <span class="picking-line"></span>
+              <span class="picking-block"></span>
+              <span class="picking-cursor" data-icon="mouse-pointer"></span>
+            </div>
+            <span class="picking-line"></span>
+            <span class="picking-line"></span>
+          </div>
+        </div>
+
+        <p class="hint picking-foot">
+          Scroll the page freely — the picker stays armed until you click or press Esc.
+        </p>
+      </section>
+
+      <!--
+        Locating — the pick landed and the source is being resolved.
+
+        One live region for the whole progress report: the heading names the
+        component and the checklist says which stage is running, so a screen
+        reader hears both from the same place. Every visible difference between a
+        done, active and pending row comes from `data-state`, and the words for
+        those states come from `.locating-state`'s `::after` — which is why each
+        row carries an `.sr-only` element to hang them on rather than a second
+        copy of the text.
+      -->
+      <section id="view-locating" class="view locating-view" hidden>
+        <div class="locating-panel" role="status" aria-live="polite">
+          <div class="locating-head">
+            <span class="spinner" aria-hidden="true"></span>
+            <h2 class="locating-title">
+              Locating <span id="locating-name" class="locating-chip"></span>…
+            </h2>
+          </div>
+
+          <ol id="locating-steps" class="locating-steps">
+            <li class="locating-step" data-stage="detected" data-state="done">
+              <span class="locating-marker" aria-hidden="true">
+                <span data-icon="check"></span>
+              </span>
+              <span class="locating-label">Element detected</span>
+              <span class="sr-only locating-state"></span>
+            </li>
+            <li class="locating-step" data-stage="dom" data-state="done">
+              <span class="locating-marker" aria-hidden="true">
+                <span data-icon="check"></span>
+              </span>
+              <span class="locating-label">Inspecting DOM structure</span>
+              <span class="sr-only locating-state"></span>
+            </li>
+            <li class="locating-step" data-stage="tree" data-state="done">
+              <span class="locating-marker" aria-hidden="true">
+                <span data-icon="check"></span>
+              </span>
+              <span class="locating-label">Searching component tree</span>
+              <span class="sr-only locating-state"></span>
+            </li>
+            <li class="locating-step" data-stage="match" data-state="active">
+              <span class="locating-marker" aria-hidden="true">
+                <span data-icon="check"></span>
+              </span>
+              <span class="locating-label">Matching component</span>
+              <span class="sr-only locating-state"></span>
+            </li>
+            <li class="locating-step" data-stage="source" data-state="pending">
+              <span class="locating-marker" aria-hidden="true">
+                <span data-icon="check"></span>
+              </span>
+              <span class="locating-label">Locating source file</span>
+              <span class="sr-only locating-state"></span>
+            </li>
+          </ol>
+        </div>
+
+        <!-- Placeholder in the geometry of the card that replaces this view. -->
+        <div class="locating-skeleton" aria-hidden="true">
+          <div class="locating-sk-head">
+            <span class="locating-sk-block locating-sk-avatar"></span>
+            <span class="locating-sk-meta">
+              <span class="locating-sk-block"></span>
+              <span class="locating-sk-block"></span>
+            </span>
+          </div>
+          <div class="locating-sk-code">
+            <span class="locating-sk-block"></span>
+            <span class="locating-sk-block"></span>
+            <span class="locating-sk-block"></span>
+          </div>
+          <div class="locating-sk-actions">
+            <span class="locating-sk-block"></span>
+            <span class="locating-sk-block"></span>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-result" class="view result-view" hidden>
+        <div id="ambiguity-warning" class="banner banner--warn result-banner" hidden>
+          <span data-icon="triangle-alert" data-icon-class="banner__icon"></span>
+          <p id="ambiguity-text" class="banner__body"></p>
+          <button
+            id="ambiguity-dismiss"
+            class="btn btn--ghost btn--icon btn--compact banner__action"
+            type="button"
+            title="Dismiss"
+            aria-label="Dismiss this warning"
+          >
+            <span data-icon="x"></span>
+          </button>
+        </div>
+
+        <!--
+          The result card is mounted here, not written here.
+
+          `ui/components/result-card.ts` builds one `<article class="result-card">`
+          for the panel, the popup and the flow review alike — a card built three
+          times is three cards that drift. So this page owns an empty container
+          and nothing inside it: the component's name, its path, `Open in Editor`,
+          `Open in Sources` and `Copy path` are the card's own, wherever it is
+          shown, and none of the locator's `#result-*` or `#card-*` ids survives.
+        -->
+        <div id="result-card-slot"></div>
+
+        <!--
+          Filtering belongs to the panel rather than to the card: it acts on the
+          trees below, and no other surface that renders a card has them.
+        -->
+        <div class="result-filters">
+          <div class="filter-field">
+            <input
+              id="tree-filter"
+              class="input filter-input"
+              type="search"
+              placeholder="Filter components…"
+              aria-label="Filter components"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <!-- Wired in main.ts; the modifier is rewritten off macOS. -->
+            <span class="filter-kbd" aria-hidden="true">
+              <kbd id="filter-kbd-mod">⌘</kbd><kbd>K</kbd>
+            </span>
+          </div>
+
+          <!--
+            One chip per hideable category, built in main.ts because the set is
+            the `HideableCategory` union rather than a list this page can know.
+            Each is `class="chip" data-category="…" aria-pressed="…"`; pressed
+            means hidden.
+          -->
+          <div
+            id="category-chips"
+            class="chips"
+            role="group"
+            aria-label="Hide component categories"
+          ></div>
+        </div>
+
+        <details id="preview-wrap" class="preview" hidden>
+          <summary class="preview-summary">Source preview</summary>
+          <pre class="preview-code"><code id="preview-code"></code></pre>
+        </details>
+
+        <!--
+          The two tree sections are keyed by `TreeGroup` — 'ancestry' and
+          'sibling' — so `#{group}-section` and `#{group}-list` address them with
+          no lookup table in between. Their headings are the words the product
+          uses, which are not the words the code does.
+        -->
+        <section id="ancestry-section" class="tree-section" hidden>
+          <h2 class="tree-heading">Parent tree</h2>
+          <div id="ancestry-list" class="tree-list" role="list"></div>
+        </section>
+
+        <section id="sibling-section" class="tree-section" hidden>
+          <h2 class="tree-heading">Siblings</h2>
+          <div id="sibling-list" class="tree-list" role="list"></div>
+        </section>
+
+        <p id="tree-empty" class="hint hint-muted" hidden>No components match that filter.</p>
+      </section>
+
+      <!-- Error — retry keeps the pick, so it is the primary action, not picking again. -->
+      <section id="view-error" class="view view-center" hidden>
+        <div class="error-panel">
+          <div class="banner banner--danger" role="alert">
+            <span data-icon="triangle-alert" data-icon-class="banner__icon"></span>
+            <p id="error-msg" class="banner__body"></p>
+          </div>
+          <div class="actions error-actions">
+            <button id="retry-btn" class="btn btn--primary" type="button">Retry</button>
+            <button id="error-pick-btn" class="btn btn--secondary" type="button">
+              <span data-icon="crosshair"></span>
+              <span>Pick another</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!--
+      Status bar. The panel is one scrolling column, so the actions that apply to
+      the current result live here rather than mid-page, where a long parent tree
+      would scroll them out of reach.
+    -->
+    <footer class="status-bar">
+      <div class="status-group">
+        <button
+          id="history-btn"
+          class="btn btn--ghost btn--icon btn--compact"
+          type="button"
+          title="Recent"
+          aria-label="Recent"
+        >
+          <span data-icon="clock"></span>
+        </button>
+        <button
+          id="settings-btn"
+          class="btn btn--ghost btn--icon btn--compact"
+          type="button"
+          title="Settings"
+          aria-label="Settings"
+        >
+          <span data-icon="settings"></span>
+        </button>
+        <span class="status-divider" aria-hidden="true"></span>
+        <!--
+          Kept in sync by main.ts; seeded here so there is no empty first paint.
+          `.mono` because it is the one machine-ish item in a bar of UI labels.
+        -->
+        <span id="status-hint" class="status-hint mono">Press P to pick</span>
+      </div>
+
+      <!--
+        data-priority drives which actions are dropped as the dock narrows; the
+        result card carries the full set, so nothing becomes unreachable.
+
+        The go button is seeded with the idle label. It is the one string here
+        that changes with the view — `Pick another` once something has been
+        picked — because it is the same button either way, and re-labelling it is
+        better than two buttons that must never both be visible.
+      -->
+      <div class="status-group">
+        <button id="editor-btn" class="status-action" data-priority="mid" type="button">
+          Open in Editor
+        </button>
+        <button id="sources-btn" class="status-action" data-priority="low" type="button">
+          Open in Sources
+        </button>
+        <button id="copy-btn" class="status-action" type="button">Copy path</button>
+        <button id="pick-again-btn" class="status-action status-action-go" type="button">
+          Pick component
+        </button>
+      </div>
+    </footer>
+
+    <!--
+      Settings drawer — one store, two views (CONTRACTS §3.4, D9).
+
+      The options page is the source of truth; this is a thin view over the same
+      `FIELDS` registry, showing only the keys a locate uses. So the rows are
+      mounted rather than written: a hand-rolled `<select>` here would be a
+      second editor field with its own idea of which editors exist and no
+      managed-policy disabling, which is the drift D9 exists to stop — and
+      `lint:settings-ui` fails any settings markup that is not built by
+      `ui/settings/components.ts`.
+    -->
+    <aside id="settings-drawer" class="drawer" hidden aria-label="Settings">
+      <div class="drawer-head">
+        <h2>Settings</h2>
+        <button
+          id="settings-close"
+          class="btn btn--ghost btn--icon btn--compact"
+          type="button"
+          aria-label="Close settings"
+        >
+          <span data-icon="x"></span>
+        </button>
+      </div>
+
+      <div id="settings-fields"></div>
+    </aside>
+
+    <!-- Recent drawer. Its rows are `.tree-list` — the same rows as the trees. -->
+    <aside id="history-drawer" class="drawer" hidden aria-label="Recent">
+      <div class="drawer-head">
+        <h2>Recent</h2>
+        <div class="drawer-head-actions">
+          <button id="history-clear" class="btn btn--ghost btn--compact" type="button">Clear</button>
+          <button
+            id="history-close"
+            class="btn btn--ghost btn--icon btn--compact"
+            type="button"
+            aria-label="Close recent"
+          >
+            <span data-icon="x"></span>
+          </button>
+        </div>
+      </div>
+      <div id="history-list" class="tree-list"></div>
+      <p id="history-empty" class="hint hint-muted">Nothing picked yet.</p>
+    </aside>
+
+    <!-- The product's one toast stack; `ui/toast.ts` fills it. -->
+    <div id="toasts" class="toasts"></div>
+
+    <script type="module" src="./ui/locator/main.ts"></script>
+  </body>
+</html>
