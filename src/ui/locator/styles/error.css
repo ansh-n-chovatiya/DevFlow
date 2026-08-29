@@ -1,0 +1,36 @@
+/*
+ * The panel's error view.
+ *
+ * Re-skinned from react-source-locator `src/panel/styles/error.css` @ 2.2.0, and
+ * still deliberately the plainest view in the panel: the message is the content,
+ * and the two ways out sit directly under it. Everything visible here is shared
+ * — `.banner.banner--danger` from styles/components.css inside a `.view-center`
+ * from base.css — so this file is only the width the sentence is measured to.
+ *
+ * Worth keeping distinct from a failed *locate*. A locate that finds no source
+ * is not an error: it is a `ComponentSource` with a status and a `detail`
+ * sentence, and it renders in the result card like any other outcome. This view
+ * is for the pick itself failing — no React on the page, the agent unreachable,
+ * the tab navigating mid-pick — which is the case where there is nothing to show
+ * and something to retry.
+ */
+
+.error-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+
+  /*
+   * The dock can be dragged wide, and an error sentence set across 900px is read
+   * twice: once to find where the line ends and once for the words. 520px is
+   * about 75 characters at --text-body, which is the measure the rest of the
+   * product's prose is set to.
+   */
+  max-width: 520px;
+}
+
+/* The message is centred, so the ways out of it are too. */
+.error-actions {
+  justify-content: center;
+}

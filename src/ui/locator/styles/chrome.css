@@ -1,0 +1,238 @@
+/*
+ * The panel's persistent chrome: the status bar and the two drawers.
+ *
+ * Re-skinned from react-source-locator `src/panel/styles/chrome.css` @ 2.2.0.
+ * There is still no top app bar — the DevTools tab strip sits directly above the
+ * panel, so a second header would eat vertical space in the one surface that has
+ * none to spare. Everything that would have lived there is in the status bar.
+ *
+ * Two whole sections of the original are gone rather than retinted:
+ *
+ *   - **The toast.** DevFlow has one (`ui/toast.ts` + `.toast` in
+ *     styles/components.css), with a tone icon and an undo countdown that the
+ *     panel's plain tooltip-sized box did not have. A second toast is the same
+ *     mistake as a second button.
+ *   - **The drawer's form.** `.field`, `.field-label`, `.field-help`,
+ *     `.category-settings` and `.category-row` styled a settings form built by
+ *     hand inside the panel. Under D9 the drawer becomes a thin view over the
+ *     same `FIELDS` registry the options page renders from, so its rows are
+ *     `ui/settings/components.ts` rows and wear `ui/settings/components.css`.
+ *     `lint:settings-ui` is what makes that checkable. What stays here is the
+ *     drawer *container* — where it sits, how it enters, what it covers — which
+ *     is panel chrome and belongs to nobody else.
+ *
+ * The status bar's font is the UI font, not mono. Upstream set the whole strip
+ * in JetBrains Mono, which read as a terminal status line; but `Open in Editor`
+ * and `Recent` are UI labels, not machine output, and DevFlow reserves mono for
+ * text a machine wrote. The one genuinely machine-ish item, the hint, gets the
+ * shared `.mono` utility from its markup.
+ */
+
+/* ── Status bar ─────────────────────────────────────────────────────────────
+ * The panel is one scrolling column, so the actions that apply to the current
+ * result live down here rather than mid-page, where a long parent tree would
+ * scroll them out of reach.
+ */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 var(--pad-panel);
+  border-top: 1px solid var(--border);
+
+  /*
+   * Sunk, not raised. The bar is the floor of the panel and the ramp's recessed
+   * step is what says so; a raised surface here would read as a card floating
+   * over the content it is anchored beneath.
+   */
+  background: var(--surface-sunk);
+  font-size: var(--text-meta);
+  line-height: var(--leading-tight);
+
+  /*
+   * Without this the action group's intrinsic width becomes the document's
+   * minimum width, and a narrow dock scrolls the whole panel sideways.
+   */
+  overflow: hidden;
+}
+
+.status-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.status-group:last-child {
+  margin-left: auto;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+/*
+ * The shared icon button is 28px square (32px uncompacted), which is the height
+ * of the entire bar. This is the one place in the product where a control is
+ * sized to its strip rather than to the control scale.
+ */
+.status-bar .btn--icon {
+  width: 20px;
+  height: 20px;
+}
+
+.status-bar .btn--icon .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.status-divider {
+  width: 1px;
+  height: 12px;
+  margin: 0 var(--space-1);
+  background: var(--border);
+}
+
+.status-hint {
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Text-only, so the strip stays 28px tall and reads as status rather than as a
+ * second toolbar. Not `.btn--ghost`: a ghost button still carries the control
+ * height and the hover plate, and four of them in a 28px bar is a toolbar.
+ */
+.status-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--transition);
+}
+
+.status-action:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.status-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/*
+ * The one action that is always available — arming the picker.
+ *
+ * Upstream painted this `--success`, which in DevFlow is a data colour: it means
+ * a 2xx, a passing check, a finished export. Green for "go" would be a second
+ * meaning for the same swatch, and the product already has a colour that means
+ * "this is the primary action". Weight carries the rest of the emphasis, since
+ * the bar has no room for a filled button.
+ */
+.status-action-go {
+  color: var(--accent);
+  font-weight: var(--weight-medium);
+}
+
+.status-action-go:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+/* ── Drawers ────────────────────────────────────────────────────────────────
+ * Recent picks and Settings. Both cover `main` rather than pushing it aside:
+ * the dock is too narrow to hold a panel and a sheet side by side, and sliding
+ * the content out from under the pointer to make room is worse than replacing
+ * it. They sit inside `main` — which is `position: relative` in base.css — so
+ * the status bar stays visible and usable while one is open.
+ */
+
+.drawer {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--pad-panel);
+  background: var(--bg);
+  overflow-y: auto;
+  animation: drawer-in 140ms ease-out;
+}
+
+/*
+ * Opacity and a 6px rise, not a slide from the edge.
+ *
+ * A drawer that flies in from the right implies a place it came from and a
+ * gesture that would send it back, and there is no such gesture here — it is a
+ * button in the status bar. The rise says "this is now on top" and finishes
+ * inside the shared --transition's neighbourhood, so it does not feel like a
+ * different product's animation. Reduced motion removes it via styles/base.css.
+ */
+@keyframes drawer-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer-head h2 {
+  font-size: var(--text-heading);
+  font-weight: var(--weight-semibold);
+}
+
+.drawer-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/*
+ * The close button, and any group ending in one, is pushed to the right edge.
+ * Stated for both shapes because the two drawers differ: Settings has a bare
+ * close button, Recent has Clear beside it.
+ */
+.drawer-head .drawer-head-actions,
+.drawer-head > .btn--icon:last-child {
+  margin-left: auto;
+}
+
+/* ── Narrow docks ───────────────────────────────────────────────────────────
+ * Docked to the side the panel gets ~300px, which is narrower than the full
+ * action set. Shed by priority rather than letting anything overflow — and the
+ * order is not arbitrary: the hint goes first because it is a reminder, then the
+ * actions that the result card also carries, so nothing becomes unreachable.
+ */
+
+@media (max-width: 560px) {
+  .status-hint,
+  .status-divider {
+    display: none;
+  }
+
+  .status-group:last-child {
+    gap: var(--space-2);
+  }
+
+  .status-action[data-priority='low'] {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .status-action[data-priority='mid'] {
+    display: none;
+  }
+}

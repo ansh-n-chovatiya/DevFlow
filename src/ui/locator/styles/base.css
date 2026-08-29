@@ -1,0 +1,194 @@
+/*
+ * The DevTools panel's shell: the document frame, the view container, and the
+ * three utilities the panel's own copy needs.
+ *
+ * Re-skinned from react-source-locator `src/panel/styles/base.css` @ 2.2.0.
+ * Three hundred lines came in and roughly seventy went out, because most of that
+ * file was a second copy of things DevFlow already has exactly once:
+ *
+ *   - the reset, `[hidden]`, the focus ring, `.icon`, `.mono`, `kbd`'s family
+ *     and the reduced-motion block are all in `styles/base.css`;
+ *   - `.btn` / `.btn-primary` / `.btn-ghost` / `.btn-sm` / `.icon-btn`,
+ *     `.input`, `.banner` / `.banner-warn` / `.banner-error` and `.spinner` are
+ *     all in `styles/components.css`, with a `--`-modifier spelling.
+ *
+ * Keeping either copy would have been the merge's headline failure: a panel with
+ * its own buttons is a panel that still reads as the other extension, however
+ * carefully its colours were retinted. So this file imports the shared sheet and
+ * declares only what is genuinely the panel's — a fixed-height column that never
+ * scrolls the document, and a scroll region inside it. The class map for the
+ * markup that used to use the locator's names:
+ *
+ *   .btn-primary → .btn.btn--primary      .icon-btn  → .btn.btn--icon.btn--compact
+ *   .btn (plain) → .btn.btn--secondary    .input     → .input (unchanged)
+ *   .btn-ghost   → .btn.btn--ghost        .banner-warn  → .banner.banner--warn
+ *   .btn-sm      → .btn--compact          .banner-error → .banner.banner--danger
+ *   .banner-icon → .banner__icon          .banner-text  → .banner__body
+ *
+ * Type is the shared scale, not the locator's 12px/18px. The panel is a 300-400px
+ * column and 12px was a reasonable density choice there, but the popup is only
+ * 360px wide and sets 13px, and the two sit side by side in the "is this one
+ * product" screenshot. One scale, and the smaller sizes come from --text-meta,
+ * --text-code and --text-label where the panel used 11px and 10px.
+ *
+ * Loaded first of the panel's sheets, so it is the one that pulls in the shared
+ * set: `main.ts` imports base → chrome → idle → picking → locating → result →
+ * error, and nothing but this file imports `styles/index.css`.
+ */
+
+@import '../../styles/index.css';
+
+/*
+ * The panel is a fixed-height column, not a page.
+ *
+ * The document itself must never scroll: the status bar is pinned to the bottom
+ * of the dock, and the moment the body can scroll it scrolls away. `main` owns
+ * the overflow instead, which is also what makes the drawers — absolutely
+ * positioned inside it — cover the content rather than the chrome.
+ */
+body {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+main {
+  /* The containing block for the two drawers and for .surface-grid's ground. */
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: var(--pad-panel);
+
+  /*
+   * `--pad-panel`, never `--gutter`. They were the same token name in the two
+   * repos and meant 12px and 32px respectively (D6), so a naive merge would have
+   * rescaled every view in this directory by a factor of nearly three. The page
+   * gutter still exists and still means 32px; it is simply not a panel value.
+   */
+  overflow-y: auto;
+
+  /*
+   * Long bundle URLs and deep component paths are the panel's normal content and
+   * they are truncated, not scrolled to. A sideways scrollbar on a 300px dock
+   * hides the bottom row of whatever is under it.
+   */
+  overflow-x: hidden;
+}
+
+/* ── Views ──────────────────────────────────────────────────────────────────
+ * One `<section class="view">` per state — idle, picking, locating, result,
+ * error — with all but one `hidden`. `[hidden]` beats `display: flex` in
+ * styles/base.css, so the hidden ones stay hidden.
+ */
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/*
+ * Empty states centre themselves in whatever space the dock leaves.
+ *
+ * `min-height: 100%` rather than `height`: the content may be taller than the
+ * dock — the idle view's feature cards are, on a short window — and a fixed
+ * height would clip them instead of letting `main` scroll.
+ */
+.view-center {
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: var(--space-2) 0 var(--space-4);
+}
+
+/*
+ * Faint dot grid behind the empty states. It reads as "canvas waiting for input"
+ * and keeps the large blank area from looking like a failed render.
+ *
+ * Painted through a pseudo-element so the opacity never touches the content, and
+ * the colour and the fade are two tokens rather than one colour value with
+ * baked-in alpha — a single value could not be re-tinted per theme, which is
+ * exactly what `--dot` / `--dot-opacity` were added to tokens.css to allow.
+ */
+.surface-grid::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: var(--dot-opacity);
+  background-image: radial-gradient(circle at 1px 1px, var(--dot) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+
+.surface-grid > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Copy ───────────────────────────────────────────────────────────────────
+ * `.meta` in styles/base.css is the shared small-muted-text utility and covers
+ * one-line labels. These two are for the panel's sentences: prose that wraps,
+ * so it wants a looser leading than a metadata row does.
+ */
+
+.hint {
+  color: var(--fg-muted);
+  line-height: var(--leading-body);
+}
+
+.hint-muted {
+  color: var(--fg-faint);
+  font-size: var(--text-meta);
+}
+
+/*
+ * Keycaps. `Esc`, `P` and `⌘K` are named in the panel's copy rather than only in
+ * a tooltip, because a shortcut nobody is told about is a shortcut nobody uses.
+ *
+ * styles/base.css already gives `kbd` the mono family at --text-code; this adds
+ * the cap itself and drops a size, since a keycap sits inside a sentence and
+ * should not out-measure it.
+ */
+kbd {
+  display: inline-block;
+  min-width: 16px;
+  padding: 1px var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  font-size: var(--text-label);
+  line-height: var(--leading-tight);
+  text-align: center;
+  color: var(--fg-muted);
+}
+
+/*
+ * A keycap on an accent-filled button.
+ *
+ * This is the one stray colour literal in the three files ported here: upstream
+ * hardcoded a flat black at 18% alpha, a scrim tuned for a light theme and
+ * carried unchanged into the dark one. `--fg` is the fix rather than a new
+ * token, and it is correct in both themes for a structural reason: `--fg` is
+ * always the opposite end of the ramp from `--on-accent`, so mixing towards it
+ * always moves the cap *away* from the text sitting on it. On light that darkens
+ * the cap under white text; on dark it lightens the cap under near-black text.
+ * A fixed black would have done the first and inverted the second.
+ */
+.btn--primary kbd {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--fg) 18%, transparent);
+  color: inherit;
+}
+
+/*
+ * A row of buttons that may wrap. The shared `.row` utility deliberately does
+ * not wrap — it is for a single line of metadata — and the result card's action
+ * row is three buttons wide in a dock that is often narrower than three buttons.
+ */
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
