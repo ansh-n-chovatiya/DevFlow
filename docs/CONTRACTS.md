@@ -335,7 +335,7 @@ explain what did not survive says it without naming it.
 | --- | --- |
 | `React Source` | the other product's name |
 | `DevPrecision` | the other product's design-system identity |
-| `rst:settings` | the other product's storage key. **Not bare `rst:`** — that matches `first:` and `worst:` in ordinary prose, and a gate that cries wolf is one nobody reads. D8 migrates the key, then it is gone. |
+| `rst:settings` | the other product's storage key. **Not bare `rst:`** — that matches `first:` and `worst:` in ordinary prose, and a gate that cries wolf is one nobody reads. **One exemption, and it is permanent: `src/features/settings/migrate.ts`.** See below. |
 | `__RST` | the other product's page globals — one agent now, one namespace |
 | `symbol id="i-` | the bespoke SVG sprite (§5) |
 | `FlowSnap` **in user-facing strings** | the recorder's own former product name, which is as much a tell as the locator's. Ordinary comments may still name FlowSnap and react-source-locator as the repos this code came from — that is provenance, and it is worth keeping. What may not survive is a string a person reads: page titles, button labels, error sentences, settings copy, console prefixes. |
@@ -343,6 +343,19 @@ explain what did not survive says it without naming it.
 
 DevFlow's page globals take the `__DEVFLOW_*` prefix, and its `localStorage`
 mirror key is `devflow.theme`.
+
+**Why the migration file is exempt forever, and not just until D8 runs.** The
+first draft of this section said the legacy key is migrated and then gone. That
+is true of `chrome.storage.sync`, which DevFlow can write and therefore can
+clear. It is not true of `chrome.storage.managed`, which is **read-only to the
+extension**: an organisation's policy file is deployed by its IT department and
+pushes the old key indefinitely, and no amount of migrating on our side can
+change a file we cannot write. An enterprise that deployed react-source-locator
+would have its `editor` and `projectRoot` policy silently stop applying the day
+it upgraded — which is precisely the deployment D7 exists to save. So
+`migrate.ts` keeps the legacy key permanently, `loadManaged()` reads it on every
+load, and the gate exempts that one file. Package J found this; the contract was
+wrong and this is the correction.
 
 ---
 

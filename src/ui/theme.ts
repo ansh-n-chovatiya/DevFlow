@@ -34,11 +34,26 @@ export function asTheme(value: unknown): ThemePreference {
  * `system` deliberately removes the attribute rather than setting it: the token
  * file resolves an unstamped document through `prefers-color-scheme`, and a
  * stamped one always wins over it.
+ *
+ * `systemAs` is the one surface where "system" does not mean the OS.
+ *
+ * A DevTools panel inherits DevTools' own light/dark setting, which the user
+ * chooses independently of the operating system — so a panel obeying
+ * `prefers-color-scheme` sits inside a dark DevTools window wearing the light
+ * palette, and the two halves of one window disagree. The panel passes
+ * `chrome.devtools.panels.themeName` here, and `system` resolves against that
+ * instead. Every other surface calls this with one argument and is unchanged.
+ *
+ * Note what this deliberately does *not* do: an explicit `light` or `dark`
+ * still wins outright, on the panel as everywhere else. DevTools' theme is what
+ * `system` means, not an override of what the user asked for — the setting is
+ * the product's own and it is not a suggestion. See docs/CONTRACTS.md §3.5.
  */
-export function applyTheme(theme: ThemePreference): void {
+export function applyTheme(theme: ThemePreference, systemAs?: 'light' | 'dark'): void {
   const root = document.documentElement;
-  if (theme === 'system') root.removeAttribute('data-theme');
-  else root.setAttribute('data-theme', theme);
+  if (theme !== 'system') root.setAttribute('data-theme', theme);
+  else if (systemAs) root.setAttribute('data-theme', systemAs);
+  else root.removeAttribute('data-theme');
 }
 
 function readMirror(): ThemePreference {

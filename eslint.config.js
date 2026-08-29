@@ -3,7 +3,13 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'node_modules/**', 'mcp-server/**', '*.zip', 'releases/**'] },
+  /*
+   * `.claude/**` carries per-developer config and, during a parallel wave, the
+   * agent worktrees — real checkouts of this same repo. Without this, `eslint .`
+   * lints every file once per worktree and reports the same problem seven times
+   * against paths that are not in the tree anyone is editing.
+   */
+  { ignores: ['dist/**', 'node_modules/**', 'mcp-server/**', '.claude/**', '*.zip', 'releases/**'] },
 
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

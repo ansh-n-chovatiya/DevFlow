@@ -106,8 +106,17 @@ for (const name of [...knownOwned].sort()) {
   failed++;
 }
 
+/*
+ * The drawer is on this list and not in `src/ui/settings/` because D9 puts one
+ * store behind two views: the options page and a drawer inside the DevTools
+ * panel. The guarantee D9 leans on is that the drawer goes through the same
+ * primitives or CI fails — and a glob that stopped at `src/ui/settings/` would
+ * have left the second view entirely unguarded, which is the one place a second
+ * way of drawing a setting could grow back.
+ */
 const others = [
   ...globSync('src/ui/settings/**/*.ts', { cwd: root }),
+  ...globSync('src/ui/locator/settings-drawer.ts', { cwd: root }),
   'src/settings.html',
 ]
   .map((file) => file.split('\\').join('/'))

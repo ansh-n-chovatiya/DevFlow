@@ -16,7 +16,10 @@
 
 import { annotateScreenshot } from './annotator.js';
 import { getLocal, setLocal } from '../chrome/storage.js';
-import { load as loadSettings } from '../features/settings/index.js';
+import {
+  load as loadSettings,
+  migrateLegacySettings,
+} from '../features/settings/index.js';
 import {
   loadRecordingSettings,
   readRecordingStamp,
@@ -1220,4 +1223,37 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
     default:
       return;
   }
+});
+
+/**
+ * Carry a react-source-locator user's settings across the merge.
+ *
+ * The one thing an upgrade can do that a fresh install cannot: silently lose
+ * work. react-source-locator kept its settings as a single JSON blob under one
+ * key; DevFlow keeps flat dotted keys, sparse overrides only. Without this, an
+ * existing user opens Settings after the update and finds their editor and
+ * project root blank — not reset by anything they did, and with no way to tell
+ * that the old values are still sitting in storage unread.
+ *
+ * Here as well as at the two Settings entry points because this is the only one
+ * that runs *before* the user goes looking. `onInstalled` fires on update and on
+ * enable, and the function is idempotent — it never overwrites a key `sync`
+ * already holds, since the blob is by definition the older document — so running
+ * it from three places costs three no-ops and buys the migration happening
+ * before it is needed rather than when someone notices.
+ *
+ * A failure here is not worth interrupting an install for: the Settings page
+ * will try again the moment it is opened.
+ */
+chrome.runtime.onInstalled.addListener(() => {
+  void migrateLegacySettings().then(
+    (migrated) => {
+      if (migrated.length > 0) {
+        console.warn(`DevFlow: carried ${migrated.length} setting(s) across from the previous extension.`);
+      }
+    },
+    () => {
+      /* Retried on the next Settings open. */
+    },
+  );
 });
