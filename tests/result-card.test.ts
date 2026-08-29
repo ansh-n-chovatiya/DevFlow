@@ -160,13 +160,13 @@ describe('resultCard', () => {
       const card = resultCard({ source: component({ status }) });
 
       expect(card.dataset.status, status).toBe(status);
-      expect(text(card, '.source-card__name'), status).toBe('CartSummary');
+      expect(text(card, '.result-card__name'), status).toBe('CartSummary');
 
       if (status === 'resolved') {
-        expect(card.querySelector('.source-card__detail'), status).toBeNull();
+        expect(card.querySelector('.result-card__detail'), status).toBeNull();
       } else {
         // The whole point: an unresolved component explains itself.
-        expect(text(card, '.source-card__detail'), status).toBe(STATUS_DETAIL[status]);
+        expect(text(card, '.result-card__detail'), status).toBe(STATUS_DETAIL[status]);
       }
     }
   });
@@ -178,20 +178,30 @@ describe('resultCard', () => {
         detail: 'Every bundle was cross-origin with no CORS headers.',
       }),
     });
-    expect(text(card, '.source-card__detail')).toBe(
+    expect(text(card, '.result-card__detail')).toBe(
       'Every bundle was cross-origin with no CORS headers.',
     );
   });
 
+  it('wears the shared chip for provenance, untinted', () => {
+    const via = resultCard({ source: resolved() }).querySelector('.result-card__via');
+    expect(via?.textContent).toBe('source map');
+    // The shared chip, so the badge matches every other categorical label in the
+    // product; untinted, so it borrows no data colour and says nothing about
+    // whether "compiled" is a worse answer than "source map".
+    expect(via?.classList.contains('chip')).toBe(true);
+    expect(via?.hasAttribute('data-tint')).toBe(false);
+  });
+
   it('shows a spinner instead of a provenance badge while pending', () => {
     const card = resultCard({ source: component({ status: 'pending' }) });
-    expect(card.querySelector('.source-card__spinner')).not.toBeNull();
-    expect(card.querySelector('.source-card__via')).toBeNull();
+    expect(card.querySelector('.result-card__spinner')).not.toBeNull();
+    expect(card.querySelector('.result-card__via')).toBeNull();
   });
 
   it('marks a component that lives in node_modules', () => {
     const card = resultCard({ source: resolved({ dependency: true }) });
-    expect(text(card, '.source-card__dep')).toBe('node_modules');
+    expect(text(card, '.result-card__dep')).toBe('node_modules');
   });
 
   // ── The path ───────────────────────────────────────────────────────────────
@@ -200,7 +210,7 @@ describe('resultCard', () => {
     const onCopyPath = vi.fn();
     const card = resultCard({ source: resolved(), onCopyPath });
 
-    const button = card.querySelector<HTMLButtonElement>('button.source-card__path');
+    const button = card.querySelector<HTMLButtonElement>('button.result-card__path');
     expect(button).not.toBeNull();
     expect(button?.title).toBe('Copy path');
     expect(button?.getAttribute('aria-label')).toBe('Copy path');
@@ -209,24 +219,24 @@ describe('resultCard', () => {
     // Copied and displayed are one string, so the button cannot copy something
     // other than the path it is sitting on.
     expect(onCopyPath).toHaveBeenCalledWith('src/checkout/CartSummary.tsx:42:7');
-    expect(text(card, '.source-card__path-text')).toBe('src/checkout/CartSummary.tsx:42:7');
+    expect(text(card, '.result-card__path-text')).toBe('src/checkout/CartSummary.tsx:42:7');
   });
 
   it('renders the path as plain text rather than an inert button with no handler', () => {
     const card = resultCard({ source: resolved() });
-    expect(card.querySelector('button.source-card__path')).toBeNull();
-    expect(text(card, '.source-card__path--static')).toBe('src/checkout/CartSummary.tsx:42:7');
+    expect(card.querySelector('button.result-card__path')).toBeNull();
+    expect(text(card, '.result-card__path--static')).toBe('src/checkout/CartSummary.tsx:42:7');
   });
 
   it('names the bundle a component was found in', () => {
     const card = resultCard({ source: resolved() });
-    expect(text(card, '.source-card__origin')).toBe('https://shop.example/assets/main.a1b2c3.js');
+    expect(text(card, '.result-card__origin')).toBe('https://shop.example/assets/main.a1b2c3.js');
   });
 
   it('shows no path line when there is no position to show', () => {
     const card = resultCard({ source: component({ status: 'not-found' }) });
-    expect(card.querySelector('.source-card__path')).toBeNull();
-    expect(card.querySelector('.source-card__origin')).toBeNull();
+    expect(card.querySelector('.result-card__path')).toBeNull();
+    expect(card.querySelector('.result-card__origin')).toBeNull();
   });
 
   // ── Open in Editor ─────────────────────────────────────────────────────────
@@ -250,7 +260,7 @@ describe('resultCard', () => {
     const card = resultCard({ source: resolved(), link: null, onOpenEditor: vi.fn() });
 
     expect(card.textContent).not.toContain('Open in Editor');
-    expect(text(card, '.source-card__path-text')).toBe('src/checkout/CartSummary.tsx:42:7');
+    expect(text(card, '.result-card__path-text')).toBe('src/checkout/CartSummary.tsx:42:7');
     // A missing link is not an error, so nothing about the card says it is.
     expect(card.querySelector('.banner')).toBeNull();
   });
@@ -303,7 +313,7 @@ describe('resultCard', () => {
       resourcesSearched: 9,
     });
 
-    const banner = card.querySelector('.source-card__ambiguity');
+    const banner = card.querySelector('.result-card__ambiguity');
     expect(banner).not.toBeNull();
     expect(banner?.classList.contains('banner--warn')).toBe(true);
     expect(banner?.textContent).toContain('matched 4 places across 9 scripts');
@@ -311,15 +321,15 @@ describe('resultCard', () => {
 
   it('warns on a resolved component too — a single match is the only quiet case', () => {
     expect(
-      resultCard({ source: resolved({ matchCount: 3 }) }).querySelector('.source-card__ambiguity'),
+      resultCard({ source: resolved({ matchCount: 3 }) }).querySelector('.result-card__ambiguity'),
     ).not.toBeNull();
 
     expect(
-      resultCard({ source: resolved({ matchCount: 1 }) }).querySelector('.source-card__ambiguity'),
+      resultCard({ source: resolved({ matchCount: 1 }) }).querySelector('.result-card__ambiguity'),
     ).toBeNull();
 
     expect(
-      resultCard({ source: resolved() }).querySelector('.source-card__ambiguity'),
+      resultCard({ source: resolved() }).querySelector('.result-card__ambiguity'),
     ).toBeNull();
   });
 
