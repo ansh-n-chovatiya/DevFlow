@@ -56,7 +56,6 @@ import type {
   ComponentStatus,
   ConsoleLevel,
   FlowReact,
-  PickResult,
   RecordingState,
   Overrides,
   Step,
