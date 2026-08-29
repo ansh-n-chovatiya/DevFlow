@@ -77,22 +77,46 @@
         branding the panel rather than orienting the reader.
       -->
       <section id="view-idle" class="view view-center surface-grid idle-view">
-        <div class="empty">
-          <span data-icon="atom" data-icon-class="empty__icon"></span>
-          <p class="empty__title">Nothing picked yet</p>
-          <p class="empty__body">
-            Pick a component on the page to see the file and line it was written
-            in, the components around it, and a way straight into your editor.
+        <div class="hero">
+          <span class="hero-mark hero-mark-spin" aria-hidden="true">
+            <span data-icon="atom"></span>
+          </span>
+
+          <h1 class="hero-title">Locate React Component</h1>
+          <p class="hero-sub">
+            Pick a React component on the page to view its source and the component tree.
           </p>
 
-          <button id="pick-btn" class="btn btn--primary idle-action" type="button">
+          <button id="pick-btn" class="btn btn--primary btn-hero idle-action" type="button">
             <span data-icon="crosshair"></span>
-            <span>Pick component</span>
+            <span>Pick Element</span>
           </button>
-        </div>
 
-        <!-- A footnote, outside the empty state's stack, not a second sentence. -->
-        <p class="idle-tip">Press <kbd>P</kbd> to pick, <kbd>Esc</kbd> to cancel.</p>
+          <ul class="feature-grid">
+            <li class="feature-card">
+              <span class="feature-icon" aria-hidden="true">
+                <span data-icon="mouse-pointer"></span>
+              </span>
+              <span class="feature-text">
+                <span class="feature-title">Hover to highlight</span>
+                <span class="feature-desc">Hover any component to see it highlight on the page.</span>
+              </span>
+            </li>
+            <li class="feature-card">
+              <span class="feature-icon" aria-hidden="true">
+                <span data-icon="network"></span>
+              </span>
+              <span class="feature-text">
+                <span class="feature-title">Component tree</span>
+                <span class="feature-desc">See the parent tree of the selected component.</span>
+              </span>
+            </li>
+          </ul>
+
+          <p class="hero-tip">
+            Tip: Press <kbd>P</kbd> to pick an element, <kbd>Esc</kbd> to cancel.
+          </p>
+        </div>
       </section>
 
       <!-- Picking — the picker is armed; the interaction happens on the page. -->
@@ -157,9 +181,10 @@
       <section id="view-locating" class="view locating-view" hidden>
         <div class="locating-panel" role="status" aria-live="polite">
           <div class="locating-head">
-            <span class="spinner" aria-hidden="true"></span>
+            <span class="spinner locating-spinner" aria-hidden="true"></span>
             <h2 class="locating-title">
-              Locating <span id="locating-name" class="locating-chip"></span>…
+              <span>Locating</span>
+              <span id="locating-name" class="locating-chip"></span>
             </h2>
           </div>
 

@@ -28,10 +28,11 @@
 /* ── Progress panel ──────────────────────────────────────────────────────── */
 
 .locating-panel {
-  padding: var(--pad-card);
+  padding: var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: var(--surface);
+  box-shadow: var(--shadow-modal);
 }
 
 .locating-head {
@@ -39,40 +40,31 @@
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
-/*
- * Fixed at the popup-title step rather than the locator's
- * `clamp(14px, 2.2vw + 8px, 18px)`. DevFlow's type is a fixed ramp of named
- * sizes — a panel whose headings interpolate between them is a panel that never
- * quite matches the popup at any width, which is the thing the merge is trying
- * to avoid. The component name still wraps, which is the responsive behaviour
- * that actually mattered.
- */
 .locating-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   min-width: 0;
   color: var(--fg);
   font-size: var(--text-popup-title);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
-  letter-spacing: -0.01em;
-
-  /* Component names are unbroken identifiers; a long one must wrap, not scroll. */
-  overflow-wrap: anywhere;
 }
 
-/* Not `.chip`: this is the component's own name set inline in the title, not a
-   categorical badge, so it stays sentence-cased and keeps the title's colour. */
 .locating-chip {
-  display: inline-block;
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-xs);
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-control);
   background: var(--accent-soft);
   color: var(--accent);
   font-family: var(--font-mono);
   font-size: var(--text-code);
-  font-weight: var(--weight-normal);
+  font-weight: var(--weight-medium);
   overflow-wrap: anywhere;
 }
 
@@ -85,15 +77,16 @@
   display: flex;
   flex-direction: column;
   gap: var(--locating-step-gap);
-  padding: var(--space-3);
+  padding: var(--space-4);
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-card);
   background: var(--surface-sunk);
 }
 
 .locating-step {
+  position: relative;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-3);
   min-width: 0;
 }
@@ -105,12 +98,12 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-  margin-top: 2px; /* optical centring against the label's line box */
+  width: 16px;
+  height: 16px;
   border: 1.5px solid var(--border-strong);
   border-radius: 50%;
   color: transparent; /* the check only becomes visible in the done state */
+  z-index: 1;
 }
 
 .locating-marker .icon {
@@ -120,19 +113,18 @@
 }
 
 /*
- * Rail joining consecutive markers, sized from the list's own row gap. The 3px
- * inset at each end is optical, not spacing — it is the gap that keeps a
- * hairline from touching the circles it runs between — so it stays a literal.
+ * Rail joining consecutive markers, attached to the non-spinning step container
+ * so it stays stationary when the active marker spins.
  */
-.locating-step:not(:last-child) .locating-marker::after {
+.locating-step:not(:last-child)::after {
   content: '';
   position: absolute;
-  top: calc(100% + 3px);
-  left: 50%;
+  top: 16px;
+  left: 7.5px;
   width: 1px;
-  height: calc(var(--locating-step-gap) - 6px);
-  transform: translateX(-50%);
+  height: calc(100% + var(--locating-step-gap) - 16px);
   background: var(--border);
+  z-index: 0;
 }
 
 .locating-label {

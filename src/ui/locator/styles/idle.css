@@ -1,73 +1,152 @@
 /*
  * Idle — the panel with nothing picked yet.
- *
- * This is the one file of the four that is a rewrite rather than a re-skin.
- * What it replaced was the locator's front door: an 80px spinning React mark,
- * the other extension's name set as a 24px hero title, a 2x2 bento grid of
- * feature cards and a tip line — 228 lines of a different product introducing
- * itself, in a design system that no longer exists here. A merged extension has
- * one front door, and it is the popup. So the panel's idle view becomes what
- * every other empty surface in DevFlow already is: an icon, what this is, why
- * it is empty, and the one thing to do about it — `.empty` in
- * src/ui/styles/components.css.
- *
- * The consequence is that this stylesheet owns almost nothing, and that is the
- * point. An idle panel that needs its own type ramp, its own card and its own
- * icon treatment is an idle panel that still looks like the other extension,
- * which is exactly what the Wave 3 side-by-side screenshot checks for.
- *
- * ── Markup contract (F writes the HTML, G writes the state) ─────────────────
- *
- *   <section class="view view-center surface-grid idle-view">
- *     <div class="empty">
- *       <span data-icon="atom" data-icon-class="empty__icon"></span>
- *       <p class="empty__title">...</p>
- *       <p class="empty__body">...</p>
- *       <button class="btn btn--primary idle-action" type="button">
- *         <span data-icon="crosshair"></span>
- *         <span>Pick component</span>
- *       </button>
- *     </div>
- *     <p class="idle-tip">... <kbd>Esc</kbd> ...</p>
- *   </section>
- *
- * `atom` is the panel's subject (a React component) and `crosshair` is the
- * action (pick one) — CONTRACTS.md §5. `Pick component` is frozen: §4.4.
- *
- * This file assumes the panel links src/ui/styles/index.css before the locator
- * stylesheets, which is what makes `.empty`, `.btn`, `kbd` and `.icon` mean the
- * same thing here as in the popup. All four view stylesheets assume it.
  */
 
-/*
- * The idle and locating views share one column so the panel's content does not
- * shift sideways between two states of the same gesture. 672px is a readable
- * measure for an undocked panel and is never reached in a side dock.
- */
 .idle-view {
-  gap: var(--space-4);
   width: 100%;
   max-width: 672px;
   margin: 0 auto;
 }
 
-/*
- * The action is the reason the view exists, so it takes the tall control height
- * the popup gives its own primary action. Not `.btn--lg`, which is full-width:
- * a button stretched across 672px reads as a banner rather than as something to
- * press.
- */
-.idle-action {
-  height: var(--control-height-primary);
-  padding: 0 var(--space-5);
-  margin-top: var(--space-1);
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 672px;
+  padding: 0 var(--space-4);
+  text-align: center;
 }
 
-/*
- * One line of keyboard detail, outside the empty state's own stack so it reads
- * as a footnote rather than as a second sentence competing with the action.
- */
-.idle-tip {
+.hero-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: clamp(56px, 6vw + 34px, 80px);
+  height: clamp(56px, 6vw + 34px, 80px);
+  margin-bottom: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-modal);
+  color: var(--accent);
+}
+
+.hero-mark .icon {
+  width: clamp(32px, 3.6vw + 18px, 44px);
+  height: clamp(32px, 3.6vw + 18px, 44px);
+  stroke-width: 1.5;
+  animation: hero-spin 12s linear infinite;
+}
+
+@keyframes hero-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.hero-title {
+  margin-bottom: var(--space-2);
+  font-size: clamp(18px, 0.9vw + 15px, 24px);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-title);
+  line-height: var(--leading-tight);
+  color: var(--fg);
+}
+
+.hero-sub {
+  max-width: 384px;
+  margin-bottom: var(--space-6);
+  color: var(--fg-muted);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  text-wrap: balance;
+}
+
+.btn-hero {
+  height: var(--control-height-primary);
+  margin-bottom: var(--space-7);
+  padding: 0 var(--space-6);
+  gap: var(--space-2);
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+}
+
+/* ── Bento feature cards ─────────────────────────────────────────────────── */
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  width: 100%;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-6) 0;
+}
+
+.feature-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  text-align: left;
+  transition: border-color var(--transition);
+}
+
+.feature-card:hover {
+  border-color: var(--border-strong);
+}
+
+.feature-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface-sunk);
+  color: var(--fg-muted);
+  transition: background-color var(--transition), color var(--transition);
+}
+
+.feature-icon .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.feature-card:hover .feature-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.feature-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.feature-title {
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  color: var(--fg);
+}
+
+.feature-desc {
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+  line-height: var(--leading-normal);
+}
+
+.hero-tip {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -78,42 +157,20 @@
   text-align: center;
 }
 
-/* ── Reflow ──────────────────────────────────────────────────────────────────
- * The panel is whatever size the user drags the dock to, and the two axes fail
- * differently: a side dock runs out of width at ~300px, a bottom dock runs out
- * of height at ~200px. Both breakpoints are the locator's, measured against
- * real DevTools docks; only the values inside them are rebased on the 4px
- * scale.
- */
+/* ── Reflow ────────────────────────────────────────────────────────────────── */
 
-/* Side dock: the empty state already wraps, so only the padding needs to go. */
 @media (max-width: 520px) {
-  .idle-view .empty {
-    padding: var(--space-5) var(--space-3);
+  .feature-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
-/*
- * Bottom dock: height is the scarce axis. Shed supporting content in order of
- * importance so the icon, the title and the button always fit unscrolled.
- */
 @media (max-height: 520px) {
-  .idle-view {
-    gap: var(--space-2);
-  }
-
-  .idle-view .empty {
-    padding: var(--space-4) var(--space-3);
-  }
-
-  .idle-tip {
+  .feature-grid {
     display: none;
+  }
+  .btn-hero {
+    margin-bottom: var(--space-4);
   }
 }
 
-/* Last thing to go is the explanation; the action still says what to do. */
-@media (max-height: 320px) {
-  .idle-view .empty__body {
-    display: none;
-  }
-}

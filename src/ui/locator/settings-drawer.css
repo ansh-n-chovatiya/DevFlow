@@ -15,8 +15,8 @@
 .drawer-settings {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-2) 0;
+  padding: 0;
+  margin: 0;
 }
 
 .drawer-settings .group__rows {
@@ -28,12 +28,17 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-4) 0;
+  padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
+}
+
+.drawer-settings .setting-row:first-child {
+  padding-top: var(--space-1);
 }
 
 .drawer-settings .setting-row:last-child {
   border-bottom: 0;
+  padding-bottom: var(--space-1);
 }
 
 .drawer-settings .setting-row__body {
@@ -116,7 +121,8 @@
 }
 
 .drawer-settings__more {
-  margin-top: var(--space-4);
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-2);
   width: 100%;
   justify-content: center;
 }
