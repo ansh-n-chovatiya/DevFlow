@@ -1,16 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { pos1 } from '../src/core/react/positions.js';
+import { pos0, pos1 } from '../src/core/react/positions.js';
 import type {
   ComponentSource,
+  ComponentStatus,
   ConsoleEntry,
   FlowReact,
   NetworkCall,
   Step,
 } from '../src/shared/types.js';
+import { detailText, pathText, STATUS_DETAIL } from '../src/ui/components/result-card.js';
 import {
+  ALSO_ON_LIMIT,
   deriveReviewView,
   firstVisibleIndex,
+  STATUS_WORD,
   STEP_ICON,
+  stepsByComponent,
+  stepsForComponentName,
   type ReviewInput,
 } from '../src/ui/viewer/review-view.js';
 
@@ -332,10 +338,15 @@ describe('the React component on a step', () => {
       name: 'AddToCartButton',
       // Nothing to add: the owner already names something specific.
       within: null,
-      source: 'src/Cart.tsx:34',
+      record: { name: 'AddToCartButton', status: 'resolved', source: 'src/Cart.tsx', line: 34 },
+      path: 'src/Cart.tsx:34',
+      status: 'resolved',
+      statusLabel: null,
       detail: null,
       dependency: false,
       editorUrl: null,
+      alsoOn: [],
+      alsoOnMore: 0,
     });
   });
 
@@ -383,7 +394,7 @@ describe('the React component on a step', () => {
       lazy: { name: 'LazyModal', status: 'not-found', detail: 'Its chunk was never loaded.' },
     }).steps;
 
-    expect(card.component?.source).toBeNull();
+    expect(card.component?.path).toBeNull();
     expect(card.component?.detail).toBe('Its chunk was never loaded.');
   });
 
@@ -408,6 +419,275 @@ describe('the React component on a step', () => {
     }).header;
 
     expect(header?.components).toBe('2 components · 1 resolved');
+  });
+});
+
+/**
+ * W2·K — the review as a locate surface.
+ *
+ * The data was always there: every click captured a component needle and the
+ * background pass resolved it, so `ComponentSource` has been sitting on the step
+ * since the recording was made. Nobody had ever shown it. What these tests pin
+ * is that showing it introduced no second vocabulary — the step's path is the
+ * card's path, the step's sentence is the card's sentence, and the word on the
+ * collapsed disclosure is the status's own.
+ *
+ * The failure they exist to catch is a review that grows its own way of saying
+ * "ambiguous". That is invisible to a typecheck and to every test of the card,
+ * and it is exactly how a merged product goes on reading as two.
+ */
+describe('a step as a locate surface', () => {
+  const chained = (chain: string[], over: Partial<Step> = {}) =>
+    step({
+      element: {
+        tag: 'button',
+        cssSelector: '#save',
+        xpath: '/html/body/button',
+        boundingBox: null,
+        react: { chain },
+      },
+      ...over,
+    });
+
+  const react = (components: Record<string, ComponentSource>): FlowReact => ({
+    detected: true,
+    build: 'production',
+    components,
+  });
+
+  const view = (steps: Step[], components: Record<string, ComponentSource>) =>
+    deriveReviewView(
+      input({
+        flow: { id: 'f', name: 'n', steps, createdAt: NOW, react: react(components), settings: null },
+      }),
+    );
+
+  /** Every status that is not `resolved`, listed so a tenth one fails here too. */
+  const UNRESOLVED: Exclude<ComponentStatus, 'resolved'>[] = [
+    'compiled-only',
+    'ambiguous',
+    'not-found',
+    'no-map',
+    'map-error',
+    'unfetchable',
+    'skipped',
+    'pending',
+  ];
+
+  it('hands the record on untouched, because the card is what renders it', () => {
+    const record: ComponentSource = {
+      name: 'AddToCartButton',
+      status: 'ambiguous',
+      via: 'bundle-search',
+      source: 'src/Cart.tsx',
+      line: pos1(34),
+      column: pos1(12),
+      matchCount: 3,
+      detail: 'Two bundles matched.',
+    };
+
+    const [card] = view([chained(['cart'])], { cart: record }).steps;
+
+    // Not a copy and not a flattening: `matchCount` and `via` never appear on
+    // the view model, and the card needs both. Anything the view model dropped
+    // here would be a fact the review's card shows and the panel's does not.
+    expect(card.component?.record).toBe(record);
+  });
+
+  it('shows the path in the card’s words, not in a second formatter’s', () => {
+    const record: ComponentSource = {
+      name: 'Cart',
+      status: 'resolved',
+      source: 'src/Cart.tsx',
+      line: pos1(34),
+      column: pos1(12),
+    };
+
+    const [card] = view([chained(['cart'])], { cart: record }).steps;
+
+    expect(card.component?.path).toBe(pathText(record));
+    expect(card.component?.path).toBe('src/Cart.tsx:34:12');
+  });
+
+  /*
+   * The one that would never be noticed. A compiled position is stored `Pos0`
+   * and every editor and every human is `Pos1`, so a step that printed the
+   * stored number would sit one line off the card it opens — both entirely
+   * plausible, and disagreeing. CONTRACTS §1 is the whole reason the number
+   * crosses the bridge in exactly one place, and `pathText` is that place.
+   */
+  it('shows a compiled position one-based, the same as the card does', () => {
+    const record: ComponentSource = {
+      name: 'Modal',
+      status: 'compiled-only',
+      via: 'bundle-search',
+      compiled: { url: 'https://example.com/assets/main-a1b2.js', line: pos0(400), column: pos0(17) },
+    };
+
+    const [card] = view([chained(['modal'])], { modal: record }).steps;
+
+    expect(card.component?.path).toBe('main-a1b2.js:401:18');
+    expect(card.component?.path).toBe(pathText(record));
+  });
+
+  it('gives every unresolved status a word for the collapsed row', () => {
+    for (const status of UNRESOLVED) {
+      const [card] = view([chained(['x'])], { x: { name: 'Widget', status } }).steps;
+
+      expect(card.component?.status, status).toBe(status);
+      expect(card.component?.statusLabel, status).toBe(STATUS_WORD[status]);
+      // The word is the status, opened out — never a coinage. `unresolved` on
+      // every one of them was what this replaced, and it told the reader
+      // nothing about which of eight things had happened.
+      expect(card.component?.statusLabel, status).toBe(status.replace('-', ' '));
+    }
+  });
+
+  it('says which of the eight it was, even when the record arrived without a sentence', () => {
+    for (const status of UNRESOLVED) {
+      const [card] = view([chained(['x'])], { x: { name: 'Widget', status } }).steps;
+
+      // An older flow, or a hand-built fixture. A blank here reads as "this
+      // component has no source", which is both discouraging and wrong.
+      expect(card.component?.detail, status).toBe(STATUS_DETAIL[status]);
+    }
+  });
+
+  it('prefers the sentence the resolver wrote over the card’s fallback', () => {
+    const record: ComponentSource = {
+      name: 'LazyModal',
+      status: 'not-found',
+      detail: 'Its chunk was never loaded.',
+    };
+    const [card] = view([chained(['lazy'])], { lazy: record }).steps;
+
+    expect(card.component?.detail).toBe('Its chunk was never loaded.');
+    expect(card.component?.detail).toBe(detailText(record));
+  });
+
+  it('says nothing at all about a resolved component, because the path is the answer', () => {
+    const [card] = view([chained(['cart'])], {
+      cart: { name: 'Cart', status: 'resolved', source: 'src/Cart.tsx', line: pos1(3) },
+    }).steps;
+
+    expect(card.component?.statusLabel).toBeNull();
+    expect(card.component?.detail).toBeNull();
+  });
+});
+
+/**
+ * The bridge's other direction, as far as the review can carry it.
+ *
+ * "From a picked component → the steps that touched it" needs a pick, and the
+ * viewer has no tab to arm one on. What it does have is the flow, and the flow
+ * already knows which steps a component was touched on — so the question is
+ * answered here and the pick is the part that is missing.
+ */
+describe('from a component back to its steps', () => {
+  const chained = (chain: string[]) =>
+    step({
+      element: {
+        tag: 'button',
+        cssSelector: '#save',
+        xpath: '/html/body/button',
+        boundingBox: null,
+        react: { chain },
+      },
+    });
+
+  const components: Record<string, ComponentSource> = {
+    app: { name: 'App', status: 'resolved', source: 'src/App.tsx', line: pos1(1) },
+    cart: { name: 'Cart', status: 'resolved', source: 'src/Cart.tsx', line: pos1(34) },
+    button: { name: 'Button', status: 'resolved', source: 'src/ui/Button.tsx', line: pos1(8) },
+  };
+
+  const steps = [
+    chained(['app', 'cart']),
+    step({ type: 'navigate', title: 'Home', element: undefined }),
+    chained(['app', 'cart']),
+    chained(['app', 'button']),
+  ];
+
+  const flow = (over: Partial<ReviewInput> = {}) =>
+    deriveReviewView(
+      input({
+        flow: {
+          id: 'f',
+          name: 'n',
+          steps,
+          createdAt: NOW,
+          react: { detected: true, build: 'production', components },
+          settings: null,
+        },
+        ...over,
+      }),
+    );
+
+  it('tells each card where else its component was touched', () => {
+    const cards = flow().steps;
+
+    // Steps 1 and 3 are both the cart button; each names the other and not
+    // itself. Step 4 is a different component and step 2 has none.
+    expect(cards[0].component?.alsoOn).toEqual([3]);
+    expect(cards[1].component).toBeNull();
+    expect(cards[2].component?.alsoOn).toEqual([1]);
+    expect(cards[3].component?.alsoOn).toEqual([]);
+    expect(cards.map((card) => card.component?.alsoOnMore ?? 0)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('counts rather than lists once a shared component is on most of the flow', () => {
+    // The ordinary case for a design system's `Button`, not a pathological one.
+    const many = Array.from({ length: 12 }, () => chained(['button']));
+    const view = deriveReviewView(
+      input({
+        flow: {
+          id: 'f',
+          name: 'n',
+          steps: many,
+          createdAt: NOW,
+          react: { detected: true, build: 'production', components },
+          settings: null,
+        },
+      }),
+    );
+
+    const [first] = view.steps;
+    expect(first.component?.alsoOn).toHaveLength(ALSO_ON_LIMIT);
+    expect(first.component?.alsoOn).toEqual([2, 3, 4, 5, 6, 7]);
+    // Eleven others, six shown. The card stays about the component.
+    expect(first.component?.alsoOnMore).toBe(11 - ALSO_ON_LIMIT);
+  });
+
+  it('counts steps the filter is hiding, because a filter is a way of looking', () => {
+    // Filtering to clicks drops step 2 from the list. Steps 1 and 3 still know
+    // about each other, and their numbers are still the flow's, not the list's.
+    const clicks = flow({ filter: 'click' }).steps;
+    expect(clicks.map((card) => card.number)).toEqual([1, 3, 4]);
+    expect(clicks.map((card) => card.component?.alsoOn)).toEqual([[3], [1], []]);
+  });
+
+  it('indexes the whole flow by component id', () => {
+    expect(stepsByComponent(steps, components)).toEqual(
+      new Map([
+        ['cart', [1, 3]],
+        ['button', [4]],
+      ]),
+    );
+  });
+
+  /*
+   * By name, and over the whole chain. A pick answers with a name — the picker
+   * walks the page's fibers and knows nothing of the recorder's ids — and a user
+   * who picks an outer component is asking which steps happened inside it, not
+   * which steps it was blamed for.
+   */
+  it('answers by name, including for a component no step is attributed to', () => {
+    expect(stepsForComponentName(steps, components, 'Cart')).toEqual([1, 3]);
+    expect(stepsForComponentName(steps, components, 'Button')).toEqual([4]);
+    // `App` is the owner of nothing — it is the outermost link of every chain —
+    // and it is still true that every recorded interaction happened inside it.
+    expect(stepsForComponentName(steps, components, 'App')).toEqual([1, 3, 4]);
+    expect(stepsForComponentName(steps, components, 'Nowhere')).toEqual([]);
   });
 });
 

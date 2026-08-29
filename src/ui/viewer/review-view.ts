@@ -6,19 +6,38 @@
  * filters, which steps count as failures, when a URL is worth showing, what a
  * card leads with. tests/review-view.test.ts is the specification; the controller
  * below it only knows how to put this on screen.
+ *
+ * ## The review is a locate surface (W2·K)
+ *
+ * Every click already carries a component needle, and the background pass
+ * already resolves it: `ComponentSource` has been sitting on the step since the
+ * recording was made. What was missing was anywhere to see it. So a step now
+ * says which component it happened in *and* which file that component was
+ * written in, and the record itself travels on the view model — untouched, not
+ * flattened into strings — because the thing that renders it is the same
+ * `resultCard` the DevTools panel and the popup render. One card, three
+ * surfaces, no second vocabulary for "no map".
+ *
+ * That is also why the two strings a step shows about its component come from
+ * `components/result-card.ts` rather than from `formatSource`. `pathText` and
+ * `detailText` are pure, and taking them from the card is what guarantees the
+ * one-line summary and the card it opens cannot disagree — including about the
+ * `Pos0`/`Pos1` boundary, which `pathText` crosses correctly and in one place
+ * (CONTRACTS §1).
+ *
+ * The bridge is meant to run both ways, so `stepsForComponentName` answers the
+ * other direction — given a component, which steps touched it — and `alsoOn`
+ * puts the answer on the card for the component the step already names.
  */
 
 import { flowHost, formatDelta, stepFailed, worstLevel, worstStatus } from '../../core/flow/index.js';
 import type { StatusClass } from '../../core/flow/index.js';
-import {
-  formatSource,
-  stepEnclosing,
-  stepOwner,
-  summarizeComponents,
-} from '../../core/react/attribution.js';
+import { stepEnclosing, stepOwner, summarizeComponents } from '../../core/react/attribution.js';
 import { componentEditorUrl, type EditorLink } from '../../core/react/editor.js';
+import { detailText, pathText } from '../components/result-card.js';
 import type {
   ComponentSource,
+  ComponentStatus,
   ConsoleLevel,
   FlowReact,
   RecordingState,
@@ -147,7 +166,7 @@ export interface StepCardView {
 /**
  * What the card says about the component a step happened in.
  *
- * The name is always shown; `source` and `detail` are two halves of the same
+ * The name is always shown; `path` and `detail` are two halves of the same
  * answer and exactly one of them is worth reading. A step whose component is
  * still `pending` says so rather than showing an empty row, because a blank
  * where a path should be reads as "this component has no source file".
@@ -161,14 +180,46 @@ export interface StepComponentView {
    * click landed and `CheckoutButton` is what makes that mean something.
    */
   within: string | null;
+  /**
+   * The record itself, handed to `resultCard` unchanged.
+   *
+   * The view model decides *which* component of the chain the step is
+   * attributed to — four preference tiers deep, and not a decision to make
+   * twice. It does not decide how a component reads: that is the shared card's
+   * job on all three surfaces, and it needs the whole record to do it.
+   */
+  record: ComponentSource;
   /** `src/components/Cart.tsx:34`, or `null` when it has nowhere to point. */
-  source: string | null;
+  path: string | null;
+  status: ComponentStatus;
+  /**
+   * The status, spelled for a person, or `null` when it is `resolved`.
+   *
+   * A word, where `detail` is a sentence: it sits on the collapsed disclosure,
+   * which has room for neither the sentence nor a blank.
+   */
+  statusLabel: string | null;
   /** The one sentence for anything that is not a resolved original file. */
   detail: string | null;
   /** The path is inside `node_modules`, so this is not the user's own code. */
   dependency: boolean;
   /** A link that opens the file, or `null` when nothing can be built. */
   editorUrl: string | null;
+  /**
+   * The other steps in the flow attributed to this same component, by step
+   * number — the reverse of the bridge, from where the review can reach it.
+   *
+   * Over the whole flow and never the filtered list, for the same reason the
+   * elapsed time is: "this component was also touched on step 7" is a fact
+   * about the recording, and a filter that hides step 7 does not make it false.
+   *
+   * Capped at `ALSO_ON_LIMIT`. A shared `Button` in a forty-step flow is the
+   * ordinary case, not the pathological one, and thirty-nine numbers is a wall
+   * rather than an answer.
+   */
+  alsoOn: number[];
+  /** How many more there were beyond the cap. `0` when the list is complete. */
+  alsoOnMore: number;
 }
 
 export interface FilterChip {
@@ -268,25 +319,126 @@ function detail<T, W>(items: T[] | undefined, worst: W): DetailSummary<W> | null
   return { count: items.length, worst };
 }
 
+/**
+ * The status, spelled for a person: `no-map` reads "no map".
+ *
+ * Not a second vocabulary. It is `ComponentStatus` itself with its hyphens
+ * opened out, and the sentence that explains it is always the card's — either
+ * the one the resolver wrote or `STATUS_DETAIL`'s fallback. Inventing a word
+ * here would mean a step and the card it opens describing the same outcome
+ * differently, which is the drift the one shared card exists to prevent.
+ *
+ * A `Record` over the eight non-`resolved` statuses, like the card's own table:
+ * a tenth `ComponentStatus` fails the build in both places rather than falling
+ * through to a blank chip in one of them.
+ */
+export const STATUS_WORD: Record<Exclude<ComponentStatus, 'resolved'>, string> = {
+  'compiled-only': 'compiled only',
+  ambiguous: 'ambiguous',
+  'not-found': 'not found',
+  'no-map': 'no map',
+  'map-error': 'map error',
+  unfetchable: 'unfetchable',
+  skipped: 'skipped',
+  pending: 'pending',
+};
+
+/**
+ * Which steps each component was attributed to, keyed by component id.
+ *
+ * Built once per paint rather than searched per card: the answer is the same
+ * for every card and a scan per step is quadratic in the length of a flow.
+ * Step *numbers*, because numbers are what the rail shows and what a person
+ * would say out loud.
+ */
+export function stepsByComponent(
+  steps: Step[],
+  components: Record<string, ComponentSource>,
+): Map<string, number[]> {
+  const index = new Map<string, number[]>();
+
+  steps.forEach((step, at) => {
+    const owner = stepOwner(step, components);
+    if (!owner) return;
+
+    const seen = index.get(owner.id);
+    if (seen) seen.push(at + 1);
+    else index.set(owner.id, [at + 1]);
+  });
+
+  return index;
+}
+
+/**
+ * The steps a component of this name was touched on, by step number.
+ *
+ * The other direction of the bridge: a pick answers with a **name** and nothing
+ * else — `PickedComponent` carries no id, because the picker walks the page's
+ * fibers and the flow's component ids are the recorder's own — so the question
+ * has to be asked by name, and asked of the whole chain rather than only the
+ * attributed owner. A user who picks the `CheckoutForm` an input sits inside is
+ * asking which steps happened in it, not which steps it was blamed for.
+ *
+ * Exported and tested from here because it is a decision about the flow, and
+ * because the surface that would arm the pick does not exist yet — see the
+ * note in `review.ts`.
+ */
+export function stepsForComponentName(
+  steps: Step[],
+  components: Record<string, ComponentSource>,
+  name: string,
+): number[] {
+  const numbers: number[] = [];
+
+  steps.forEach((step, at) => {
+    const chain = step.element?.react?.chain ?? [];
+    if (chain.some((id) => components[id]?.name === name)) numbers.push(at + 1);
+  });
+
+  return numbers;
+}
+
+/**
+ * How many other steps a component's card lists before it starts counting.
+ *
+ * Six is two rows of chips at the review's column width — enough to read as a
+ * list, short enough that the card stays about the component rather than about
+ * the flow.
+ */
+export const ALSO_ON_LIMIT = 6;
+
 function componentView(
   step: Step,
+  index: number,
   components: Record<string, ComponentSource>,
   editor: EditorLink | null,
+  touched: Map<string, number[]>,
 ): StepComponentView | null {
   const owner = stepOwner(step, components);
   if (!owner) return null;
 
   const { component } = owner;
+  const number = index + 1;
+  const alsoOn = (touched.get(owner.id) ?? []).filter((other) => other !== number);
 
   return {
     name: component.name,
     within: stepEnclosing(step, components)?.component.name ?? null,
-    source: formatSource(component),
+    record: component,
+    // The card's own formatter, not a second one. It is also the only one that
+    // crosses the Pos0 boundary on a compiled position (CONTRACTS §1).
+    path: pathText(component),
+    status: component.status,
+    statusLabel: component.status === 'resolved' ? null : STATUS_WORD[component.status],
     // A resolved component's path speaks for itself; everything else owes the
-    // reader a reason, and `detail` is where the resolver wrote one.
-    detail: component.status === 'resolved' ? null : (component.detail ?? null),
+    // reader a reason. `detailText` prefers the sentence the resolver wrote and
+    // falls back to the card's, so "no sentence" is never a state a step can be
+    // in — which it was for any record that reached us without a `detail`.
+    detail: detailText(component),
     dependency: component.dependency === true,
     editorUrl: componentEditorUrl(component, editor),
+    alsoOn: alsoOn.slice(0, ALSO_ON_LIMIT),
+    alsoOnMore: Math.max(0, alsoOn.length - ALSO_ON_LIMIT),
   };
 }
 
@@ -296,6 +448,7 @@ function cardView(
   activeIndex: number | null,
   components: Record<string, ComponentSource>,
   editor: EditorLink | null,
+  touched: Map<string, number[]>,
 ): StepCardView {
   const step = steps[index];
 
@@ -317,7 +470,7 @@ function cardView(
     selectors: step.element
       ? { css: step.element.cssSelector, xpath: step.element.xpath }
       : null,
-    component: componentView(step, components, editor),
+    component: componentView(step, index, components, editor, touched),
     network: detail(step.networkCalls, worstStatus(step.networkCalls)),
     console: detail(step.consoleLogs, worstLevel(step.consoleLogs)),
     notes: step.notes ?? '',
@@ -411,13 +564,18 @@ export function deriveReviewView(input: ReviewInput): ReviewView {
     .filter((index) => passes(steps[index], filter));
 
   const components = flow.react?.components ?? {};
+  // Over the whole flow, not `shown`: which other steps touched a component is
+  // a fact about the recording, and a filter is a way of looking at it.
+  const touched = stepsByComponent(steps, components);
 
   return {
     body: shown.length === 0 ? 'no-matches' : 'steps',
     header,
     live,
     rail: shown.map((index) => railRow(steps, index, activeIndex)),
-    steps: shown.map((index) => cardView(steps, index, activeIndex, components, input.editor)),
+    steps: shown.map((index) =>
+      cardView(steps, index, activeIndex, components, input.editor, touched),
+    ),
     filters,
     failures,
     canExport: true,
