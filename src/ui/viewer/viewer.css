@@ -1,0 +1,1669 @@
+/*
+ * Viewer layout — the library and the review workspace.
+ *
+ * Composition only: every control is a component from components.css, and no
+ * colour is declared here that is not a token. The file it replaces was 950
+ * lines of hardcoded hexes inside a <style> block, which is why the viewer was
+ * the last surface with no dark theme.
+ */
+
+@import '../styles/index.css';
+
+.view {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ── Library ────────────────────────────────────────────────────────────── */
+
+/*
+ * The same frame as the app bar above it, so the page title sits directly under
+ * the product mark. `flex: 1` and the footer's `margin-top: auto` put the
+ * storage meter at the bottom of the window rather than halfway up it when the
+ * library holds two flows.
+ */
+.page {
+  flex: 1;
+  width: 100%;
+  max-width: var(--frame-max);
+  margin: 0 auto;
+  padding: var(--space-5) var(--gutter) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.page__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.page__titles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.page__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search__icon {
+  position: absolute;
+  left: var(--space-2);
+  color: var(--fg-faint);
+  pointer-events: none;
+}
+
+.search__input {
+  width: 260px;
+  padding-left: calc(var(--space-2) * 2 + 16px);
+}
+
+/* The browser's own clear button is a different shape from everything else. */
+.search__input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+/*
+ * The current recording. It gets an accent edge rather than a card of its own
+ * design because it is the same object as the rows below it — just the one that
+ * can still change.
+ */
+.current {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.current__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.current__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg-muted);
+}
+
+.current__name {
+  font-size: var(--text-step-title);
+  font-weight: var(--weight-medium);
+}
+
+.current__actions {
+  display: flex;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.thumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.thumbs__item {
+  width: 64px;
+  height: 40px;
+  flex: none;
+  object-fit: cover;
+  object-position: top;
+  border-radius: var(--space-1);
+  border: 1px solid var(--border);
+  background: var(--surface-sunk);
+}
+
+.flow-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-card);
+}
+
+.flow-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  transition:
+    border-color var(--transition),
+    background-color var(--transition);
+}
+
+.flow-row:hover,
+.flow-row:focus-within {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+}
+
+/** The whole row opens the flow; the per-row buttons sit outside that target. */
+.flow-row__open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.flow-row__thumb {
+  width: 64px;
+  height: 40px;
+  flex: none;
+  object-fit: cover;
+  object-position: top;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: var(--surface-sunk);
+}
+
+/** Stand-in for a flow saved before the index carried a thumbnail. */
+.flow-row__thumb--blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-faint);
+}
+
+.flow-row__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.flow-row__name {
+  font-size: var(--text-step-title);
+  font-weight: var(--weight-medium);
+}
+
+.flow-row__meta {
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+.flow-row__chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}
+
+.flow-row__chevron {
+  color: var(--fg-faint);
+  flex: none;
+}
+
+/*
+ * Revealed on hover, but always present for the keyboard: hiding them with
+ * `display: none` would take them out of the tab order, so they are only
+ * visually quiet until the row is engaged with.
+ */
+.flow-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-right: var(--space-3);
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.flow-row:hover .flow-row__actions,
+.flow-row:focus-within .flow-row__actions {
+  opacity: 1;
+}
+
+@media (max-width: 640px) {
+  .flow-row__chips {
+    display: none;
+  }
+
+  .flow-row__actions {
+    opacity: 1;
+  }
+}
+
+.page__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.page__footer .meter {
+  flex: 1;
+  min-width: 0;
+  max-width: 320px;
+}
+
+.storage__reading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--fg-faint);
+}
+
+.skeleton--row {
+  height: 66px;
+  border-radius: var(--radius-card);
+}
+
+.skeleton--card {
+  height: 220px;
+  border-radius: var(--radius-card);
+}
+
+/* ── Review: the app bar ────────────────────────────────────────────────── */
+
+.appbar--review {
+  gap: var(--space-4);
+}
+
+.flowhead {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.flowhead__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.flowhead__name {
+  font-size: var(--text-popup-title);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+/** Quiet until the name is hovered, so the bar is not a row of icons. */
+.flowhead__rename {
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.flowhead:hover .flowhead__rename,
+.flowhead__rename:focus-visible {
+  opacity: 1;
+}
+
+.flowhead__meta {
+  font-size: var(--text-meta);
+  color: var(--fg-faint);
+}
+
+/** The name, edited in place. Same metrics as the heading it replaces. */
+.flowhead__input {
+  height: var(--control-height-compact);
+  min-width: 0;
+  padding: 0 var(--space-2);
+  font-size: var(--text-popup-title);
+  font-weight: var(--weight-semibold);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  color: var(--fg);
+}
+
+.menu {
+  position: relative;
+}
+
+.menu__panel {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 20;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-overlay);
+}
+
+.menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-height);
+  padding: 0 var(--space-2);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-control);
+  color: var(--fg);
+  font-size: var(--text-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu__item:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+
+.menu__item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.menu__item--danger {
+  color: var(--danger);
+}
+
+/* ── Review: the workspace ──────────────────────────────────────────────── */
+
+.workspace {
+  flex: 1;
+  width: 100%;
+  max-width: var(--frame-max);
+  margin: 0 auto;
+  padding: var(--space-5) var(--gutter) var(--space-6);
+  display: grid;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rail {
+    display: none;
+  }
+}
+
+/*
+ * A sidebar, not a card that happens to be on the left.
+ *
+ * The height is the viewport rather than the content — it was `max-height`,
+ * which on a five-step flow drew a short box floating in a column of empty
+ * page, and moved the filters up to wherever the last row happened to end.
+ * Fixed height gives the list somewhere to grow into and puts the filters on
+ * the floor, where a footer belongs and where they stay put between flows.
+ *
+ * `sticky` still does the work of keeping it in view; it needs a bounded height
+ * to behave, which this is.
+ */
+.rail {
+  position: sticky;
+  top: calc(52px + var(--space-5));
+  height: calc(100vh - 52px - var(--space-5) * 2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.rail__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.rail__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * The timeline hairline, drawn per row rather than down the list.
+ *
+ * It used to be one gradient on the list itself, sized `100% - 36px`. That was
+ * exact while the list was as tall as its rows; now that the list fills the
+ * sidebar, the same rule would trail a line through the empty space under the
+ * last step. Per row it ends where the steps end, at any length.
+ */
+.rail-row {
+  position: relative;
+  /* A column flex item shrinks once the list overflows. Rows are a fixed 36px
+     and the list scrolls instead — squeezed rows would put the number circles
+     at uneven distances and break the timeline's rhythm. */
+  flex: none;
+}
+
+.rail-row::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+/* Stop at the centre of the first and last number, not at the row's edge. */
+.rail-row:first-child::before {
+  top: 18px;
+}
+
+.rail-row:last-child::before {
+  bottom: 18px;
+}
+
+.rail-row__button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--space-2) 0 var(--space-1);
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--fg-muted);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+}
+
+.rail-row__button:hover {
+  background: var(--surface-raised);
+  color: var(--fg);
+}
+
+.rail-row__num {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  font-size: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-row__icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.rail-row__icon .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.rail-row[data-type='navigate'] .rail-row__icon {
+  color: var(--step-navigate);
+}
+.rail-row[data-type='click'] .rail-row__icon {
+  color: var(--step-click);
+}
+.rail-row[data-type='input'] .rail-row__icon {
+  color: var(--step-input);
+}
+.rail-row[data-type='note'] .rail-row__icon {
+  color: var(--step-note);
+}
+
+.rail-row__label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-meta);
+}
+
+.rail-row__delta {
+  flex: none;
+  font-size: var(--text-label);
+  color: var(--fg-faint);
+}
+
+/** The one mark that answers "where did it break" without scrolling. */
+.rail-row__fail {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--log-error);
+}
+
+.rail-row[data-active='true'] .rail-row__button {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+  color: var(--fg);
+}
+
+.rail-row[data-active='true'] .rail-row__num {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+/* The sidebar's floor. `auto` as well as the list's `flex: 1`, so it stays down
+   there even if the list is ever given a fixed height. */
+.rail__filters {
+  flex: none;
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.filter {
+  height: 22px;
+  padding: 0 var(--space-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--fg-muted);
+  font-size: var(--text-label);
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    border-color var(--transition),
+    color var(--transition);
+}
+
+.filter:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+
+.filter[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.filter:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/** The Errors filter is the one that matters, so it says so even when off. */
+.filter[data-filter='errors']:not([aria-pressed='true']):not(:disabled) {
+  color: var(--log-error);
+  border-color: color-mix(in srgb, var(--log-error) 35%, transparent);
+}
+
+.steps {
+  min-width: 0;
+}
+
+/* ── Step card ──────────────────────────────────────────────────────────── */
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border-left: 2px solid transparent;
+  scroll-margin-top: calc(52px + var(--space-4));
+}
+
+.step[data-failed='true'] {
+  border-left-color: var(--log-error);
+}
+
+.step[data-active='true'] {
+  border-color: var(--border-strong);
+  border-left-color: var(--accent);
+}
+
+.step__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.step__num {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  font-size: var(--text-label);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+.step__action {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-step-title);
+  font-weight: var(--weight-medium);
+  letter-spacing: -0.005em;
+  cursor: text;
+  border-radius: var(--radius-control);
+}
+
+.step__action:hover {
+  background: var(--surface-raised);
+}
+
+/** The title, edited in place. Same metrics, so nothing shifts on click. */
+.step__action-input {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0 var(--space-2);
+  font-size: var(--text-step-title);
+  font-weight: var(--weight-medium);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  color: var(--fg);
+}
+
+/** Never clipped at the card edge, which is what the old badge did at 30 steps. */
+.step__delta {
+  flex: none;
+  color: var(--fg-faint);
+}
+
+.step__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.step:hover .step__tools,
+.step:focus-within .step__tools {
+  opacity: 1;
+}
+
+.step__title {
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+.step__url {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface-sunk);
+  border-radius: var(--radius-control);
+  min-width: 0;
+}
+
+.step__url-icon {
+  color: var(--fg-faint);
+}
+
+.step__url-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-code);
+  color: var(--fg-muted);
+}
+
+.step__url-copy {
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.step__url:hover .step__url-copy,
+.step__url-copy:focus-visible {
+  opacity: 1;
+}
+
+.step__value {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.step__value-text {
+  font-size: var(--text-code);
+  padding: 2px var(--space-2);
+  background: var(--surface-sunk);
+  border-radius: var(--radius-control);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The component line sits between what the user did and the picture of it, at
+ * the same weight as the typed value: a fact about the step, not a heading.
+ */
+.step__react {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.step__react-icon {
+  color: var(--fg-faint);
+}
+
+.step__react-name {
+  min-width: 0;
+  font-size: var(--text-code);
+  color: var(--fg-muted);
+}
+
+/* Not the user's code. Said quietly, because it is a caveat and not a warning. */
+.step__react-tag {
+  color: var(--fg-faint);
+}
+
+.react__source {
+  font-size: var(--text-code);
+}
+
+/*
+ * Why there is no path. It reads as prose because it is a sentence, and the one
+ * place on the card where the extension explains itself rather than reports.
+ */
+.react__detail {
+  margin-top: var(--space-2);
+  font-size: var(--text-label);
+  color: var(--fg-faint);
+}
+
+/*
+ * A screenshot shows the whole capture, at the aspect ratio it was taken in.
+ *
+ * This used to be capped at 320px and cropped from the top — decision D, on the
+ * grounds that a screenshot is evidence rather than the page, and full-bleed
+ * images are why a 30-step flow was several screens of scrolling. It cost more
+ * than it saved: the crop landed mid-content often enough that the one thing a
+ * step was recorded to show could be the part below the cut, and there is no
+ * way to tell a cropped shot from a short page. Length is the price; the rail
+ * jumps between steps, so it is paid by scrolling nobody has to do.
+ */
+.shot {
+  position: relative;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: var(--surface-sunk);
+  overflow: hidden;
+}
+
+.shot__image {
+  display: block;
+  width: 100%;
+  /* Explicit, because `width: 100%` alone would keep any `height` attribute the
+     image carries and squash it out of ratio. */
+  height: auto;
+}
+
+/* Sits opposite the zoom button so the two never collide. */
+.shot__badge {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  --chip-tint: var(--fg-muted);
+
+  color: var(--fg);
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+
+/*
+ * What a step with no screenshot offers.
+ *
+ * A capture can fail — a background tab, a rejected `captureVisibleTab`, a
+ * settle delay that landed after the modal closed — and until now the card
+ * simply had no picture and no way to get one. A dashed target rather than a
+ * button in the toolbar because it is also the drop zone, and a drop zone has
+ * to look like somewhere a file can land.
+ */
+.shot-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-5) var(--space-4);
+  background: var(--surface-sunk);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-control);
+  color: var(--fg-faint);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color var(--transition),
+    background-color var(--transition),
+    color var(--transition);
+}
+
+.shot-empty:hover,
+.shot-empty:focus-visible {
+  border-color: var(--accent);
+  color: var(--fg-muted);
+}
+
+/* Set while a file is over the card, so the target is obvious before the drop. */
+.shot-empty[data-dropping='true'],
+.shot[data-dropping='true'] {
+  border-style: dashed;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.shot-empty__icon {
+  width: 20px;
+  height: 20px;
+}
+
+.shot-empty__title {
+  font-size: var(--text-body);
+  color: var(--fg-muted);
+}
+
+.shot-empty__body {
+  font-size: var(--text-meta);
+}
+
+.shot__zoom {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.shot:hover .shot__zoom,
+.shot__zoom:focus-visible {
+  opacity: 1;
+}
+
+/* ── Collapsed detail rows ──────────────────────────────────────────────── */
+
+.detail {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.detail__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-2);
+  background: var(--surface-raised);
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.detail__summary::-webkit-details-marker {
+  display: none;
+}
+
+.detail__summary:hover {
+  color: var(--fg);
+}
+
+.detail__chevron {
+  transition: transform var(--transition);
+}
+
+.detail[open] .detail__chevron {
+  transform: rotate(90deg);
+}
+
+.detail__label {
+  flex: 1;
+}
+
+.detail__body {
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.detail__body--flush {
+  padding: var(--space-1);
+  gap: var(--space-1);
+}
+
+.selector {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.selector__value {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-sunk);
+  border-radius: var(--radius-control);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The XPath is subordinate, always. In the build being replaced it ran to three
+ * full lines and was the largest thing on the card — the least useful value on
+ * screen dominating the most useful ones.
+ */
+.selector--xpath .selector__value {
+  font-size: var(--text-label);
+  color: var(--fg-faint);
+}
+
+.selector__value--clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.selector__value--clamped[data-expanded='true'] {
+  -webkit-line-clamp: unset;
+}
+
+/* ── Network calls and console logs ─────────────────────────────────────── */
+
+.call {
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.call__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.call__row:hover {
+  background: var(--surface-raised);
+}
+
+.call__method {
+  flex: none;
+  min-width: 56px;
+  justify-content: center;
+}
+
+.call__url {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-code);
+  color: var(--fg-muted);
+}
+
+.call__status {
+  flex: none;
+  min-width: 44px;
+  justify-content: center;
+}
+
+.call__ms {
+  flex: none;
+  min-width: 52px;
+  text-align: right;
+  font-size: var(--text-label);
+  color: var(--fg-faint);
+}
+
+.call__chevron {
+  flex: none;
+  color: var(--fg-faint);
+  transition: transform var(--transition);
+}
+
+.call[data-open='true'] .call__chevron {
+  transform: rotate(90deg);
+}
+
+.call__panels {
+  border-top: 1px solid var(--border);
+}
+
+.call__tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2) 0;
+}
+
+.call__tab {
+  padding: var(--space-1) var(--space-2);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-faint);
+  font-size: var(--text-meta);
+  cursor: pointer;
+}
+
+.call__tab[aria-selected='true'] {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.call__panel {
+  display: none;
+  padding: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.call__panel[data-active='true'] {
+  display: flex;
+}
+
+.headers {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+}
+
+.headers__key {
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.headers__value {
+  color: var(--fg-faint);
+  overflow-wrap: anywhere;
+}
+
+.body {
+  max-height: 220px;
+  overflow: auto;
+  padding: var(--space-2);
+  background: var(--surface-sunk);
+  border-radius: var(--radius-control);
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.log {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-left: 2px solid var(--border);
+}
+
+.log[data-level='error'] {
+  border-left-color: var(--log-error);
+}
+.log[data-level='warn'] {
+  border-left-color: var(--log-warn);
+}
+.log[data-level='info'] {
+  border-left-color: var(--log-info);
+}
+
+.log__text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-label);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.log__time {
+  flex: none;
+  font-size: var(--text-label);
+  color: var(--fg-faint);
+}
+
+.step__notes {
+  min-height: 56px;
+  background: transparent;
+  border-color: transparent;
+  font-size: var(--text-body);
+}
+
+.step__notes:hover {
+  border-color: var(--border);
+}
+
+.step__notes:focus {
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+}
+
+/* ── Export dialog ──────────────────────────────────────────────────────── */
+
+.dialog--export .dialog__footer {
+  justify-content: space-between;
+  align-items: center;
+}
+
+/*
+ * The send dialog is the export dialog's Include section and nothing else, so
+ * it borrows `.includes`, `.include` and the warning banner outright. Only the
+ * footer differs: two numbers stacked, because an upload size and a context
+ * cost are different questions and putting them on one line reads as one.
+ */
+.dialog--send {
+  width: min(420px, calc(100vw - var(--space-6)));
+}
+
+.dialog--send .dialog__footer {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sendcost {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.3;
+}
+
+.formats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.format {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--transition),
+    background-color var(--transition);
+}
+
+.format:hover {
+  border-color: var(--border-strong);
+}
+
+.format[aria-checked='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.format__icon {
+  color: var(--fg-muted);
+  margin-top: 1px;
+}
+
+.format[aria-checked='true'] .format__icon {
+  color: var(--accent);
+}
+
+.format__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.format__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.format__name {
+  font-weight: var(--weight-medium);
+}
+
+.format__badge {
+  --chip-tint: var(--accent);
+
+  color: var(--chip-tint);
+  border-color: color-mix(in srgb, var(--chip-tint) 35%, transparent);
+  background: color-mix(in srgb, var(--chip-tint) 12%, transparent);
+}
+
+.format__size {
+  flex: none;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+.format__check {
+  flex: none;
+  color: var(--accent);
+  opacity: 0;
+}
+
+.format[aria-checked='true'] .format__check {
+  opacity: 1;
+}
+
+.includes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.include {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  cursor: pointer;
+}
+
+.include__input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.include__label {
+  /* Never shrinks, so the note gives way instead of the thing being named. */
+  flex: none;
+  font-size: var(--text-body);
+}
+
+/**
+ * Why a checkbox is doing nothing, said where the checkbox is.
+ *
+ * One line, always. These rows are read as a column — four labels, four sizes,
+ * scanned down rather than across — and a note that wraps makes its row taller
+ * than the three around it and drags its own size figure out of line with
+ * theirs. A long label ("React components & source") is enough to trigger it, so
+ * the note truncates instead and carries the full text in its `title`.
+ */
+.include__note {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--text-meta);
+  color: var(--fg-faint);
+}
+
+.include__size {
+  margin-left: auto;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.include[data-ignored='true'] {
+  cursor: not-allowed;
+}
+
+.include[data-ignored='true'] .include__label,
+.include[data-ignored='true'] .include__size {
+  opacity: 0.5;
+}
+
+.filename {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.filename:focus-within {
+  border-color: var(--border-strong);
+}
+
+.filename__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.filename__ext {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-3);
+  border-left: 1px solid var(--border);
+  background: var(--surface-sunk);
+  color: var(--fg-faint);
+  font-size: var(--text-code);
+}
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/** The one place an icon rotates: a button that has become a wait. */
+.btn [data-icon='loader-circle'] .icon {
+  animation: spin 700ms linear infinite;
+}
+
+/* ── Annotation editor ──────────────────────────────────────────────────── */
+
+.dialog--full {
+  width: min(1180px, calc(100vw - var(--space-6)));
+  max-width: none;
+  height: min(820px, calc(100vh - var(--space-6)));
+}
+
+/*
+ * `display` belongs on `[open]` and nowhere else.
+ *
+ * A closed `<dialog>` is hidden by `display: none` in the browser's own
+ * stylesheet, so declaring `display: flex` on the element itself overrides that
+ * and leaves the dialog permanently on the page — in normal flow, pushing the
+ * real content down, with none of its contents filled in because it was never
+ * opened. That is exactly what happened here.
+ */
+.dialog--full[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex: none;
+  height: 52px;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.editor__titles {
+  min-width: 0;
+}
+
+.editor__title {
+  font-size: var(--text-heading);
+  font-weight: var(--weight-semibold);
+}
+
+.editor__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 200px;
+}
+
+.toolrail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-right: 1px solid var(--border);
+}
+
+.tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+}
+
+.tool:hover {
+  background: var(--surface-raised);
+  color: var(--fg);
+}
+
+.tool[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+
+/*
+ * Redaction is the highest-stakes control in the product and was previously the
+ * sixth text button in a row of seven. It gets its own group and its own tint.
+ */
+.tool--redact {
+  color: var(--warn);
+}
+
+.tool--redact[aria-pressed='true'] {
+  background: var(--warn-soft);
+  border-left-color: var(--warn);
+  color: var(--warn);
+}
+
+.editor__stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: var(--space-4);
+  background: var(--surface-sunk);
+}
+
+.editor__canvas-wrap {
+  position: relative;
+  line-height: 0;
+}
+
+.editor__canvas {
+  display: block;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  cursor: crosshair;
+}
+
+.editor__canvas[data-tool='select'] {
+  cursor: default;
+}
+
+/** The in-place text input, positioned over the canvas where it was clicked. */
+.editor__text {
+  position: absolute;
+  min-width: 120px;
+  padding: 2px var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  color: var(--fg);
+  font-size: var(--text-body);
+  z-index: 2;
+}
+
+.props {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.props__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+}
+
+/*
+ * The swatch's fill is set from the annotation palette in JS, not from a token:
+ * this ink is baked into an exported image and must not change when the theme
+ * does. The border is a token, so a white swatch is still visible on a white
+ * panel — which it was not in the build being replaced.
+ */
+.swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+  transition: transform var(--transition);
+}
+
+.swatch:hover {
+  transform: scale(1.1);
+}
+
+.swatch[aria-checked='true'] {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.slider {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/** Stroke widths as actual strokes, not the letters S / M / L. */
+.width-preview {
+  display: block;
+  width: 20px;
+  border-radius: var(--radius-pill);
+  background: currentcolor;
+}
+
+.editor__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex: none;
+  height: 40px;
+  padding: 0 var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.editor__hint {
+  font-size: var(--text-label);
+  color: var(--fg-faint);
+}
+
+/* ── Full-size screenshot ───────────────────────────────────────────────── */
+
+/*
+ * No `position` here: a modal dialog is `position: fixed` in the browser's own
+ * stylesheet, and overriding that to `relative` takes it out of the top layer's
+ * positioning. It is already a containing block, so the close button anchors to
+ * it without any help.
+ */
+.dialog--image {
+  width: min(1400px, calc(100vw - var(--space-6)));
+  padding: var(--space-3);
+}
+
+.zoom__image {
+  display: block;
+  width: 100%;
+  max-height: calc(100vh - var(--space-7));
+  object-fit: contain;
+  border-radius: var(--radius-control);
+}
+
+.zoom__close {
+  position: absolute;
+  top: var(--space-5);
+  right: var(--space-5);
+}
+
+/* ── Shortcut sheet ─────────────────────────────────────────────────────── */
+
+.shortcuts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  align-items: center;
+}
+
+.shortcuts dt {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.shortcuts dd {
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 var(--space-1);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  font-size: var(--text-label);
+  color: var(--fg-muted);
+}

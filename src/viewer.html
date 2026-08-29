@@ -1,0 +1,1041 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FlowSnap</title>
+    <link rel="stylesheet" href="./ui/viewer/viewer.css" />
+  </head>
+  <body>
+    <!--
+      Two views of one page — structural decision A. Choosing a flow and
+      inspecting a flow are different jobs; the old build made them the same
+      scrolling document, which is how the toolbar reached seven buttons.
+
+      Both views' markup is present and toggled, and every repeated row is a
+      <template> below, so structure lives here and the controllers only bind
+      data to it.
+    -->
+
+    <!-- ── Library ──────────────────────────────────────────────────────── -->
+    <div id="v-library" class="view">
+      <header class="appbar">
+        <div class="appbar__inner">
+          <div class="brand">
+            <svg
+              class="brand__mark"
+              viewBox="0 0 20 20"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <rect class="brand__mark-plate" width="20" height="20" rx="6" />
+              <path
+                class="brand__mark-bolt"
+                d="M11.4 3.4 5.9 11h3.2l-.5 5.6L14.1 9h-3.2z"
+              />
+            </svg>
+            <span class="brand__name">FlowSnap</span>
+          </div>
+
+          <div class="appbar__actions">
+            <button
+              id="lib-settings"
+              class="btn btn--ghost btn--icon"
+              type="button"
+              aria-label="Settings"
+              title="Settings"
+            >
+              <span data-icon="settings"></span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main class="page">
+        <div class="page__head">
+          <div class="page__titles">
+            <h1>Flows</h1>
+            <p id="lib-summary" class="meta"></p>
+          </div>
+
+          <div id="lib-tools" class="page__tools">
+            <div class="search">
+              <span data-icon="search" class="search__icon"></span>
+              <input
+                id="lib-search"
+                class="input search__input"
+                type="search"
+                placeholder="Search by name or site"
+                autocomplete="off"
+                aria-label="Search flows"
+              />
+            </div>
+            <div class="segmented" role="group" aria-label="Sort flows">
+              <button
+                class="segmented__option"
+                type="button"
+                data-sort="recent"
+              >
+                Recent
+              </button>
+              <button
+                class="segmented__option"
+                type="button"
+                data-sort="largest"
+              >
+                Largest
+              </button>
+              <button class="segmented__option" type="button" data-sort="name">
+                Name
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- The recording in progress, or the one that has stopped but is not
+             archived. Distinct from the list because it is the only flow that
+             can still change. -->
+        <section id="lib-current" class="card current hidden">
+          <div class="current__head">
+            <span id="current-status" class="label current__status">
+              <span id="current-dot" class="rec-dot"></span>
+              <span id="current-status-text">Unsaved</span>
+            </span>
+            <span
+              id="current-errors"
+              class="chip hidden"
+              data-level="error"
+            ></span>
+          </div>
+          <h2 id="current-name" class="current__name">Current recording</h2>
+          <p id="current-meta" class="meta"></p>
+          <div id="current-thumbs" class="thumbs"></div>
+          <div class="current__actions">
+            <button id="current-open" class="btn btn--primary" type="button">
+              <span>Open</span>
+              <span data-icon="chevron-right"></span>
+            </button>
+            <button id="current-save" class="btn btn--secondary" type="button">
+              <span data-icon="folder-plus"></span>
+              <span>Save to library</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- Skeletons in the geometry of a real row, so nothing jumps. -->
+        <div id="lib-loading" class="flow-list" aria-hidden="true">
+          <div class="skeleton skeleton--row"></div>
+          <div class="skeleton skeleton--row"></div>
+          <div class="skeleton skeleton--row"></div>
+        </div>
+
+        <ul id="lib-list" class="flow-list hidden"></ul>
+
+        <section id="lib-empty" class="empty hidden">
+          <span data-icon="folder-open" data-icon-class="empty__icon"></span>
+          <p class="empty__title">No flows yet</p>
+          <p class="empty__body">
+            Open the page you want to record, then click FlowSnap in Chrome's
+            toolbar and press Start recording. Flows are stored on this device
+            only — nothing is uploaded unless you send it.
+          </p>
+        </section>
+
+        <section id="lib-nomatch" class="empty hidden">
+          <span data-icon="search" data-icon-class="empty__icon"></span>
+          <p class="empty__title">Nothing matches that</p>
+          <p class="empty__body">
+            No flow's name or site contains
+            <span id="lib-nomatch-query" class="mono"></span>.
+          </p>
+          <button
+            id="lib-clear-search"
+            class="btn btn--secondary"
+            type="button"
+          >
+            Clear search
+          </button>
+        </section>
+
+        <footer id="lib-footer" class="page__footer hidden">
+          <span class="label storage__reading">
+            <span data-icon="hard-drive"></span>
+            <span id="lib-storage-text"></span>
+          </span>
+        </footer>
+      </main>
+    </div>
+
+    <!-- ── Review ───────────────────────────────────────────────────────── -->
+    <div id="v-review" class="view hidden">
+      <header class="appbar appbar--review">
+        <div class="appbar__inner">
+          <button id="rv-back" class="btn btn--ghost" type="button">
+            <span data-icon="arrow-left"></span>
+            <span>Flows</span>
+          </button>
+
+          <div class="flowhead">
+            <div class="flowhead__row">
+              <h1 id="rv-name" class="flowhead__name truncate"></h1>
+              <button
+                id="rv-rename"
+                class="btn btn--ghost btn--icon btn--compact flowhead__rename"
+                type="button"
+                aria-label="Rename this flow"
+                title="Rename"
+              >
+                <span data-icon="pencil"></span>
+              </button>
+              <span id="rv-live" class="chip hidden" data-level="error"
+                >Recording</span
+              >
+            </div>
+            <p id="rv-meta" class="mono flowhead__meta truncate"></p>
+          </div>
+
+          <div class="appbar__actions">
+            <button
+              id="rv-shortcuts"
+              class="btn btn--ghost btn--icon"
+              type="button"
+              aria-label="Keyboard shortcuts"
+              title="Keyboard shortcuts"
+            >
+              <span data-icon="circle-help"></span>
+            </button>
+            <button id="rv-export" class="btn btn--secondary" type="button">
+              <span data-icon="download"></span>
+              <span>Export</span>
+            </button>
+            <button id="rv-send" class="btn btn--primary" type="button">
+              <span data-icon="sparkles"></span>
+              <span>Send to Claude</span>
+            </button>
+
+            <div class="menu">
+              <button
+                id="rv-more"
+                class="btn btn--ghost btn--icon"
+                type="button"
+                aria-label="More actions"
+                aria-haspopup="true"
+                aria-expanded="false"
+              >
+                <span data-icon="ellipsis"></span>
+              </button>
+              <div id="rv-menu" class="menu__panel hidden" role="menu">
+                <button
+                  id="rv-save"
+                  class="menu__item"
+                  type="button"
+                  role="menuitem"
+                >
+                  <span data-icon="folder-plus"></span>
+                  <span>Save to library</span>
+                </button>
+                <hr class="divider" />
+                <button
+                  id="rv-delete"
+                  class="menu__item menu__item--danger"
+                  type="button"
+                  role="menuitem"
+                >
+                  <span data-icon="trash-2"></span>
+                  <span>Delete flow</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <!-- Structural decision C: a sticky index, so a 30-step flow is
+             navigable and "where did it break" is answerable at a glance. -->
+        <aside id="rv-rail" class="rail">
+          <p class="label rail__label">
+            Steps <span id="rail-count" class="mono"></span>
+          </p>
+          <ol id="rail-list" class="rail__list"></ol>
+          <div
+            id="rail-filters"
+            class="rail__filters"
+            role="group"
+            aria-label="Filter steps"
+          ></div>
+        </aside>
+
+        <main class="steps">
+          <div id="rv-loading" class="stack" aria-hidden="true">
+            <div class="skeleton skeleton--card"></div>
+            <div class="skeleton skeleton--card"></div>
+            <div class="skeleton skeleton--card"></div>
+          </div>
+
+          <div id="rv-list" class="stack hidden"></div>
+
+          <section id="rv-empty" class="empty hidden">
+            <span data-icon="circle-dot" data-icon-class="empty__icon"></span>
+            <p class="empty__title">This flow has no steps</p>
+            <p class="empty__body">
+              Steps you delete can be restored with Ctrl+Z until you leave this
+              flow.
+            </p>
+            <button class="btn btn--secondary" type="button" data-back>
+              Back to flows
+            </button>
+          </section>
+
+          <section id="rv-nomatch" class="empty hidden">
+            <span data-icon="search" data-icon-class="empty__icon"></span>
+            <p class="empty__title">No steps match this filter</p>
+            <p class="empty__body" id="rv-nomatch-body"></p>
+            <button
+              id="rv-clear-filter"
+              class="btn btn--secondary"
+              type="button"
+            >
+              Show all steps
+            </button>
+          </section>
+
+          <section id="rv-missing" class="empty hidden">
+            <span
+              data-icon="triangle-alert"
+              data-icon-class="empty__icon"
+            ></span>
+            <p class="empty__title">That flow is gone</p>
+            <p class="empty__body">
+              It was deleted, or it was saved by a version of FlowSnap that
+              stored flows differently. Nothing was lost from the library.
+            </p>
+            <button class="btn btn--secondary" type="button" data-back>
+              Back to flows
+            </button>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <!-- ── Export (structural decision B) ───────────────────────────────── -->
+    <dialog id="export-dialog" class="dialog dialog--export">
+      <div class="dialog__header">
+        <div>
+          <h2 class="dialog__title">Export flow</h2>
+          <p id="export-subtitle" class="meta"></p>
+        </div>
+        <button
+          id="export-close"
+          class="btn btn--ghost btn--icon btn--compact"
+          type="button"
+          aria-label="Close"
+        >
+          <span data-icon="x"></span>
+        </button>
+      </div>
+
+      <div class="dialog__body">
+        <div
+          id="export-formats"
+          class="formats"
+          role="radiogroup"
+          aria-label="Format"
+        ></div>
+
+        <div class="field">
+          <p class="label">Include</p>
+          <div id="export-includes" class="includes"></div>
+        </div>
+
+        <div id="export-warning" class="banner banner--warn hidden">
+          <span data-icon="triangle-alert" class="banner__icon"></span>
+          <div class="banner__body">
+            <p class="banner__title">Captured bodies are not redacted</p>
+            <p>
+              Request headers are redacted at capture. Request and response
+              bodies are not, and can contain tokens or personal data.
+            </p>
+          </div>
+        </div>
+
+        <!--
+          Empty on purpose. The "not your defaults" banner is drawn into it by
+          `banner()` from src/ui/settings/components.ts — the same primitive the
+          Settings screen uses, so the two surfaces cannot drift. No class here:
+          a class would be this dialog's own styling of a shared control, which
+          is the fork the primitive exists to prevent.
+
+          Below the redaction warning, not above it: one of these is a safety
+          notice about what is in the file and the other is a note about which
+          switches are on, and when both are showing the first has to be read
+          first.
+        -->
+        <div id="export-defaults"></div>
+
+        <div class="field">
+          <label class="label" for="export-filename">Filename</label>
+          <div class="filename">
+            <input
+              id="export-filename"
+              class="input input--mono filename__input"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <span id="export-ext" class="filename__ext mono">.zip</span>
+          </div>
+        </div>
+
+        <div id="export-progress" class="progress hidden">
+          <div class="meter__track">
+            <div
+              id="export-progress-fill"
+              class="meter__fill"
+              style="width: 0%"
+            ></div>
+          </div>
+          <p id="export-caption" class="label"></p>
+        </div>
+      </div>
+
+      <div class="dialog__footer">
+        <span id="export-total" class="mono meta"></span>
+        <div class="row">
+          <button id="export-cancel" class="btn btn--ghost" type="button">
+            Cancel
+          </button>
+          <button id="export-run" class="btn btn--primary" type="button">
+            <span id="export-run-icon" data-icon="download"></span>
+            <span id="export-run-label">Export</span>
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- ── Send to Claude ───────────────────────────────────────────────
+         The export dialog's Include section, on the wire rather than on disk.
+         Sending used to take everything without asking, which is the same
+         choice-made-for-you the three export buttons were. -->
+    <dialog id="send-dialog" class="dialog dialog--send">
+      <div class="dialog__header">
+        <div>
+          <h2 class="dialog__title">Send to Claude</h2>
+          <p id="send-subtitle" class="meta"></p>
+        </div>
+        <button
+          id="send-close"
+          class="btn btn--ghost btn--icon btn--compact"
+          type="button"
+          aria-label="Close"
+        >
+          <span data-icon="x"></span>
+        </button>
+      </div>
+
+      <div class="dialog__body">
+        <div class="field">
+          <p class="label">Include</p>
+          <div id="send-includes" class="includes"></div>
+          <p id="send-note" class="meta hidden"></p>
+        </div>
+
+        <div id="send-warning" class="banner banner--warn hidden">
+          <span data-icon="triangle-alert" class="banner__icon"></span>
+          <div class="banner__body">
+            <p class="banner__title">Captured bodies are not redacted</p>
+            <p>
+              Request headers are redacted at capture. Request and response
+              bodies are not, and can contain tokens or personal data.
+            </p>
+          </div>
+        </div>
+
+        <!-- See the note on #export-defaults. -->
+        <div id="send-defaults"></div>
+      </div>
+
+      <div class="dialog__footer">
+        <div class="sendcost">
+          <span id="send-total" class="mono meta"></span>
+          <span id="send-context" class="mono meta"></span>
+        </div>
+        <div class="row">
+          <button id="send-cancel" class="btn btn--ghost" type="button">
+            Cancel
+          </button>
+          <button id="send-run" class="btn btn--primary" type="button">
+            <span id="send-run-icon" data-icon="sparkles"></span>
+            <span id="send-run-label">Send</span>
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- ── Annotation editor (prompt 7) ─────────────────────────────────── -->
+    <dialog id="annotate-dialog" class="dialog dialog--full">
+      <header class="editor__bar">
+        <div class="editor__titles">
+          <h2 id="annotate-title" class="editor__title"></h2>
+          <p id="annotate-action" class="mono meta truncate"></p>
+        </div>
+        <div class="row">
+          <button id="annotate-cancel" class="btn btn--ghost" type="button">
+            Cancel
+          </button>
+          <button id="annotate-save" class="btn btn--primary" type="button">
+            Save changes
+          </button>
+        </div>
+      </header>
+
+      <div class="editor__body">
+        <nav id="annotate-tools" class="toolrail" aria-label="Tools"></nav>
+
+        <div class="editor__stage">
+          <div id="annotate-stage" class="editor__canvas-wrap">
+            <canvas id="annotate-canvas" class="editor__canvas"></canvas>
+          </div>
+        </div>
+
+        <aside class="props">
+          <div id="annotate-ink" class="props__group">
+            <p class="label">Stroke</p>
+            <div
+              id="annotate-swatches"
+              class="swatches"
+              role="radiogroup"
+              aria-label="Colour"
+            ></div>
+
+            <p class="label">Width</p>
+            <div
+              id="annotate-widths"
+              class="segmented"
+              role="group"
+              aria-label="Stroke width"
+            ></div>
+
+            <label class="label" for="annotate-opacity">Opacity</label>
+            <input
+              id="annotate-opacity"
+              class="slider"
+              type="range"
+              min="20"
+              max="100"
+              step="10"
+              value="100"
+            />
+          </div>
+
+          <!-- The redact tool has no colour: it destroys pixels rather than
+               drawing over them, so a stroke colour would be a lie. -->
+          <div id="annotate-redact-props" class="props__group hidden">
+            <p class="label">Block size</p>
+            <input
+              id="annotate-block"
+              class="slider"
+              type="range"
+              min="8"
+              max="32"
+              step="8"
+              value="16"
+            />
+            <p class="meta">
+              Redaction rewrites the pixels. The original is not recoverable
+              from the exported image.
+            </p>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="editor__foot">
+        <div class="row">
+          <button
+            id="annotate-zoom-out"
+            class="btn btn--ghost btn--icon btn--compact"
+            type="button"
+            aria-label="Zoom out"
+          >
+            <span data-icon="minus"></span>
+          </button>
+          <span id="annotate-zoom" class="mono meta">100%</span>
+          <button
+            id="annotate-zoom-in"
+            class="btn btn--ghost btn--icon btn--compact"
+            type="button"
+            aria-label="Zoom in"
+          >
+            <span data-icon="plus"></span>
+          </button>
+          <button
+            id="annotate-fit"
+            class="btn btn--ghost btn--compact"
+            type="button"
+          >
+            Fit
+          </button>
+        </div>
+
+        <div class="row">
+          <button
+            id="annotate-undo"
+            class="btn btn--ghost btn--icon btn--compact"
+            type="button"
+            aria-label="Undo"
+            title="Undo"
+          >
+            <span data-icon="undo-2"></span>
+          </button>
+          <button
+            id="annotate-redo"
+            class="btn btn--ghost btn--icon btn--compact"
+            type="button"
+            aria-label="Redo"
+            title="Redo"
+          >
+            <span data-icon="redo-2"></span>
+          </button>
+        </div>
+
+        <p class="mono editor__hint">Esc to cancel</p>
+      </footer>
+    </dialog>
+
+    <!-- ── Small dialogs ────────────────────────────────────────────────── -->
+    <dialog id="zoom-dialog" class="dialog dialog--image">
+      <img id="zoom-image" class="zoom__image" alt="" />
+      <button
+        id="zoom-close"
+        class="btn btn--secondary btn--icon zoom__close"
+        type="button"
+        aria-label="Close"
+      >
+        <span data-icon="x"></span>
+      </button>
+    </dialog>
+
+    <dialog id="confirm-dialog" class="dialog">
+      <form method="dialog">
+        <div class="dialog__header">
+          <h2 id="confirm-title" class="dialog__title"></h2>
+        </div>
+        <div class="dialog__body">
+          <p id="confirm-body"></p>
+        </div>
+        <div class="dialog__footer">
+          <button
+            id="confirm-cancel"
+            class="btn btn--secondary"
+            type="submit"
+            value="cancel"
+          >
+            Cancel
+          </button>
+          <button
+            id="confirm-ok"
+            class="btn btn--danger"
+            type="submit"
+            value="ok"
+          ></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="name-dialog" class="dialog">
+      <form method="dialog">
+        <div class="dialog__header">
+          <h2 id="name-title" class="dialog__title"></h2>
+        </div>
+        <div class="dialog__body">
+          <div class="field">
+            <label
+              id="name-label"
+              class="field__label"
+              for="name-input"
+            ></label>
+            <input
+              id="name-input"
+              class="input"
+              type="text"
+              autocomplete="off"
+            />
+          </div>
+        </div>
+        <div class="dialog__footer">
+          <button class="btn btn--secondary" type="submit" value="cancel">
+            Cancel
+          </button>
+          <button
+            id="name-ok"
+            class="btn btn--primary"
+            type="submit"
+            value="ok"
+          ></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="shortcuts-dialog" class="dialog">
+      <form method="dialog">
+        <div class="dialog__header">
+          <h2 class="dialog__title">Keyboard shortcuts</h2>
+        </div>
+        <div class="dialog__body">
+          <!-- Behind a button rather than the permanent row the old viewer
+               carried above every flow. -->
+          <dl class="shortcuts">
+            <dt><kbd>J</kbd> <kbd>K</kbd></dt>
+            <dd>Move between steps</dd>
+            <dt><kbd>Delete</kbd></dt>
+            <dd>Delete the selected step</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt>
+            <dd>Undo a deletion</dd>
+            <dt><kbd>E</kbd></dt>
+            <dd>Annotate the selected step's screenshot</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>E</kbd></dt>
+            <dd>Export this flow</dd>
+            <dt><kbd>Esc</kbd></dt>
+            <dd>Close a dialog, or clear the filter</dd>
+          </dl>
+        </div>
+        <div class="dialog__footer">
+          <button class="btn btn--secondary" type="submit" value="close">
+            Close
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toasts" id="toasts"></div>
+
+    <!-- ── Templates ────────────────────────────────────────────────────── -->
+    <template id="tpl-flow-row">
+      <li class="flow-row">
+        <button class="flow-row__open" type="button">
+          <img class="flow-row__thumb" alt="" />
+          <span
+            class="flow-row__thumb flow-row__thumb--blank"
+            data-icon="image"
+          ></span>
+          <span class="flow-row__text">
+            <span class="flow-row__name truncate"></span>
+            <span class="flow-row__meta mono truncate"></span>
+          </span>
+          <span class="flow-row__chips"></span>
+          <span data-icon="chevron-right" class="flow-row__chevron"></span>
+        </button>
+        <span class="flow-row__actions">
+          <button
+            class="btn btn--ghost btn--icon btn--compact"
+            type="button"
+            data-action="export"
+            aria-label="Export this flow"
+            title="Export"
+          >
+            <span data-icon="download"></span>
+          </button>
+          <button
+            class="btn btn--ghost btn--icon btn--compact"
+            type="button"
+            data-action="delete"
+            aria-label="Delete this flow"
+            title="Delete"
+          >
+            <span data-icon="trash-2"></span>
+          </button>
+        </span>
+      </li>
+    </template>
+
+    <template id="tpl-rail-row">
+      <li class="rail-row">
+        <button class="rail-row__button" type="button">
+          <span class="rail-row__num mono"></span>
+          <span class="rail-row__icon" data-icon="mouse-pointer-click"></span>
+          <span class="rail-row__label truncate"></span>
+          <span class="rail-row__delta mono"></span>
+          <span class="rail-row__fail" aria-hidden="true"></span>
+        </button>
+      </li>
+    </template>
+
+    <template id="tpl-step">
+      <article class="step card" tabindex="0">
+        <header class="step__head">
+          <span class="step__num mono"></span>
+          <span class="step__type chip"></span>
+          <h2 class="step__action"></h2>
+          <span class="step__delta chip chip--count"></span>
+          <span class="step__tools">
+            <button
+              class="btn btn--ghost btn--icon btn--compact"
+              type="button"
+              data-action="annotate"
+              aria-label="Annotate the screenshot"
+              title="Annotate"
+            >
+              <span data-icon="image"></span>
+            </button>
+            <!-- The recorder captures on a timer and a timer misses things.
+                 This is how the right step gets the right picture. -->
+            <button
+              class="btn btn--ghost btn--icon btn--compact"
+              type="button"
+              data-action="replace-shot"
+              aria-label="Replace the screenshot"
+              title="Replace screenshot"
+            >
+              <span data-icon="image-up"></span>
+            </button>
+            <button
+              class="btn btn--ghost btn--icon btn--compact"
+              type="button"
+              data-action="delete"
+              aria-label="Delete this step"
+              title="Delete step"
+            >
+              <span data-icon="trash-2"></span>
+            </button>
+          </span>
+        </header>
+
+        <p class="step__title truncate"></p>
+
+        <div class="step__url">
+          <span data-icon="corner-down-right" class="step__url-icon"></span>
+          <span class="step__url-label label"></span>
+          <span class="step__url-text mono truncate"></span>
+          <button
+            class="btn btn--ghost btn--icon btn--compact step__url-copy"
+            type="button"
+            data-action="copy-url"
+            aria-label="Copy this URL"
+            title="Copy URL"
+          >
+            <span data-icon="copy"></span>
+          </button>
+        </div>
+
+        <p class="step__value">
+          <span class="label">Typed</span>
+          <span class="step__value-text mono"></span>
+        </p>
+
+        <!-- The component the click landed in. The name only, like the export:
+             the path is a detail, and repeating it on every card is the noise
+             the selectors disclosure exists to avoid. -->
+        <p class="step__react">
+          <span data-icon="atom" class="step__react-icon"></span>
+          <span class="step__react-name mono truncate"></span>
+          <span class="step__react-tag chip">dependency</span>
+        </p>
+
+        <figure class="shot">
+          <img class="shot__image" alt="" loading="lazy" />
+          <!-- Everything else on the card is a record of what happened. This
+               frame is a record of what the user says happened, and the card
+               says which it is looking at. -->
+          <span class="shot__badge chip">Added by hand</span>
+          <button
+            class="btn btn--secondary btn--icon btn--compact shot__zoom"
+            type="button"
+            data-action="zoom"
+            aria-label="Open the screenshot full size"
+            title="Full size"
+          >
+            <span data-icon="maximize-2"></span>
+          </button>
+        </figure>
+
+        <!-- Shown instead of the figure when a capture failed or was skipped.
+             A step with no picture used to offer nothing at all. -->
+        <button class="shot-empty" type="button" data-action="add-shot">
+          <span data-icon="image-plus" data-icon-class="shot-empty__icon"></span>
+          <span class="shot-empty__title">No screenshot for this step</span>
+          <span class="shot-empty__body">
+            Drop an image here, paste one, or click to choose a file.
+          </span>
+        </button>
+
+        <!-- Structural decision D: replay data collapses. The card leads with
+             what a person did; the selectors are behind a disclosure, and the
+             XPath is subordinate to the CSS rather than three lines tall. -->
+        <details class="detail detail--selectors">
+          <summary class="detail__summary">
+            <span data-icon="chevron-right" class="detail__chevron"></span>
+            <span class="detail__label">Selectors</span>
+          </summary>
+          <div class="detail__body">
+            <div class="selector">
+              <span class="label">CSS</span>
+              <code class="selector__value"></code>
+              <button
+                class="btn btn--ghost btn--icon btn--compact"
+                type="button"
+                data-action="copy-css"
+                aria-label="Copy the CSS selector"
+                title="Copy"
+              >
+                <span data-icon="copy"></span>
+              </button>
+            </div>
+            <div class="selector selector--xpath">
+              <span class="label">XPath</span>
+              <code class="selector__value selector__value--clamped"></code>
+              <button
+                class="btn btn--ghost btn--icon btn--compact"
+                type="button"
+                data-action="copy-xpath"
+                aria-label="Copy the XPath"
+                title="Copy"
+              >
+                <span data-icon="copy"></span>
+              </button>
+            </div>
+          </div>
+        </details>
+
+        <!-- Where that component was written. Behind a disclosure for the same
+             reason the selectors are: it is what you open when the name alone
+             was not enough. -->
+        <details class="detail detail--react">
+          <summary class="detail__summary">
+            <span data-icon="chevron-right" class="detail__chevron"></span>
+            <span class="detail__label">Component</span>
+            <span class="detail__worst chip react__status"></span>
+          </summary>
+          <div class="detail__body">
+            <div class="selector">
+              <span class="label">Source</span>
+              <code class="selector__value react__source"></code>
+              <button
+                class="btn btn--ghost btn--icon btn--compact react__copy"
+                type="button"
+                data-action="copy-source"
+                aria-label="Copy the source path"
+                title="Copy"
+              >
+                <span data-icon="copy"></span>
+              </button>
+              <button
+                class="btn btn--ghost btn--icon btn--compact react__open"
+                type="button"
+                data-action="open-source"
+                aria-label="Open this file in your editor"
+                title="Open in editor"
+              >
+                <span data-icon="arrow-up-right"></span>
+              </button>
+            </div>
+            <p class="react__detail"></p>
+          </div>
+        </details>
+
+        <details class="detail detail--network">
+          <summary class="detail__summary">
+            <span data-icon="chevron-right" class="detail__chevron"></span>
+            <span class="detail__label">Network</span>
+            <span class="detail__count chip chip--count"></span>
+            <span class="detail__worst chip"></span>
+          </summary>
+          <div class="detail__body detail__body--flush"></div>
+        </details>
+
+        <details class="detail detail--console">
+          <summary class="detail__summary">
+            <span data-icon="chevron-right" class="detail__chevron"></span>
+            <span class="detail__label">Console</span>
+            <span class="detail__count chip chip--count"></span>
+            <span class="detail__worst chip"></span>
+          </summary>
+          <div class="detail__body detail__body--flush"></div>
+        </details>
+
+        <label class="sr-only step__notes-label">Note for the AI</label>
+        <textarea
+          class="textarea step__notes"
+          rows="2"
+          placeholder="Add a note for the AI…"
+        ></textarea>
+      </article>
+    </template>
+
+    <template id="tpl-call">
+      <div class="call">
+        <button class="call__row" type="button">
+          <span class="call__method chip"></span>
+          <span class="call__url mono truncate"></span>
+          <span class="call__status chip"></span>
+          <span class="call__ms mono"></span>
+          <span data-icon="chevron-right" class="call__chevron"></span>
+        </button>
+        <div class="call__panels hidden">
+          <div class="call__tabs" role="tablist">
+            <button
+              class="call__tab"
+              type="button"
+              data-panel="request"
+              role="tab"
+            >
+              Request
+            </button>
+            <button
+              class="call__tab"
+              type="button"
+              data-panel="response"
+              role="tab"
+            >
+              Response
+            </button>
+          </div>
+          <div class="call__panel" data-panel="request"></div>
+          <div class="call__panel" data-panel="response"></div>
+        </div>
+      </div>
+    </template>
+
+    <template id="tpl-log">
+      <div class="log">
+        <span class="log__level chip"></span>
+        <span class="log__text mono"></span>
+        <span class="log__time mono"></span>
+      </div>
+    </template>
+
+    <template id="tpl-format">
+      <button class="format" type="button" role="radio">
+        <span class="format__icon" data-icon="file-archive"></span>
+        <span class="format__text">
+          <span class="format__head">
+            <span class="format__name"></span>
+            <span class="format__badge chip hidden">Recommended</span>
+          </span>
+          <span class="format__description meta"></span>
+        </span>
+        <span class="format__size mono"></span>
+        <span class="format__check" data-icon="circle-check"></span>
+      </button>
+    </template>
+
+    <template id="tpl-include">
+      <label class="include">
+        <input class="include__input" type="checkbox" />
+        <span class="include__label"></span>
+        <span class="include__note meta"></span>
+        <span class="include__size mono"></span>
+      </label>
+    </template>
+
+    <!-- One picker for every step: the card that opened it is remembered in
+         JS, so thirty cards do not carry thirty inputs. -->
+    <input
+      id="shot-file"
+      class="hidden"
+      type="file"
+      accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+    />
+
+    <script type="module" src="./ui/viewer/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,258 @@
+/*
+ * Reset, document defaults and the handful of utilities every surface needs.
+ *
+ * Nothing here declares a colour literal — every value comes from tokens.css, so
+ * both themes follow from the token blocks alone.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  /* The viewer is a full tab and can overflow; the popup never should. */
+  -webkit-text-size-adjust: 100%;
+
+  /*
+   * Always reserve the scrollbar's width.
+   *
+   * Filtering a flow down to one step makes the page short enough to lose its
+   * scrollbar, and the whole layout used to jump sideways as it went — the
+   * filter chip you had just pressed moved out from under the pointer. The
+   * gutter costs a few pixels on a page that never scrolls; the alternative
+   * costs them intermittently, which is the version people notice.
+   */
+  scrollbar-gutter: stable;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  font-weight: var(--weight-normal);
+  line-height: var(--leading-body);
+  color: var(--fg);
+
+  /*
+   * Explicit, always. The browser paints its own ground behind the document, so
+   * a transparent body renders one theme's text on the other theme's surface.
+   */
+  background: var(--bg);
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: var(--text-page-title);
+  letter-spacing: var(--tracking-title);
+}
+
+h2 {
+  font-size: var(--text-popup-title);
+  letter-spacing: -0.01em;
+}
+
+h3 {
+  font-size: var(--text-heading);
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/*
+ * One focus treatment, on everything. `:focus-visible` rather than `:focus` so a
+ * mouse click on a button does not leave a ring behind, but keyboard traversal
+ * always shows where it is.
+ */
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+  border-radius: var(--radius-control);
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* Scrollbars are chrome, not content: they recede until the region is used. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── Utilities ──────────────────────────────────────────────────────────────
+ * Deliberately few. A utility here earns its place by being needed on three or
+ * more surfaces; anything narrower belongs to the component that needs it.
+ */
+
+/** Present to assistive technology, absent on screen. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/**
+ * `hidden` means hidden.
+ *
+ * The attribute's UA rule is `display: none` at the very bottom of the cascade,
+ * so any component rule that sets `display` silently defeats it — a `.banner`
+ * with `display: flex` paints an empty tinted box where the markup plainly says
+ * there is nothing to show. The settings page depends on this: every slot in a
+ * setting row is always in the DOM and hidden when empty, which is what makes
+ * all seventy-three rows the same object. Stated once, here, with the weight
+ * to hold.
+ */
+[hidden] {
+  display: none !important;
+}
+
+/**
+ * Single-line truncation. `min-width: 0` because these almost always sit in a
+ * flex row, where the default `min-width: auto` refuses to shrink below the
+ * text's intrinsic width and the ellipsis never appears.
+ */
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/** Machine-produced text: URLs, selectors, ids, counts. */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/** Small uppercase section label. */
+.label {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.meta {
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-card);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/**
+ * Lucide icons are inline SVG with a currentColor stroke, so they inherit
+ * whatever the surrounding text is doing and never need their own colour rule.
+ */
+[data-icon] {
+  display: inline-flex;
+  flex: none;
+}
+
+.icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

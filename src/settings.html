@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FlowSnap settings</title>
+    <link rel="stylesheet" href="./ui/settings/components.css" />
+  </head>
+  <!--
+    Deliberately empty.
+
+    Every node on this page is built by src/ui/settings/components.ts, which is
+    the mechanism that keeps sixty controls built across seven sessions looking
+    like one screen — see the header of that file. Markup here would be markup
+    outside it, so `npm run lint:settings-ui` fails on any element carrying a
+    class, and this document holds nothing but the stylesheet and the script.
+  -->
+  <body>
+    <script type="module" src="./ui/settings/main.ts"></script>
+  </body>
+</html>

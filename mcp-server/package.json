@@ -1,6 +1,6 @@
 {
   "name": "flowsnap-mcp",
-  "version": "2.7.1",
+  "version": "3.0.0",
   "description": "MCP server exposing browser flows recorded by the FlowSnap Chrome extension — steps, console errors, network calls and screenshots — to Claude Code.",
   "type": "module",
   "main": "server.js",

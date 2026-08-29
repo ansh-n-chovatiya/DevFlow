@@ -1,0 +1,1500 @@
+/*
+ * The Settings screen, as six primitives and the frame that arranges them.
+ *
+ * Every class below is used by exactly one function in `components.ts`, and
+ * `npm run lint:settings-ui` fails if a class is used that is not declared here
+ * or in the shared stylesheets this file imports. That pairing is the mechanism:
+ * a later phase adding a setting appends a row to `fields.ts` and gets this
+ * markup, because there is no other markup to get.
+ *
+ * No colour literals — `npm run lint:tokens` has an empty exemption list and
+ * this file was written on the tokens from its first line.
+ */
+
+@import '../styles/index.css';
+
+/* ── The frame ──────────────────────────────────────────────────────────────
+ * The same 1440px frame as the viewer and the app bar above it, so moving
+ * between the two surfaces does not move the product's own left edge.
+ */
+
+/*
+ * `--chrome-h` is the sticky block above this one at rest, which since the
+ * search field moved into the app bar is the app bar: 52px. It is used by
+ * everything that has to sit clear of it — the rail, and the scroll target of
+ * every section the rail jumps to.
+ *
+ * While a query is on, the results strip appears under the bar and the rail pins
+ * a little high. That is the state where the list is filtered short and barely
+ * scrolls, which is why the resting height is the one worth being exact about —
+ * and the strip is half what the old search row was, so the error is smaller
+ * than it used to be as well as rarer.
+ */
+/*
+ * A column, so that one of the two views can be told to fill the window.
+ *
+ * The page still grows with its content and the document still scrolls — this
+ * changes nothing about the list. What it adds is a parent whose height is at
+ * least the viewport, which is the only way a child can be asked for "the rest
+ * of the screen" without a `calc` that has to know how tall the chrome is. The
+ * chrome is not a constant: the recording banner and the parked import both
+ * live in it.
+ */
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.settings {
+  --chrome-h: 52px;
+
+  width: 100%;
+  max-width: var(--frame-max);
+  margin: 0 auto;
+  padding: 0 var(--gutter) var(--space-7);
+}
+
+/*
+ * The `{}` view fits the window instead of scrolling it.
+ *
+ * Two editors, side by side, each as tall as the screen and each scrolling its
+ * own text — which is what the panes are for, and was not what happened: the
+ * defaults pane is eighty-two lines, it sized itself to all of them, and the
+ * *page* scrolled. Reading the bottom of it took the headings and the Apply
+ * button off screen with it, while the pane beside it — four lines — was empty
+ * box the whole way down.
+ *
+ * `min-height: 0` at every level because a flex item's floor is its content by
+ * default, and a chain of them is only as fitted as its least willing link. The
+ * floor that is kept is on the frame, at the bottom: below a certain height an
+ * editor stops being one, so on a window too short for two of them the page
+ * goes back to scrolling rather than showing two slots.
+ */
+.settings[data-json='true'] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding-bottom: var(--space-5);
+}
+
+/** The rail, and the list it scrolls. */
+.settings__body {
+  display: grid;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+  padding-top: var(--space-5);
+}
+
+.settings__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  min-width: 0;
+}
+
+/*
+ * Below the rail's own width plus a readable list, the two columns stop being
+ * two columns. The rail becomes a horizontal strip rather than disappearing —
+ * it is the only table of contents the screen has.
+ */
+@media (max-width: 900px) {
+  .settings__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rail {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .rail__rule {
+    display: none;
+  }
+}
+
+/* ── The sticky chrome ──────────────────────────────────────────────────────
+ * App bar, search row and recording banner, stuck as one block.
+ *
+ * Separately, each would need a `top` equal to the sum of the heights above it,
+ * and the search row's height is not a constant — the results line appears with
+ * a query or a filter. One sticky container makes the heights compose, and
+ * leaves `--chrome-h` on `.settings` as the only number the page has to know.
+ */
+
+.chrome {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+}
+
+/* ── The app bar's three zones ──────────────────────────────────────────────
+ * Only on this screen, and only because this screen has something to put in the
+ * middle. The shared `.appbar__inner` stays the flex row the viewer wears.
+ *
+ * A grid rather than flex, because the centre has to be centred in the *bar*.
+ * Flex can only centre it in the space the lead and the actions leave over, and
+ * those are not the same width — `← Flows` plus the mark against two buttons —
+ * so the field would sit visibly off to one side of a bar it is supposed to be
+ * the middle of. Equal `1fr` tracks either side is the whole fix.
+ *
+ * The centre track has a floor as well as a ceiling: at a narrow window the
+ * field gives up width down to the point where a query is still readable in it,
+ * and no further.
+ */
+
+.appbar__inner--split {
+  display: grid;
+  grid-template-columns: 1fr minmax(140px, 520px) 1fr;
+  align-items: center;
+}
+
+/*
+ * No `min-width: 0` here, deliberately.
+ *
+ * It was the obvious thing to write and it deleted the left half of the bar:
+ * `1fr` is `minmax(auto, 1fr)`, so a track holds its content's minimum unless
+ * something says otherwise, and that said otherwise. `← Flows` and the mark
+ * collapsed to nothing at a narrow window while the field kept its 520px.
+ */
+.appbar__lead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.appbar__centre {
+  min-width: 0;
+}
+
+/*
+ * Below this, centring costs more than it is worth.
+ *
+ * Equal side tracks means both are as wide as the wider of the two groups, so
+ * the bar needs twice the lead's width before the field gets anything. Past
+ * that point the field is being squeezed to keep a symmetry nobody can see, so
+ * the bar goes back to being a row and the field takes what is left.
+ */
+@media (max-width: 820px) {
+  .appbar__inner--split {
+    display: flex;
+  }
+
+  .appbar__centre {
+    flex: 1;
+  }
+}
+
+/* ── Search ─────────────────────────────────────────────────────────────────
+ * §4: at sixty settings this is the primary control on the screen, not an
+ * accessory to the rail — and it still is. It is the widest control on the page
+ * and the first thing under the cursor; it is no longer a band across the whole
+ * window for a query that is one word long.
+ *
+ * The field is in the middle of the app bar. What is left here is the strip
+ * under it — the count, the chips, and the one action that belongs to a set of
+ * changed rows — which exists only while a query or a filter is on, and now
+ * costs nothing at all when it is not.
+ */
+
+.search {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-2) var(--gutter);
+}
+
+.search__frame {
+  width: 100%;
+  max-width: var(--frame-max);
+  margin: 0 auto;
+}
+
+.search__field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  transition: border-color var(--transition);
+}
+
+.search__field:hover {
+  border-color: var(--border-strong);
+}
+
+.search__field:focus-within {
+  border-color: var(--accent);
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+.search__icon {
+  flex: none;
+  color: var(--fg-faint);
+}
+
+.search__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-body);
+}
+
+.search__input:focus {
+  outline: none;
+}
+
+.search__input::placeholder {
+  color: var(--fg-faint);
+}
+
+/** Only rendered with a query or a filter on it — §4 gates it on that. */
+.search__results {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.search__count {
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+.search__chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.search__actions {
+  margin-left: auto;
+}
+
+/** A lifted filter token. Mono, because `@modified` is typed, not clicked. */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height-compact);
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  color: var(--fg);
+}
+
+.filter-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.filter-chip__remove:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--fg);
+}
+
+/* ── The recording banner ───────────────────────────────────────────────────
+ * Inside the sticky chrome. §6: it explains *when* a change takes effect rather
+ * than preventing one, which is why nothing beneath it is disabled.
+ */
+
+.recording {
+  padding: var(--space-3) var(--gutter) 0;
+}
+
+.recording__frame {
+  width: 100%;
+  max-width: var(--frame-max);
+  margin: 0 auto;
+}
+
+/* ── Rail ───────────────────────────────────────────────────────────────────
+ * §4: seven entries, always visible, giving the settings a shape you can learn.
+ */
+
+.rail {
+  position: sticky;
+  top: calc(var(--chrome-h) + var(--space-4));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.rail__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rail__item:hover {
+  background: var(--surface-raised);
+}
+
+.rail__item[aria-current='true'] {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+
+/** Nothing under it survived the query. Dimmed, and not a link to nowhere. */
+.rail__item[data-muted='true'] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rail__item[data-muted='true']:hover {
+  background: none;
+}
+
+.rail__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/**
+ * §4's mark: the group's count, and a dot when that count is of changes.
+ *
+ * The substitution is §4's — a count of *modified* settings replaces the total
+ * once a group has any. The fill is not: it was an accent-filled pill, which
+ * put a solid accent circle inside a row whose selected state is already a soft
+ * accent fill and an accent bar, and made the least important thing in the row
+ * the loudest. A filled counter is the shape unread mail uses.
+ *
+ * Accent text does the same job at the weight the job deserves, and the dot is
+ * what says the number changed meaning — an accent `1` beside a faint `3` is
+ * two different quantities told apart by colour alone, which is not telling
+ * them apart.
+ */
+.rail__mark {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  color: var(--fg-faint);
+}
+
+.rail__count {
+  font-variant-numeric: tabular-nums;
+}
+
+.rail__mark--modified {
+  color: var(--accent);
+  font-weight: var(--weight-medium);
+}
+
+/** Only ever beside a modified count, which is the whole of what it means. */
+.rail__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.rail__rule {
+  height: 1px;
+  margin: var(--space-2) var(--space-2);
+  background: var(--border);
+  border: 0;
+}
+
+/* ── Group header ───────────────────────────────────────────────────────────
+ * There is one of these. Not one per tab, not a variant for search results and
+ * another for Advanced — the drift the generated screens have is exactly what
+ * having a single function prevents.
+ */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  /* Clear of the sticky chrome when the rail jumps to it. See `--chrome-h`. */
+  scroll-margin-top: calc(var(--chrome-h) + var(--space-4));
+}
+
+.group__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.group__title {
+  font-size: var(--text-page-title);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-title);
+}
+
+.group__note {
+  font-size: var(--text-body);
+  color: var(--fg-muted);
+  max-width: 68ch;
+}
+
+.group__rows {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── The setting row ────────────────────────────────────────────────────────
+ * §4: "every row is the same object, and the whole design rests on it being the
+ * same object sixty times". So it is the same object here too — every slot is
+ * always in the DOM and state hides it, rather than state deciding whether it
+ * exists. `tests/settings-row-shape.test.ts` asserts the resulting signature is
+ * identical for all seventy-three fields, modulo the control.
+ */
+
+.setting-row {
+  display: grid;
+  grid-template-columns: 2px minmax(0, 1fr);
+  gap: var(--space-4);
+  padding: var(--space-5) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.setting-row:last-child {
+  border-bottom: 0;
+}
+
+/** §4's marker, and the only thing the group-level modified count is derived from. */
+.setting-row__gutter {
+  border-radius: var(--radius-pill);
+  background: transparent;
+}
+
+.setting-row[data-modified='true'] .setting-row__gutter {
+  background: var(--accent);
+}
+
+.setting-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/** Title left, control right, on the same baseline. */
+.setting-row__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.setting-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.setting-row__title {
+  font-size: var(--text-step-title);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+}
+
+.setting-row__meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  color: var(--fg-faint);
+}
+
+/**
+ * A button, because clicking it copies — but it reads and selects as text, so
+ * the key can also just be dragged over and copied the ordinary way.
+ */
+.setting-row__key {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: copy;
+  user-select: text;
+}
+
+.setting-row__key:hover {
+  color: var(--fg-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+
+.setting-row__default {
+  color: inherit;
+}
+
+.setting-row__control {
+  position: relative;
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.setting-row__control .input {
+  min-width: 0;
+}
+
+/** A wide field earns its width: an editor template is unreadable at 104px. */
+.setting-row__control .input--text {
+  width: min(420px, 46vw);
+}
+
+.setting-row__unit {
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  color: var(--fg-faint);
+}
+
+/* ── The number field ───────────────────────────────────────────────────────
+ * The box is the control, not the `<input>` inside it: the border, the hover
+ * and the focus ring are all on the shell, so the unit sits inside the same
+ * outline as the digits and `500 steps` reads as one thing.
+ *
+ * The platform spinner is gone. It drew two OS-styled arrows on top of the
+ * digits at this width, and it was the only control on the page that did not
+ * look like it belonged to the product. ↑/↓ still step the value — that is the
+ * input's own behaviour and `appearance: none` does not touch it.
+ */
+
+.numfield {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  transition: border-color var(--transition);
+}
+
+.numfield:hover {
+  border-color: var(--border-strong);
+}
+
+/* The ring belongs to the box the caret is in, and the input inside it does
+ * not draw a second one an outline's width away from the first. */
+.numfield:focus-within {
+  border-color: var(--accent);
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+/**
+ * Numbers are read against each other, so they are mono and right-aligned.
+ *
+ * `--field-chars` is set per input from the field's own maximum: a byte count needs
+ * thirteen characters where everything else needs five or six, and the
+ * `min-width` is what stops that widening making the ordinary rows disagree.
+ */
+.numfield__input {
+  width: calc(var(--field-chars, 6) * 1ch + var(--space-2));
+  min-width: 56px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.numfield__input:focus-visible {
+  outline: none;
+}
+
+.numfield__input:disabled {
+  cursor: not-allowed;
+}
+
+.numfield:has(.numfield__input:disabled) {
+  opacity: 0.5;
+}
+
+.numfield__input::-webkit-outer-spin-button,
+.numfield__input::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.setting-row__action {
+  flex: none;
+}
+
+/**
+ * §4's reset. Out of the flow, under the control, and only on a row that has
+ * something to reset.
+ *
+ * It was the last item in the control row, `visibility: hidden` until hover.
+ * That is two problems at once: a 28px lane reserved beside all seventy-three
+ * controls for a button that is inert on nearly all of them, and — the moment
+ * you make it earn its space instead — a button whose arrival reflows the row
+ * it arrived in.
+ *
+ * `position: absolute` answers both, because an element out of the flow cannot
+ * take space and cannot move anything. It hangs under the control, right edge
+ * aligned with it, in the band to the right of the description: `max-width:
+ * 72ch` means nothing else is ever there, at any window width this page has.
+ *
+ * So a value changes and the button appears where the eye already is — directly
+ * under the thing that just changed — with every other pixel of the row exactly
+ * where it was.
+ */
+.setting-row__reset {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  display: none;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.setting-row[data-modified='true'] .setting-row__reset {
+  display: inline-flex;
+}
+
+.setting-row__reset .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.setting-row__reset:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/** §4: full sentence length, never truncated, never a tooltip. */
+.setting-row__description {
+  font-size: var(--text-body);
+  color: var(--fg-muted);
+  max-width: 72ch;
+}
+
+/**
+ * One line under the control for whatever just happened to it: the accepted
+ * range, what a commit clamped to, the result of a connection test, or the
+ * reason the control is inert.
+ */
+.setting-row__note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+  min-height: 18px;
+}
+
+.setting-row__note[data-tone='danger'] {
+  color: var(--danger);
+}
+
+.setting-row__note[data-tone='success'] {
+  color: var(--success);
+}
+
+/** §4: does not block typing, does not silently correct. The border says so. */
+.setting-row[data-invalid='true'] .setting-row__control .input,
+.setting-row[data-invalid='true'] .numfield {
+  border-color: var(--danger);
+}
+
+.setting-row[data-disabled='true'] .setting-row__title,
+.setting-row[data-disabled='true'] .setting-row__description {
+  color: var(--fg-faint);
+}
+
+.setting-row__consequence {
+  max-width: 72ch;
+}
+
+/* ── The enum field ─────────────────────────────────────────────────────────
+ * A listbox this page draws, because the one Chrome draws for a `<select>` is
+ * an operating-system menu: the platform's font, radius and tick, opened over
+ * the trigger rather than under it, and unstyleable in every part. On a page
+ * whose whole claim is that seventy-three rows are the same object, it was the
+ * one control that came from somewhere else.
+ *
+ * Nothing here is a new idea — it is the overflow menu's panel, at the width of
+ * its trigger, with a tick down the left.
+ */
+
+.select {
+  position: relative;
+  flex: none;
+}
+
+.select__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 152px;
+  height: var(--control-height);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--text-body);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition);
+}
+
+.select__trigger:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.select__trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Open is a state of the control, not just of the panel — the trigger stays
+ * lit while the panel is up, so the two read as one object. */
+.select[data-open='true'] .select__trigger {
+  border-color: var(--accent);
+}
+
+.select__value {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.select__chevron {
+  flex: none;
+  color: var(--fg-faint);
+  transition: transform var(--transition);
+}
+
+.select[data-open='true'] .select__chevron {
+  transform: rotate(180deg);
+}
+
+.select__panel {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+  min-width: 100%;
+  max-height: 264px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+/* Under the trigger, unless the row is near the bottom of the page and there
+ * is no room — which `select()` decides when it opens, from the real height. */
+.select[data-drop='down'] .select__panel {
+  top: calc(100% + var(--space-1));
+}
+
+.select[data-drop='up'] .select__panel {
+  bottom: calc(100% + var(--space-1));
+}
+
+.select__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--text-body);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* The pointer and the arrow keys mark the same row the same way: the arrow
+ * keys move real focus, so there is no second "highlighted" state to keep in
+ * step with the first.
+ *
+ * The page's focus ring is right everywhere else and wrong here — a 2px outline
+ * inside a 4px-padded panel reads as a box drawn around one item rather than as
+ * the place in a list. The filled row is what a listbox has always used to say
+ * where you are, and it is the same mark the pointer makes. */
+.select__option:hover,
+.select__option:focus {
+  background: var(--surface-raised);
+}
+
+.select__option:focus-visible {
+  outline: none;
+}
+
+.select__label {
+  flex: 1;
+}
+
+/* Always in the row, so the labels line up whichever one is chosen. */
+.select__check {
+  flex: none;
+  color: var(--accent);
+  opacity: 0;
+}
+
+.select__option[aria-selected='true'] {
+  color: var(--accent);
+  font-weight: var(--weight-medium);
+}
+
+.select__option[aria-selected='true'] .select__check {
+  opacity: 1;
+}
+
+/** A multi-select over a fixed set — console levels, and nothing else yet. */
+.levels {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.levels__option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height-compact);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.levels__option[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.levels__option:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Advanced ───────────────────────────────────────────────────────────────
+ * Not a different kind of control — the same rows under a different level of
+ * warning, which is the whole point of the disclosure.
+ */
+
+.advanced {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  scroll-margin-top: calc(var(--chrome-h) + var(--space-4));
+}
+
+.advanced__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-4) 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.advanced__chevron {
+  flex: none;
+  color: var(--fg-muted);
+  transition: transform var(--transition);
+}
+
+.advanced__summary[aria-expanded='true'] .advanced__chevron {
+  transform: rotate(90deg);
+}
+
+.advanced__note {
+  font-size: var(--text-body);
+  color: var(--fg-muted);
+  max-width: 72ch;
+}
+
+/* ── Storage ────────────────────────────────────────────────────────────────
+ * Not a setting: a figure and the one action that changes it. It keeps a
+ * section rather than a row because there is nothing here to set.
+ */
+
+.storage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  scroll-margin-top: calc(var(--chrome-h) + var(--space-4));
+}
+
+.storage__figures {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.storage__used {
+  font-family: var(--font-mono);
+  font-size: var(--text-page-title);
+  font-variant-numeric: tabular-nums;
+}
+
+.storage__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+.storage__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 72ch;
+}
+
+.storage__name {
+  font-size: var(--text-step-title);
+  font-weight: var(--weight-medium);
+}
+
+.storage__note {
+  font-size: var(--text-body);
+  color: var(--fg-muted);
+}
+
+/* ── Overflow menu ──────────────────────────────────────────────────────────
+ * Import, Export, Reset all, and nothing else — §4 says so by name.
+ */
+
+.menu {
+  position: relative;
+}
+
+.menu__panel {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 20;
+  width: 240px;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu__item:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+
+.menu__item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.menu__item--danger {
+  color: var(--danger);
+}
+
+.menu__note {
+  padding: 0 var(--space-2) var(--space-2) var(--space-6);
+  font-size: var(--text-meta);
+  color: var(--fg-faint);
+}
+
+.menu__rule {
+  height: 1px;
+  margin: var(--space-1) var(--space-2);
+  background: var(--border);
+  border: 0;
+}
+
+/* ── What is about to change ────────────────────────────────────────────────
+ * One list, two callers: the reset-all confirmation and §5's import diff. A
+ * count with no list is a confirmation nobody can actually give, and two lists
+ * would be two chances to disagree about which side of the arrow the default is
+ * on.
+ */
+
+.change-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunk);
+}
+
+.change-list__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.change-list__row + .change-list__row {
+  border-top: 1px solid var(--border);
+}
+
+.change-list__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /*
+   * Grows and shrinks; the values and the note beside it do neither. Without
+   * this the name column is the only thing that can give, and a long note —
+   * `not a setting in this version` — crushes the setting's own title to an
+   * ellipsis while the note it belongs to sits there in full.
+   */
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.change-list__name {
+  font-size: var(--text-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The key, because it is the name the file and the error messages both use. */
+.change-list__key {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-list__values {
+  display: flex;
+  align-items: baseline;
+  flex: none;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+}
+
+/* The value being given up is the muted half; the incoming one is the answer. */
+.change-list__from {
+  color: var(--fg-faint);
+}
+
+.change-list__arrow {
+  color: var(--fg-faint);
+}
+
+.change-list__to {
+  color: var(--fg);
+}
+
+/*
+ * `clamped`, `not a setting in this version`. Warn rather than danger: nothing
+ * here has gone wrong, the file simply said something this version cannot do
+ * exactly — and the row above it already says what it did instead.
+ */
+.change-list__note {
+  flex: none;
+  padding: 1px var(--space-2);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-pill);
+  background: var(--warn-soft);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-label);
+  color: var(--warn);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* ── The `{}` view ──────────────────────────────────────────────────────────
+ * §5: generated defaults on the left, read-only and sunk; the user's sparse
+ * overrides on the right and editable. Same layout VS Code uses, same reason —
+ * you cannot write a sensible override without seeing what you are overriding.
+ */
+
+.json-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-top: var(--space-5);
+  flex: 1;
+  min-height: 0;
+}
+
+/**
+ * One line for both panes, in place of a paragraph over each.
+ *
+ * The two descriptions were the same length as neither of the things they
+ * described, wrapped differently, and sat side by side arguing for the top of
+ * the screen. It keeps a measure, because it is prose — a sentence the eye
+ * crosses once, not a column heading — but a wider one than a setting's
+ * description: this is read on the first visit and skipped forever after, so it
+ * earns one line rather than three.
+ */
+.json-view__lede {
+  max-width: 96ch;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+.json-view__notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.json-view__panes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+  /* `stretch`, not `start`: the panes are the thing being given the height. */
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+
+.json-view__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/*
+ * Below the width where two documents fit side by side, they stack — the
+ * defaults first, because the pane you read comes before the pane you write.
+ */
+@media (max-width: 900px) {
+  .json-view__panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.json-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+}
+
+/*
+ * `--json-line` is the one number the gutter and the document have to agree on.
+ * They are two separately scrolling boxes side by side, and a line height that
+ * differs by a pixel puts the warning marker on the wrong line by the fortieth
+ * one — which is the exact failure the gutter exists to prevent.
+ */
+/*
+ * The gutter is positioned, not laid out beside the document.
+ *
+ * As a grid column it worked and then quietly did not: a grid row is as tall as
+ * its tallest cell, and the gutter's tallest cell is eighty-five line numbers.
+ * The defaults pane grew to seventeen hundred pixels and scrolled the whole
+ * page instead of itself, while the pane beside it — six lines — was fine, so
+ * nothing about the smaller one showed it. Taken out of flow, the document is
+ * the only thing that can size the frame, which is what `resize: vertical` on
+ * the textarea then means.
+ */
+.json-pane__frame {
+  --json-line: 20px;
+  --json-gutter: 52px;
+
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  /*
+   * The one floor in the chain. An editor shorter than this is not an editor,
+   * so a window too short for two of them scrolls the page — which is the right
+   * answer for that window, and never reached on the one this is designed for.
+   */
+  min-height: 160px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.json-pane[data-readonly='true'] .json-pane__frame {
+  background: var(--surface-sunk);
+}
+
+/**
+ * The caption, inside the frame — a filename on a tab, not a heading above a
+ * paragraph. Two words about what this pane is, next to the pane.
+ */
+.json-pane__caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex: none;
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.json-pane[data-readonly='true'] .json-pane__caption {
+  background: var(--surface);
+}
+
+.json-pane__title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+}
+
+/**
+ * `read-only` on the left, `edited` on the right — and only the second of those
+ * is a state, so only the second is marked. Same accent dot the rail uses for
+ * "something in here has changed", because it means the same thing.
+ */
+.json-pane__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  color: var(--fg-faint);
+}
+
+.json-pane__meta[data-marked='true'] {
+  color: var(--accent);
+}
+
+/* Its own element so the text can be replaced without taking the dot with it. */
+.json-pane__word {
+  white-space: nowrap;
+}
+
+.json-pane__dot {
+  display: none;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.json-pane__meta[data-marked='true'] .json-pane__dot {
+  display: block;
+}
+
+/** What the gutter is absolutely positioned inside, now the caption is above. */
+.json-pane__body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.json-pane__gutter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--json-gutter);
+  padding: var(--space-3) var(--space-2);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  user-select: none;
+}
+
+.json-pane__line {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  height: var(--json-line);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  color: var(--fg-faint);
+}
+
+.json-pane__line[data-warn='true'] {
+  color: var(--warn);
+}
+
+.json-pane__num {
+  font-variant-numeric: tabular-nums;
+}
+
+.json-pane__flag {
+  width: 12px;
+  height: 12px;
+  color: var(--warn);
+}
+
+.json-pane__line[data-warn='false'] .json-pane__flag {
+  visibility: hidden;
+}
+
+/*
+ * The document fills the frame, and the frame is what has a height.
+ *
+ * It was 480px with `resize: vertical`, from when the frame was sized by the
+ * text inside it. The frame is now sized by the window, so a drag handle on the
+ * textarea would resize a box that its own parent immediately overrules — a
+ * control that visibly does nothing.
+ */
+.json-pane__text {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: var(--space-3) var(--space-3) var(--space-3) calc(var(--json-gutter) + var(--space-3));
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  line-height: var(--json-line);
+  resize: none;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+}
+
+.json-pane__text:focus {
+  outline: none;
+}
+
+.json-pane__frame:focus-within {
+  border-color: var(--accent);
+}
+
+/*
+ * Read-only, not disabled. A disabled textarea is unselectable in every browser,
+ * and the entire purpose of this pane is that you can read a default out of it
+ * and paste it into the pane beside it.
+ */
+.json-pane__text:read-only {
+  color: var(--fg-muted);
+}
+
+/* ── The import dialog ──────────────────────────────────────────────────────
+ * Wider than a confirmation, because it holds two lists rather than a sentence.
+ */
+
+.dialog--wide {
+  max-width: 640px;
+}
+
+.dialog__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The `{}` toggle, which is a toggle and says which of the two views is on. */
+.appbar__json[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ── Search highlight ───────────────────────────────────────────────────────
+ * §4: matched substrings in `accent-soft`, in titles, descriptions and keys
+ * alike — the key included, because a key-only match is otherwise invisible.
+ */
+
+.hl {
+  border-radius: 2px;
+  background: var(--accent-soft);
+  color: inherit;
+}

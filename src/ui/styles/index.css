@@ -1,0 +1,12 @@
+/*
+ * The single stylesheet every extension page links.
+ *
+ * Order is load-bearing: tokens define the values, fonts declare the families
+ * the type tokens name, base resets the document and consumes both, components
+ * build on all three. Nothing after this file may declare a colour.
+ */
+
+@import './tokens.css';
+@import './fonts.css';
+@import './base.css';
+@import './components.css';

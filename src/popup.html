@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>FlowSnap</title>
+    <link rel="stylesheet" href="./ui/popup/popup.css" />
+  </head>
+  <body>
+    <!--
+      Every state's markup is present and hidden; main.ts toggles between them
+      from a single derived view. Building the DOM per state was how the original
+      ended up with buttons that could be shown together and contradict.
+    -->
+    <header class="popup__header">
+      <div class="brand">
+        <svg class="brand__mark" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <rect class="brand__mark-plate" width="20" height="20" rx="6" />
+          <path class="brand__mark-bolt" d="M11.4 3.4 5.9 11h3.2l-.5 5.6L14.1 9h-3.2z" />
+        </svg>
+        <h1 class="brand__name">FlowSnap</h1>
+        <span id="brand-dot" class="rec-dot hidden"></span>
+      </div>
+      <button
+        id="btn-settings"
+        class="btn btn--ghost btn--icon btn--compact"
+        type="button"
+        aria-label="Settings"
+        title="Settings"
+      >
+        <span data-icon="settings"></span>
+      </button>
+    </header>
+
+    <main class="popup__body">
+      <!-- Loading: the shape of the answer, so nothing jumps when it arrives. -->
+      <section id="s-loading" class="loading" aria-hidden="true">
+        <div class="skeleton loading__line" style="width: 45%"></div>
+        <div class="skeleton loading__action"></div>
+        <div class="skeleton loading__card"></div>
+      </section>
+
+      <!-- The tab a recording would target. -->
+      <section id="s-target" class="target hidden">
+        <p class="label">Recording target</p>
+        <div class="target__row">
+          <img id="target-favicon" class="target__favicon hidden" alt="" />
+          <span id="target-host" class="target__host truncate"></span>
+        </div>
+      </section>
+
+      <!-- The tab that cannot be recorded. -->
+      <section id="s-blocked" class="target hidden">
+        <p class="label">This tab</p>
+        <div class="target__row">
+          <span data-icon="triangle-alert" class="target__warn"></span>
+          <span id="blocked-title" class="truncate"></span>
+        </div>
+        <p id="blocked-url" class="target__url truncate"></p>
+      </section>
+
+      <div id="notice" class="banner hidden" role="status">
+        <span id="notice-icon" data-icon="info" class="banner__icon"></span>
+        <div class="banner__body">
+          <p id="notice-title" class="banner__title"></p>
+          <p id="notice-body"></p>
+        </div>
+      </div>
+
+      <button id="btn-start" class="btn btn--primary btn--lg hidden" type="button">
+        <span id="btn-start-icon" data-icon="circle-dot"></span>
+        <span>Start recording</span>
+      </button>
+
+      <button id="btn-reload" class="btn btn--ghost btn--compact hidden" type="button">
+        <span data-icon="refresh-cw"></span>
+        <span>Reload tab first</span>
+      </button>
+
+      <!-- Live recording. -->
+      <section id="s-live" class="stack hidden">
+        <div id="live-banner" class="rec-banner" data-state="recording">
+          <span id="live-dot" class="rec-dot"></span>
+          <span id="live-label" class="rec-banner__label">Recording</span>
+          <span id="live-timer" class="rec-banner__timer">00:00</span>
+        </div>
+
+        <div class="counter">
+          <span id="live-count" class="counter__value">0</span>
+          <span class="counter__unit">steps captured</span>
+        </div>
+
+        <!--
+          Only appears once a flow is long enough to be worth mentioning. There
+          is no bar here any more: it filled toward a 30-step cap that no longer
+          exists, and a bar with nothing to fill toward is a lie about a limit.
+        -->
+        <p id="live-cap" class="label hidden"></p>
+
+        <p id="live-last" class="live__last truncate"></p>
+
+        <div class="live__controls">
+          <button id="btn-pause" class="btn btn--secondary btn--lg" type="button">
+            <span data-icon="pause"></span>
+            <span>Pause</span>
+          </button>
+          <button id="btn-resume" class="btn btn--primary btn--lg hidden" type="button">
+            <span data-icon="play"></span>
+            <span>Resume</span>
+          </button>
+          <button id="btn-stop" class="btn btn--record btn--lg" type="button">
+            <span data-icon="square"></span>
+            <span>Stop</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- A finished flow waiting to be opened. -->
+      <section id="s-flow" class="card flow hidden">
+        <p class="label">Current flow</p>
+        <div class="flow__count">
+          <span id="flow-count" class="flow__value">0</span>
+          <span class="flow__unit">steps</span>
+        </div>
+        <p id="flow-when" class="meta"></p>
+        <div id="flow-thumbs" class="thumbs"></div>
+        <div class="flow__actions">
+          <button id="btn-view" class="btn btn--ghost btn--compact" type="button">
+            <span>Open flow</span>
+            <span data-icon="chevron-right"></span>
+          </button>
+          <button
+            id="btn-clear"
+            class="btn btn--ghost btn--icon btn--compact"
+            type="button"
+            aria-label="Discard flow"
+            title="Discard flow"
+          >
+            <span data-icon="trash-2"></span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Nothing recorded yet: what this is, and the one thing to do. -->
+      <section id="s-empty" class="empty hidden">
+        <span data-icon="circle-dot" data-icon-class="empty__icon"></span>
+        <p class="empty__title">No flow recorded yet</p>
+        <p class="empty__body">
+          Press Start recording, then use the page as you normally would.
+        </p>
+      </section>
+    </main>
+
+    <footer id="footer" class="popup__footer hidden">
+      <span class="storage__reading label">
+        <span data-icon="hard-drive"></span>
+        <span id="storage-text"></span>
+      </span>
+      <button id="btn-library" class="btn btn--ghost btn--compact" type="button">
+        <span>Library</span>
+        <span data-icon="arrow-up-right"></span>
+      </button>
+    </footer>
+
+    <dialog id="discard-dialog" class="dialog">
+      <form method="dialog">
+        <div class="dialog__header">
+          <h2 class="dialog__title">Discard this flow?</h2>
+        </div>
+        <div class="dialog__body">
+          <p id="discard-body"></p>
+        </div>
+        <div class="dialog__footer">
+          <button class="btn btn--secondary" type="submit" value="cancel">Keep it</button>
+          <button class="btn btn--danger" type="submit" value="discard">Discard flow</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="./ui/popup/main.ts"></script>
+  </body>
+</html>

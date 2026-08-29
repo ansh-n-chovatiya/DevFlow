@@ -1,0 +1,794 @@
+/*
+ * The shared component set.
+ *
+ * Every surface — popup, settings, viewer — composes from these. Two rules keep
+ * it that way:
+ *
+ *   1. No colour, size, radius or duration literal. Tokens only, so a theme is a
+ *      token block and nothing else.
+ *   2. Data-driven variants read a `data-` attribute rather than a class the
+ *      caller has to remember to map. `data-method="POST"` is the model's own
+ *      value, so the colour cannot drift from the thing it describes.
+ */
+
+/* ── Button ─────────────────────────────────────────────────────────────────
+ * One element, five intents. The intents are separate because the shipped build
+ * used one red for record, delete and failure at once — see docs/design/README.md.
+ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    border-color var(--transition),
+    color var(--transition);
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn--secondary {
+  background: var(--surface-raised);
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+/** Destructive confirmation only. Never a recording control. */
+.btn--danger {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.btn--danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+/** Recording only. Never a delete. */
+.btn--record {
+  background: var(--record);
+  color: var(--on-record);
+}
+
+.btn--record:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.btn--compact {
+  height: var(--control-height-compact);
+  padding: 0 var(--space-2);
+  font-size: var(--text-meta);
+}
+
+/** The one action a screen is for: taller, and it owns its row. */
+.btn--lg {
+  height: var(--control-height-primary);
+  width: 100%;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/** Square icon-only button. Needs an aria-label; there is no visible text. */
+.btn--icon {
+  width: var(--control-height);
+  padding: 0;
+}
+
+.btn--icon.btn--compact {
+  width: var(--control-height-compact);
+}
+
+/* ── Chip ───────────────────────────────────────────────────────────────────
+ * Categorical data at a glance: step type, HTTP method, status class, console
+ * level. Mono and uppercase because every one of them is a machine's word.
+ */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 20px;
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/*
+ * Data colours are set as a local --chip-tint so the tinting rule is written
+ * once. `color-mix` keeps the fill at a readable weight in both themes without a
+ * second token per state.
+ */
+.chip[data-tint] {
+  color: var(--chip-tint);
+  border-color: color-mix(in srgb, var(--chip-tint) 35%, transparent);
+  background: color-mix(in srgb, var(--chip-tint) 12%, transparent);
+}
+
+.chip[data-step='navigate'] {
+  --chip-tint: var(--step-navigate);
+}
+.chip[data-step='click'] {
+  --chip-tint: var(--step-click);
+}
+.chip[data-step='input'] {
+  --chip-tint: var(--step-input);
+}
+.chip[data-step='note'] {
+  --chip-tint: var(--step-note);
+}
+
+.chip[data-method='GET'] {
+  --chip-tint: var(--method-get);
+}
+.chip[data-method='POST'] {
+  --chip-tint: var(--method-post);
+}
+.chip[data-method='PUT'] {
+  --chip-tint: var(--method-put);
+}
+.chip[data-method='PATCH'] {
+  --chip-tint: var(--method-patch);
+}
+.chip[data-method='DELETE'] {
+  --chip-tint: var(--method-delete);
+}
+
+.chip[data-status='2xx'] {
+  --chip-tint: var(--status-2xx);
+}
+.chip[data-status='3xx'] {
+  --chip-tint: var(--status-3xx);
+}
+.chip[data-status='4xx'] {
+  --chip-tint: var(--status-4xx);
+}
+.chip[data-status='5xx'] {
+  --chip-tint: var(--status-5xx);
+}
+
+.chip[data-level='error'] {
+  --chip-tint: var(--log-error);
+}
+.chip[data-level='warn'] {
+  --chip-tint: var(--log-warn);
+}
+.chip[data-level='info'] {
+  --chip-tint: var(--log-info);
+}
+.chip[data-level='log'] {
+  --chip-tint: var(--log-log);
+}
+
+/** A plain count following a label — "Network 4". */
+.chip--count {
+  letter-spacing: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Card ───────────────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--pad-card);
+}
+
+/* ── Form controls ──────────────────────────────────────────────────────── */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field__label {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  color: var(--fg);
+}
+
+.input,
+.textarea {
+  width: 100%;
+  padding: 0 var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: var(--fg);
+  font-size: var(--text-body);
+  transition: border-color var(--transition);
+}
+
+.input {
+  height: var(--control-height);
+}
+
+.textarea {
+  min-height: 72px;
+  padding: var(--space-2) var(--space-3);
+  line-height: var(--leading-body);
+  resize: vertical;
+}
+
+.input:hover,
+.textarea:hover {
+  border-color: var(--border-strong);
+}
+
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--fg-faint);
+}
+
+.input--mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+}
+
+.input:disabled,
+.textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/** Switch — a checkbox that reads as on or off from across the room. */
+
+.switch {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  cursor: pointer;
+}
+
+.switch__input {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunk);
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    border-color var(--transition);
+}
+
+.switch__input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  transition:
+    transform var(--transition),
+    background-color var(--transition);
+}
+
+.switch__input:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch__input:checked::after {
+  transform: translateX(16px);
+  background: var(--on-accent);
+}
+
+.switch__input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/** Segmented control — a small set of exclusive choices, all visible at once. */
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.segmented__option {
+  height: var(--control-height-compact);
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: calc(var(--radius-control) - 2px);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+}
+
+.segmented__option:hover {
+  color: var(--fg);
+}
+
+.segmented__option[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--shadow-raised);
+}
+
+/* ── Banner ─────────────────────────────────────────────────────────────────
+ * An inline explanation of the state a surface is in. Not a toast: it stays
+ * until the condition it describes is gone.
+ */
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid;
+  border-radius: var(--radius-control);
+  font-size: var(--text-meta);
+  line-height: var(--leading-body);
+}
+
+.banner__icon {
+  margin-top: 1px;
+}
+
+.banner__body {
+  min-width: 0;
+}
+
+.banner__title {
+  font-weight: var(--weight-medium);
+}
+
+.banner--info {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--fg);
+}
+
+.banner--warn {
+  background: var(--warn-soft);
+  border-color: var(--warn-border);
+  color: var(--fg);
+}
+
+.banner--danger {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  color: var(--fg);
+}
+
+/*
+ * A recording is running. Its own intent, not --danger wearing a different
+ * sentence — the whole reason --record exists is that the shipped build used one
+ * red for "recording", "delete" and "failed", so nothing about a red thing told
+ * you which it was.
+ */
+.banner--record {
+  background: var(--record-soft);
+  border-color: color-mix(in srgb, var(--record) 40%, transparent);
+  color: var(--fg);
+}
+
+.banner--info .banner__icon {
+  color: var(--accent);
+}
+.banner--warn .banner__icon {
+  color: var(--warn);
+}
+.banner--danger .banner__icon {
+  color: var(--danger);
+}
+.banner--record .banner__icon {
+  color: var(--record);
+}
+
+/** A banner may carry one action, right-aligned — "Open flow", "Reset all shown". */
+.banner__action {
+  margin-left: auto;
+  flex: none;
+}
+
+/*
+ * A banner with an action centres; one without still hangs from its first line.
+ *
+ * `flex-start` is right for text alone — the icon belongs beside the first line
+ * of a sentence, not halfway down a paragraph. It is wrong the moment a button
+ * joins them: the button is 28px, the sentence beside it is 19px, and the
+ * tallest item is the one setting the height, so the sentence and the icon sat
+ * pinned to the top of a box the button defined. The words read a few pixels
+ * above the words next to them, which is the kind of wrong that looks like
+ * nothing in particular until you notice it and then cannot stop.
+ */
+.banner:has(.banner__action) {
+  align-items: center;
+}
+
+/* Nothing to hang from once the row is centred. */
+.banner:has(.banner__action) .banner__icon {
+  margin-top: 0;
+}
+/* ── Empty state ────────────────────────────────────────────────────────────
+ * Never a bare sentence: an icon, what this is, why it is empty, and the one
+ * thing to do about it.
+ */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.empty__icon {
+  width: 28px;
+  height: 28px;
+  color: var(--fg-faint);
+}
+
+.empty__title {
+  font-size: var(--text-popup-title);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+.empty__body {
+  max-width: 44ch;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+/* ── Meter ──────────────────────────────────────────────────────────────────
+ * Export progress. Storage lost its bar with the quota — a bar needs a
+ * denominator, and the only one left is the user's disk.
+ */
+
+.meter__track {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunk);
+  overflow: hidden;
+}
+
+.meter__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--transition);
+}
+
+/* ── Toast ──────────────────────────────────────────────────────────────────
+ * A completed action, with the chance to take it back. Bottom-centre, above
+ * everything, gone in six seconds.
+ */
+
+.toasts {
+  position: fixed;
+  bottom: var(--space-5);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+
+.toast {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 280px;
+  max-width: 420px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-overlay);
+  font-size: var(--text-body);
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.toast__message {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast__icon {
+  color: var(--fg-muted);
+}
+
+.toast--success .toast__icon {
+  color: var(--success);
+}
+
+.toast--danger .toast__icon {
+  color: var(--danger);
+}
+
+/** Hairline showing how long is left to undo. */
+.toast__progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--accent);
+  animation: toast-countdown linear forwards;
+}
+
+@keyframes toast-countdown {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
+/* ── Dialog ─────────────────────────────────────────────────────────────────
+ * Uses <dialog>, so Escape, focus trapping and the top layer are the platform's
+ * job rather than ours.
+ */
+
+.dialog {
+  width: min(480px, calc(100vw - var(--space-6)));
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--shadow-overlay);
+
+  /*
+   * A modal dialog is centred by the browser's own `inset: 0` plus `margin:
+   * auto` — and base.css resets `margin` to 0 on everything, which silently
+   * turned that centring off and pinned every dialog to the top-left corner.
+   * Restoring it here rather than exempting `dialog` from the reset, because
+   * this is the only element whose layout depends on a UA margin.
+   */
+  margin: auto;
+}
+
+.dialog::backdrop {
+  background: var(--scrim);
+}
+
+.dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog__title {
+  font-size: var(--text-popup-title);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+.dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+/* ── Loading ────────────────────────────────────────────────────────────────
+ * A skeleton where the shape of the result is known, a spinner where it is not.
+ */
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+.skeleton {
+  border-radius: var(--radius-control);
+  background: linear-gradient(
+    90deg,
+    var(--surface-raised) 25%,
+    var(--surface-sunk) 37%,
+    var(--surface-raised) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-sweep 1.4s ease infinite;
+}
+
+@keyframes skeleton-sweep {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: 0 50%;
+  }
+}
+
+/* ── Recording dot ──────────────────────────────────────────────────────────
+ * The one ambient animation in the product, and the one a vestibular disorder
+ * reacts to — hence --pulse-duration, which reduced motion sets to 0s.
+ */
+
+.rec-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--record);
+  animation: rec-pulse var(--pulse-duration) ease-in-out infinite;
+}
+
+.rec-dot--paused {
+  background: var(--warn);
+  animation: none;
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+/* ── App bar ────────────────────────────────────────────────────────────────
+ * The top of a full-tab surface. Shared by the viewer and the settings page,
+ * which is why it lives here rather than in either one's stylesheet.
+ *
+ * The bar spans the window — its hairline is the edge of the chrome — but its
+ * *contents* sit in the same frame as the page below, so the product mark is
+ * directly above the page title rather than out at the window's edge.
+ */
+
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  height: 52px;
+  padding: 0 var(--gutter);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.appbar__inner,
+.frame {
+  width: 100%;
+  max-width: var(--frame-max);
+  margin: 0 auto;
+}
+
+.appbar__inner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 100%;
+}
+
+.appbar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* ── Brand ──────────────────────────────────────────────────────────────────
+ * The mark is filled from CSS, never from `fill="var(--accent)"` — a custom
+ * property in an SVG presentation attribute is not resolved by any shipping
+ * browser, and the shape would simply render black.
+ */
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.brand__mark {
+  display: block;
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+
+.brand__mark-plate {
+  fill: var(--accent);
+}
+
+.brand__mark-bolt {
+  fill: var(--on-accent);
+}
+
+.brand__name {
+  font-size: var(--text-popup-title);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+/* ── Divider ────────────────────────────────────────────────────────────── */
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  border: 0;
+}
