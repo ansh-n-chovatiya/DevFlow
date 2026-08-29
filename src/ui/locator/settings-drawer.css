@@ -1,76 +1,123 @@
 /*
  * The settings drawer, seen from inside a DevTools panel.
  *
- * One `@import` and a handful of overrides, and that ratio is the point. The
- * drawer's rows are the options page's rows — same primitive, same classes, same
- * stylesheet — so everything about how a setting *looks* is already decided by
- * the time this file is read. What is left is the one thing the page could not
- * know: a DevTools panel docked to the side of a window is roughly a third the
- * width the page was drawn for, and a row laid out as title-left / control-right
- * has nowhere to put the control.
+ * One `@import` and overrides tailored for the narrow panel dock. The drawer's
+ * rows are the options page's rows — same primitive, same classes, same
+ * stylesheet — so everything about how a setting behaves and renders is unified.
  *
- * **This file declares no class of its own.** Every selector below names a class
+ * This file declares no new classes of its own. Every selector names a class
  * that `ui/settings/components.css` already declares and `components.ts` already
- * uses — which is what keeps `npm run lint:settings-ui` able to account for all
- * of them from one file. A new class here would be markup the linter cannot see,
- * built by something that is not `components.ts`, which is the arrangement this
- * whole layer exists to prevent. If the drawer needs a shape the primitives
- * cannot express, the primitive gets widened; it does not get worked around
- * here.
- *
- * No colour literals — `npm run lint:tokens` covers this file like every other.
+ * uses, keeping `npm run lint:settings-ui` passing.
  */
 
 @import '../settings/components.css';
 
-/*
- * The row goes vertical below the width a two-column row needs.
- *
- * A container query rather than a media query, because the thing that is narrow
- * is the drawer and not the viewport: the same drawer is wide when the panel is
- * docked to the bottom of a maximised window and narrow when it is docked to the
- * side of a half one, and a media query would answer for the window in both.
- */
 .drawer-settings {
-  container-type: inline-size;
-  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
 }
 
-@container (max-width: 420px) {
-  .drawer-settings .setting-row__head {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-2);
-  }
-
-  .drawer-settings .setting-row__control {
-    justify-content: flex-start;
-  }
+.drawer-settings .group__rows {
+  display: flex;
+  flex-direction: column;
 }
 
-/*
- * The gutter goes, and the modified state stays.
- *
- * The bar is a two-pixel lane down the left of all seventy-nine rows on a page
- * that is scrolled and scanned; across nine rows in a narrow drawer it is two
- * pixels of the little width there is, spent on a signal the accent-coloured
- * reset button beside the control is already giving. What it marks is not lost —
- * `data-modified` is still on the row, and the reset still appears.
- */
+.drawer-settings .setting-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer-settings .setting-row:last-child {
+  border-bottom: 0;
+}
+
+.drawer-settings .setting-row__body {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.drawer-settings .setting-row__head {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+/* Boolean toggle rows put title left and switch right on the same line */
+.drawer-settings .setting-row:has(.switch) .setting-row__head {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.drawer-settings .setting-row__text {
+  width: 100%;
+  min-width: 0;
+}
+
+.drawer-settings .setting-row:has(.switch) .setting-row__text {
+  flex: 1 1 auto;
+}
+
+.drawer-settings .setting-row__title {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  color: var(--fg);
+  line-height: var(--leading-tight);
+}
+
+.drawer-settings .setting-row__control {
+  position: relative;
+  width: 100%;
+  margin-left: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.drawer-settings .setting-row:has(.switch) .setting-row__control {
+  width: auto;
+  margin-left: auto;
+  flex: none;
+}
+
+.drawer-settings .setting-row__control .input,
+.drawer-settings .setting-row__control .input--text,
+.drawer-settings .setting-row__control .select {
+  width: 100%;
+  max-width: 100%;
+  flex: 1 1 auto;
+}
+
+.drawer-settings .setting-row__description {
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+  line-height: var(--leading-normal);
+  max-width: 100%;
+}
+
+/* Hide gutter and key label in the compact drawer */
 .drawer-settings .setting-row__gutter {
   display: none;
 }
 
-/*
- * The description stays, and the key line goes.
- *
- * The two are not the same kind of loss. `editor · default vscode` is a line
- * about the *file* — it is there so somebody who read a key in the docs can find
- * the control, and searching is what the options page is for. The sentence under
- * the control is the writing, and it is the reason a setting in this product
- * explains its own cost rather than hiding it in a tooltip; dropping that to save
- * a line would be dropping the only part of the row that says anything.
- */
 .drawer-settings .setting-row__meta {
   display: none;
 }
+
+.drawer-settings__more {
+  margin-top: var(--space-4);
+  width: 100%;
+  justify-content: center;
+}
+
