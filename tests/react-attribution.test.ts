@@ -120,7 +120,7 @@ describe('formatSource', () => {
     );
   });
 
-  it('falls back to the compiled position, shortened to a path', () => {
+  it('falls back to the compiled position, shortened to a path and counted from one', () => {
     const component: ComponentSource = {
       name: 'PriceTag',
       status: 'compiled-only',
@@ -131,7 +131,8 @@ describe('formatSource', () => {
       },
     };
 
-    expect(formatSource(component)).toBe('/assets/index-8f2a.js:1:88214');
+    // Stored `Pos0`, shown to a person: 1:88214 on the wire is 2:88215 on screen.
+    expect(formatSource(component)).toBe('/assets/index-8f2a.js:2:88215');
   });
 
   it('has nothing to say about a component that was never found', () => {

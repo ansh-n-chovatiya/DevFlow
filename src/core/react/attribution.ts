@@ -14,6 +14,7 @@
 
 import { urlPath } from '../flow/index.js';
 import { pickEnclosing, pickOwner } from './owner.js';
+import { formatPosition, positionToOneBased } from './positions.js';
 import { CAPPED_ID } from './table.js';
 import type { ComponentSource, FlowReact, Step } from '../../shared/types.js';
 
@@ -171,6 +172,17 @@ export function attributeSteps(steps: Step[], components: Record<string, Compone
  * A resolved entry reads `src/components/Cart.tsx:34`. One found in a bundle
  * that ships no map still has somewhere to point — the compiled position — and
  * saying so beats saying nothing, because a reader can at least search for it.
+ *
+ * The compiled position is converted on the way out, and that conversion is the
+ * whole reason it is not simply interpolated. `ComponentSource.compiled` is
+ * `Pos0` because DevTools' Sources API is 0-based and that is the consumer it
+ * was stored for; every reader of *this* string is a person, counting from one.
+ * Interpolating the stored number instead — which is what this did until the
+ * merge, and what `tests/react-attribution.test.ts` asserted — reported every
+ * compiled line and column in the markdown export and the MCP payload one low,
+ * with nothing on screen to suggest it. That is the failure CONTRACTS §1 is
+ * about, caught here by the card next door (`ui/components/result-card.ts`'s
+ * `pathText`) having converted all along and therefore disagreeing.
  */
 export function formatSource(component: ComponentSource): string | null {
   if (component.source) {
@@ -178,8 +190,8 @@ export function formatSource(component: ComponentSource): string | null {
   }
 
   if (component.compiled) {
-    const { url, line, column } = component.compiled;
-    return `${urlPath(url) || url}:${line}:${column}`;
+    const { url } = component.compiled;
+    return `${urlPath(url) || url}:${formatPosition(positionToOneBased(component.compiled))}`;
   }
 
   return null;

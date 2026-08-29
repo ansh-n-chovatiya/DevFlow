@@ -241,7 +241,8 @@ describe('exportToMarkdown · React components', () => {
       }),
     });
 
-    expect(md).toContain('| PriceTag | /assets/main.js:1:88214 | no source map |');
+    // `compiled` is stored `Pos0` for DevTools' Sources API; a reader counts from one.
+    expect(md).toContain('| PriceTag | /assets/main.js:2:88215 | no source map |');
   });
 
   it('notes the cap below the table instead of listing it as a component', () => {
