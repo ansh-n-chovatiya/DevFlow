@@ -89,6 +89,12 @@ describe('no surface resolves its settings once, at import time', () => {
     'src/ui/settings/view.ts',
     'src/ui/settings/file-view.ts',
     'src/ui/locator/settings-drawer.ts',
+    // The panel itself. It reads the mechanism for the editor link, the five
+    // category flags and the provider's budget, and it subscribes — so the one
+    // shape of this bug it could have is a `const settings = await load()` at
+    // module scope, which would leave the drawer writing to a store the panel
+    // beside it had stopped reading.
+    'src/ui/locator/main.ts',
     'src/ui/popup/main.ts',
     'src/ui/viewer/main.ts',
     'src/ui/viewer/review.ts',
