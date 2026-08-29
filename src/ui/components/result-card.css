@@ -11,29 +11,30 @@
  * no colours at all. Two other surfaces already `@import '../styles/index.css'`
  * for the same reason; the bundler resolves the repeat to one copy.
  *
- * ### Why the block is `source-card` and not `result-card`
+ * ### Where these rules came from
  *
- * The module is `result-card.ts` because that is what CONTRACTS and the merge
- * plan call it and what G, H and K import. The CSS block is `source-card`
- * because `.result-card` is already the panel's own name, in the `result.css`
- * that Package E owns, for the *view* this card sits inside — and because two of
- * the three surfaces that render this do not call it "a result" at all. The
- * review calls it a step's source; the popup calls it what it located. The card
- * renders one `ComponentSource`, and that is the name that survives on all three.
+ * The card's own styling was the one part of react-source-locator's
+ * `panel/styles/result.css` that Package E deliberately did not carry across,
+ * because the card moved here and is now rendered by three surfaces instead of
+ * one. So the measured decisions in that file are re-made here on DevFlow's
+ * tokens — the wrapping head, the whole-box copy target, the 380px dock
+ * breakpoint — rather than reinvented. What did not come across is everything
+ * that was really about the panel's *result view*: the filter field, the
+ * category chips and the tree sections all stayed with E.
  */
 
 @import '../styles/index.css';
 
 /*
  * A card, in the shared sense — `.card` in components.css is the same surface,
- * border and radius. It is not reused directly because this one owns its own
- * internal rhythm: a stack with a tighter gap than a page card, since every row
- * in it is one line about the row above it.
+ * border, radius and padding. It is not reused directly because this one owns
+ * its own internal rhythm: a stack whose rows are each one line about the row
+ * above.
  */
-.source-card {
+.result-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: var(--pad-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
@@ -41,68 +42,67 @@
 
   /*
    * The card is dropped into containers of every width — a 300px DevTools dock,
-   * a 360px popup, a 1440px review column — and every child of it truncates or
-   * wraps. Without this the longest bundle URL becomes the container's minimum
-   * width and the whole surface scrolls sideways.
+   * a 360px popup, a 1440px review column. Everything inside it wraps or
+   * truncates, and without this the longest bundle URL would become the
+   * container's minimum width and scroll the whole surface sideways.
    */
   min-width: 0;
 }
 
 /* ── Head ───────────────────────────────────────────────────────────────── */
 
-.source-card__head {
+/*
+ * Wraps, rather than squeezing.
+ *
+ * A component name is a single identifier and can be long — `CheckoutButton`
+ * and `CheckoutButtonWithAnalytics` differ only at the end — so the badge beside
+ * it drops to a second line rather than taking width from it. The row gap is
+ * what that second line then sits on.
+ */
+.result-card__head {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
+
+/* The one accent on the card, and the thing that says "component" at a glance. */
+.result-card__mark {
+  color: var(--accent);
 }
 
 /*
- * The component mark. Muted rather than accented: it labels every card
- * identically, so it carries no information and should not compete with the
- * name beside it for attention.
+ * Wrapped, never truncated. The distinguishing part of a component name is
+ * usually its tail, which is exactly what an ellipsis eats; `anywhere` breaks
+ * inside the identifier because there is no space in it to break at.
  */
-.source-card__mark {
-  color: var(--fg-faint);
-}
-
-.source-card__name {
+.result-card__name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: var(--text-step-title);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
 }
 
 /*
  * `dev build` / `source map` / `compiled`.
  *
- * Deliberately not a `.chip`: a chip is a categorical value from the model —
- * a step type, an HTTP method — and carries a data colour. This is provenance,
- * which is the same kind of fact for every card and so gets the same neutral
- * treatment on all three of its values. Colouring `compiled` as a warning would
- * be the card editorialising about an outcome the detail sentence already
- * explains in words.
+ * The shared `.chip`, untinted. A chip carries a data colour only when it is
+ * given a `data-tint`, and provenance is the same kind of fact on every card —
+ * colouring `compiled` as a warning would be the card editorialising about an
+ * outcome the detail sentence already explains in words. All this rule adds is
+ * the placement.
  */
-.source-card__via {
+.result-card__via {
   margin-left: auto;
-  flex: none;
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--surface-sunk);
-  font-size: var(--text-label);
-  color: var(--fg-muted);
-  white-space: nowrap;
 }
 
 /*
  * `node_modules`. A literal directory name, so it is set as machine text, and
- * amber because it is a caution and not a failure: the path is correct, it is
- * just not a file to go and edit.
+ * amber because it is a caution rather than a failure: the path is correct, it
+ * is just not a file to go and edit.
  */
-.source-card__dep {
+.result-card__dep {
   flex: none;
   padding: 1px var(--space-1);
   border: 1px solid var(--warn-border);
@@ -114,7 +114,7 @@
 }
 
 /* Sized down from the shared 16px: it sits in a text row, not beside a heading. */
-.source-card__spinner {
+.result-card__spinner {
   margin-left: auto;
   flex: none;
   width: 12px;
@@ -126,11 +126,13 @@
 /*
  * The answer, and the copy affordance, in one control.
  *
- * A full-width well rather than a button beside the text: the path is the thing
- * on the card most likely to be wanted somewhere else, and a target the width of
- * the card is a target that does not have to be aimed at in a 300px dock.
+ * The whole box copies — a 14px icon is not a target worth aiming at in a 300px
+ * dock, and the path is the thing on this card most likely to be wanted
+ * somewhere else. The container's colour is inherited by the copy glyph alone;
+ * the path text overrides it below, which is what lets one hover rule lift the
+ * glyph without touching the path.
  */
-.source-card__path {
+.result-card__path {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -140,62 +142,59 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   background: var(--surface-sunk);
+  color: var(--fg-faint);
   text-align: left;
   cursor: pointer;
   transition:
     border-color var(--transition),
-    background-color var(--transition);
+    color var(--transition);
 }
 
-.source-card__path:hover {
+.result-card__path:hover {
   border-color: var(--border-strong);
-  background: var(--surface-raised);
-}
-
-/* No handler, no control: same well, no pointer, no hover, text selectable. */
-.source-card__path--static {
-  cursor: auto;
-}
-
-.source-card__path--static:hover {
-  border-color: var(--border);
-  background: var(--surface-sunk);
-}
-
-/*
- * Truncated from the right, which is the wrong end for a path and the right one
- * here. The card's paths are repo-relative or a bundle's own filename, so the
- * distinguishing part is the file at the end — but the `line:column` is pinned
- * to it, and losing "which line" to keep "which directory" is the worse trade in
- * a control whose whole purpose is to be copied whole.
- */
-.source-card__path-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--text-code);
-  color: var(--fg);
-}
-
-.source-card__path-icon {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  color: var(--fg-faint);
-}
-
-.source-card__path:hover .source-card__path-icon {
   color: var(--accent);
 }
 
+/* No handler, no control: the same well, no pointer, no hover, text selectable. */
+.result-card__path--static {
+  cursor: auto;
+}
+
+.result-card__path--static:hover {
+  border-color: var(--border);
+  color: var(--fg-faint);
+}
+
 /*
- * The bundle the component was found in. Muted, machine text, and truncated —
- * it is provenance rather than an instruction, and a 200-character hashed chunk
- * URL is normal here.
+ * Wrapped, not truncated — the opposite of the origin line below, and for the
+ * opposite reason. This is the answer the card exists to give and the string the
+ * copy button hands over, so all of it has to be readable; a path has no spaces
+ * to break at, hence `anywhere`.
  */
-.source-card__origin {
+.result-card__path-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-code);
+  line-height: var(--leading-tight);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.result-card__path-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+/*
+ * The bundle the component was found in.
+ *
+ * Truncated, with the full string in its `title`. Provenance rather than an
+ * instruction: a 200-character hashed chunk URL is normal here, and wrapping one
+ * across four lines would give the least important row on the card the most of
+ * its height.
+ */
+.result-card__origin {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -207,12 +206,12 @@
 /*
  * The sentence that explains a non-`resolved` outcome.
  *
- * Full prose measure and full body leading, because it is the one part of the
- * card that is read rather than scanned — and on eight of nine statuses it is
- * the part that says what to do next. It gets --fg-muted rather than --fg-faint:
- * faint is for provenance nobody has to read.
+ * Full body leading, because it is the one part of the card that is read rather
+ * than scanned — and on eight of the nine statuses it is the part that says what
+ * to do next. `--fg-muted` rather than `--fg-faint`: faint is for provenance
+ * nobody has to read.
  */
-.source-card__detail {
+.result-card__detail {
   font-size: var(--text-meta);
   line-height: var(--leading-body);
   color: var(--fg-muted);
@@ -222,31 +221,39 @@
 /* ── Warning and actions ────────────────────────────────────────────────── */
 
 /*
- * `.banner.banner--warn` supplies everything but the placement. Amber and not
- * red on purpose: an ambiguous match is a path that is probably right and cannot
- * be relied on, which is a caveat, not a failure — the file very likely opens.
+ * `.banner.banner--warn` supplies everything but the placement — it is the
+ * caveat that has to be read before opening a file it may be wrong about, so it
+ * sits directly above the actions rather than above the whole card, where the
+ * panel used to put it and where the review would have scrolled past it.
+ *
+ * Amber and not red on purpose: an ambiguous match is a path that is probably
+ * right and cannot be relied on, which is a caveat, not a failure.
  */
-.source-card__ambiguity {
-  margin-top: var(--space-1);
+.result-card__ambiguity {
+  margin-bottom: calc(var(--space-1) * -1);
 }
 
-.source-card__actions {
+.result-card__actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  margin-top: var(--space-1);
 }
 
+/* ── Narrow dock ────────────────────────────────────────────────────────── */
+
 /*
- * Below this the two actions stack rather than shrink.
- *
- * `Open in Editor` and `Open in Sources` are 130px and 145px of label at the
- * compact size, which will not sit side by side in a narrow DevTools dock. Two
- * full-width buttons read as a list of choices; two clipped ones read as a bug.
+ * Docked to the side, the panel gets about 300px and `Open in Editor` beside
+ * `Open in Sources` does not fit. Stretched, two buttons on two rows read as a
+ * deliberate stack; left to their content widths they read as debris. The
+ * breakpoint and the padding trim are the panel's own measured ones, carried
+ * over with the card.
  */
-@media (max-width: 340px) {
-  .source-card__actions {
-    flex-direction: column;
-    align-items: stretch;
+@media (max-width: 380px) {
+  .result-card__actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .result-card {
+    padding: var(--space-3);
   }
 }

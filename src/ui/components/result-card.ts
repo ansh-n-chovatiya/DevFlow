@@ -277,7 +277,7 @@ export interface ResultCardOptions {
 export function resultCard(options: ResultCardOptions): HTMLElement {
   const { source } = options;
 
-  const card = make('article', 'source-card');
+  const card = make('article', 'result-card');
   // The status is on the element rather than in a class so a surface can style
   // or query one outcome without this module owning a name for every one of nine.
   card.dataset.status = source.status;
@@ -290,13 +290,13 @@ export function resultCard(options: ResultCardOptions): HTMLElement {
   if (source.compiled) {
     // Which bundle it was found in. Always worth saying: with an original source
     // it is the evidence, and without one it is the only place to look.
-    const origin = make('p', 'source-card__origin mono', source.compiled.url);
+    const origin = make('p', 'result-card__origin mono', source.compiled.url);
     origin.title = source.compiled.url;
     card.append(origin);
   }
 
   const detail = detailText(source);
-  if (detail) card.append(make('p', 'source-card__detail', detail));
+  if (detail) card.append(make('p', 'result-card__detail', detail));
 
   const matchCount = source.matchCount ?? 0;
   if (matchCount > 1) card.append(ambiguity(matchCount, options.resourcesSearched));
@@ -308,9 +308,9 @@ export function resultCard(options: ResultCardOptions): HTMLElement {
 }
 
 function head(source: ComponentSource): HTMLElement {
-  const row = make('div', 'source-card__head');
-  row.append(icon('atom', 'icon source-card__mark'));
-  row.append(make('h3', 'source-card__name', source.name));
+  const row = make('div', 'result-card__head');
+  row.append(icon('atom', 'icon result-card__mark'));
+  row.append(make('h3', 'result-card__name', source.name));
 
   if (source.dependency) {
     /*
@@ -321,14 +321,14 @@ function head(source: ComponentSource): HTMLElement {
      * The literal directory name, because it is a directory name — a product
      * noun here would need a glossary entry it does not have (CONTRACTS §4.1).
      */
-    row.append(make('span', 'source-card__dep mono', 'node_modules'));
+    row.append(make('span', 'result-card__dep mono', 'node_modules'));
   }
 
   if (source.status === 'pending') {
     // A spinner rather than a `via` badge: there is no provenance yet, and the
     // card exists precisely so a step can show its component before the
     // background pass has finished resolving it.
-    const spinner = make('span', 'spinner source-card__spinner');
+    const spinner = make('span', 'spinner result-card__spinner');
     spinner.setAttribute('aria-hidden', 'true');
     row.append(spinner);
     return row;
@@ -336,7 +336,9 @@ function head(source: ComponentSource): HTMLElement {
 
   const label = viaLabel(source);
   if (label) {
-    const via = make('span', 'source-card__via', label);
+    // The shared chip, untinted: a chip only takes a data colour when it is
+    // given a `data-tint`, and provenance is the same kind of fact on every card.
+    const via = make('span', 'chip result-card__via', label);
     via.title = VIA_TITLE[label] ?? '';
     row.append(via);
   }
@@ -355,13 +357,13 @@ function head(source: ComponentSource): HTMLElement {
  */
 function pathLine(path: string, onCopyPath?: (path: string) => void): HTMLElement {
   if (!onCopyPath) {
-    const line = make('p', 'source-card__path source-card__path--static');
-    line.append(make('span', 'source-card__path-text mono', path));
+    const line = make('p', 'result-card__path result-card__path--static');
+    line.append(make('span', 'result-card__path-text mono', path));
     line.title = path;
     return line;
   }
 
-  const button = make('button', 'source-card__path');
+  const button = make('button', 'result-card__path');
   button.type = 'button';
   // Frozen in CONTRACTS §4.4, and both attributes carry it: the tooltip is what
   // a mouse finds and the label is what a screen reader reads, and the path
@@ -369,15 +371,15 @@ function pathLine(path: string, onCopyPath?: (path: string) => void): HTMLElemen
   button.title = 'Copy path';
   button.setAttribute('aria-label', 'Copy path');
   button.append(
-    make('span', 'source-card__path-text mono', path),
-    icon('copy', 'icon source-card__path-icon'),
+    make('span', 'result-card__path-text mono', path),
+    icon('copy', 'icon result-card__path-icon'),
   );
   button.addEventListener('click', () => onCopyPath(path));
   return button;
 }
 
 function ambiguity(matchCount: number, resourcesSearched?: number): HTMLElement {
-  const banner = make('div', 'banner banner--warn source-card__ambiguity');
+  const banner = make('div', 'banner banner--warn result-card__ambiguity');
   banner.append(icon('triangle-alert', 'icon banner__icon'));
   banner.append(make('p', 'banner__body', ambiguityText(matchCount, resourcesSearched)));
   return banner;
@@ -385,7 +387,7 @@ function ambiguity(matchCount: number, resourcesSearched?: number): HTMLElement 
 
 /** Null when neither action is available, so the card does not grow an empty row. */
 function actionRow(options: ResultCardOptions): HTMLElement | null {
-  const row = make('div', 'source-card__actions');
+  const row = make('div', 'result-card__actions');
 
   const editorUrl = componentEditorUrl(options.source, options.link ?? null);
   const onOpenEditor = options.onOpenEditor;
