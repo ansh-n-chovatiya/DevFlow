@@ -316,26 +316,32 @@ describe('resultCard', () => {
     expect(card.textContent).not.toContain('Open in Sources');
   });
 
-  // ── Copy & Pick Another Action Buttons ──────────────────────────────────────
+  // ── Pick another ────────────────────────────────────────────────────────────
 
-  it('offers Copy and Pick Another buttons in the action row when handlers are provided', () => {
-    const onCopyPath = vi.fn();
+  it('offers Pick another in the action row, under the name the panel uses', () => {
     const onPickAnother = vi.fn();
-    const card = resultCard({ source: resolved(), onCopyPath, onPickAnother });
+    const card = resultCard({ source: resolved(), onPickAnother });
 
-    const copyBtn = [...card.querySelectorAll<HTMLButtonElement>('.result-card__actions button')].find((node) =>
-      node.textContent?.includes('Copy'),
-    );
-    expect(copyBtn).toBeDefined();
-    copyBtn?.click();
-    expect(onCopyPath).toHaveBeenCalledWith('src/checkout/CartSummary.tsx:42:7');
-
-    const pickBtn = [...card.querySelectorAll<HTMLButtonElement>('.result-card__actions button')].find((node) =>
-      node.textContent?.includes('Pick Another'),
+    const pickBtn = [...card.querySelectorAll<HTMLButtonElement>('.result-card__actions button')].find(
+      (node) => node.textContent?.includes('Pick another'),
     );
     expect(pickBtn).toBeDefined();
     pickBtn?.click();
     expect(onPickAnother).toHaveBeenCalled();
+  });
+
+  it('copies from the path line and nowhere else', () => {
+    // Two controls firing one handler with one argument is two ways to be told
+    // the same thing worked — and the row's `Copy` could not say copy what.
+    const card = resultCard({ source: resolved(), onCopyPath: vi.fn(), onPickAnother: vi.fn() });
+
+    const rowLabels = [...card.querySelectorAll('.result-card__actions button')].map(
+      (node) => node.textContent,
+    );
+    expect(rowLabels.some((label) => label?.includes('Copy'))).toBe(false);
+
+    const pathButton = card.querySelector<HTMLButtonElement>('button.result-card__path');
+    expect(pathButton?.getAttribute('aria-label')).toBe('Copy path');
   });
 
   // ── Ambiguity ──────────────────────────────────────────────────────────────

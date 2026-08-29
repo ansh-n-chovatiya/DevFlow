@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+**One copy button on the result card, not two.** `onCopyPath` turned the path
+line into a button — the path is its text, `Copy path` is its label, and the copy
+icon sits at the end of the very string it copies — and *also* added a `Copy` to
+the action row, which fired the identical handler with the identical argument
+while saying nothing about copy what. The row is for going somewhere; the second
+button is gone and `Open in Editor` and `Open in Sources` get the room back.
+
+**`Pick another`, spelled the way the panel spells it.** The card said
+`Pick Another`; the status bar six pixels below it said `Pick another`, which is
+also what CONTRACTS §4.4 freezes.
+
 ## 3.1.0 — 2026-08-29
 
 **Locating is the DevTools panel's alone.** The popup's **Locate component**

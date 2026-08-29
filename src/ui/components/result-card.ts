@@ -422,20 +422,23 @@ function actionRow(options: ResultCardOptions): HTMLElement | null {
     );
   }
 
-  const path = pathText(options.source);
-  const onCopyPath = options.onCopyPath;
-  if (path && onCopyPath) {
-    row.append(
-      actionButton('copy', 'Copy', 'btn btn--secondary btn--compact', () =>
-        onCopyPath(path),
-      ),
-    );
-  }
-
+  /*
+   * No copy button here.
+   *
+   * `onCopyPath` already turns the path line above into a button — the path is
+   * its text, `Copy path` is its label, and the copy icon sits at the end of the
+   * very string it copies. A second control in this row said `Copy` with nothing
+   * beside it to say copy *what*, fired the identical handler with the identical
+   * argument, and pushed the two `Open in` actions along to make room. The row
+   * is for going somewhere; copying is an operation on the line it belongs to.
+   */
   const onPickAnother = options.onPickAnother;
   if (onPickAnother) {
+    // `Pick another`, frozen in CONTRACTS §4.4 and spelled that way by the
+    // panel's own button. Title case here was one card disagreeing with the
+    // status bar six pixels below it about the name of the same action.
     row.append(
-      actionButton('crosshair', 'Pick Another', 'btn btn--secondary btn--compact', onPickAnother),
+      actionButton('crosshair', 'Pick another', 'btn btn--secondary btn--compact', onPickAnother),
     );
   }
 
