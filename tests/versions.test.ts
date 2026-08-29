@@ -62,7 +62,7 @@ describe('the published MCP server', () => {
    */
   it('exposes exactly one bin, which is what makes `npx devflow-mcp-server` work', () => {
     expect(server.bin).toEqual({ 'devflow-mcp': 'server.js' });
-    expect(Object.keys(server.bin)).toHaveLength(1);
+    expect(Object.keys(server.bin ?? {})).toHaveLength(1);
   });
 
   it('starts with a shebang, or the bin is not executable', () => {
