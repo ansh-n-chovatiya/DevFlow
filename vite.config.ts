@@ -2,12 +2,16 @@ import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 
 /**
- * Main extension build: the two extension pages and the background worker.
+ * Main extension build: every extension page, and the background worker.
  *
  * The content script and the MAIN-world agent are built separately (see
  * vite.content.config.ts and vite.agent.config.ts) because manifest-declared
  * content scripts are classic scripts — they cannot be ES modules, so each
  * needs its own self-contained IIFE bundle.
+ *
+ * The DevTools half is two pages, not one: `devtools.html` is the hidden host
+ * Chrome loads to register a panel, and `panel.html` is the panel itself. Both
+ * are ordinary extension pages and belong here.
  */
 export default defineConfig({
   root: 'src',
@@ -35,6 +39,11 @@ export default defineConfig({
         popup: resolve(import.meta.dirname, 'src/popup.html'),
         viewer: resolve(import.meta.dirname, 'src/viewer.html'),
         settings: resolve(import.meta.dirname, 'src/settings.html'),
+        // The manifest names devtools.html, and devtools.html names panel.html;
+        // neither is imported by anything, so both have to be entries or Rollup
+        // never sees the panel at all.
+        devtools: resolve(import.meta.dirname, 'src/devtools.html'),
+        panel: resolve(import.meta.dirname, 'src/panel.html'),
         background: resolve(import.meta.dirname, 'src/background/index.ts'),
       },
       output: {

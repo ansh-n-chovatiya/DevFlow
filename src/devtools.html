@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>DevFlow — DevTools host</title>
+  </head>
+  <body>
+    <!--
+      Deliberately empty. This document is never rendered: Chrome loads the
+      `devtools_page` in a hidden frame so it can register panels, and the panel
+      itself is panel.html. Anything drawn here would be invisible and anything
+      styled here would be dead weight in every DevTools window the user opens.
+    -->
+    <script type="module" src="./devtools/index.ts"></script>
+  </body>
+</html>
