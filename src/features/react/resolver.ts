@@ -19,10 +19,40 @@
  *   - **Invisible to the recording.** These fetches come from the worker, so the
  *     page's patched `fetch`/`XHR` never see them and FlowSnap cannot end up
  *     recording itself.
+ *
+ * ## Where the bytes come from (D4)
+ *
+ * Nothing in here fetches any more. Reading a bundle and reading a source map
+ * are both `BundleProvider` calls (`core/react/provider.ts`, frozen in Wave 0),
+ * and the bundle-text cache, the in-flight dedupe, the size caps and the
+ * concurrency gate all moved with them into `providers/worker.ts`. That is what
+ * lets the DevTools panel run this same engine over the DevTools cache instead,
+ * and it is why the five Tier 2 numbers are now one `BundleBudget` rather than
+ * a hardcoded 6 on one side and a setting on the other.
+ *
+ * The one cache still here is the parsed one, because a `PreparedMap` is a core
+ * object the provider knows nothing about — it hands back text.
+ *
+ * **The provider is asked for text, never for the script list.** `listScripts`
+ * exists for a caller holding only a tab — the popup's one-shot locate. A
+ * resolve pass instead works from the inventory snapshot it was handed, because
+ * every answer it writes down is recorded against *that* snapshot's size: "not
+ * found in the 3 scripts the page had loaded" is only ever retried once there
+ * are more than 3, and re-reading storage mid-pass would let the number move
+ * underneath the answer.
+ *
+ * ## The 1-based edge (D1)
+ *
+ * `lookupOriginal` is spec-true and returns `Pos0`, because that is what a
+ * source map says. This module is the recorder's existing edge to 1-based, so
+ * `toOneBased()` is applied here, once, on the way into `ComponentSource.line`.
+ * `compiled` does *not* cross: it is a position in a minified file that
+ * DevTools' Sources panel is asked to open, and that API is 0-based too.
  */
 
-import { fetchText as fetchTextViaChrome } from '../../chrome/fetch.js';
 import { isDependencyPath } from '../../core/react/classify.js';
+import { pos0, toOneBased } from '../../core/react/positions.js';
+import type { BundleBudget, BundleProvider } from '../../core/react/provider.js';
 import { searchBundle, countOccurrences } from '../../core/react/search.js';
 import {
   extractSourceMappingURL,
@@ -44,17 +74,21 @@ import {
 } from '../../shared/constants.js';
 import type { ComponentNeedle, ComponentSource } from '../../shared/types.js';
 import { scriptsForPage } from './inventory.js';
+import { createWorkerProvider, type WorkerProvider } from './providers/worker.js';
 
-/** Everything the resolver touches outside itself, so tests need no browser. */
+/**
+ * Everything the resolver touches outside itself, so tests need no browser.
+ *
+ * It used to be a `fetchText` callback; it is a whole provider now, because the
+ * caching, the dedupe and the size caps that used to sit in this file went with
+ * it. A test that wants to control what a bundle read returns builds a
+ * `WorkerProvider` over a stub `fetchText`, which means the tests exercise the
+ * real cache and the real gate rather than a second implementation of them.
+ */
 export interface ResolveDeps {
-  fetchText(url: string, maxBytes: number): Promise<{ ok: true; value: string } | { ok: false }>;
+  provider: BundleProvider;
   now(): number;
 }
-
-const defaultDeps: ResolveDeps = {
-  fetchText: fetchTextViaChrome,
-  now: () => Date.now(),
-};
 
 export interface ResolveInput {
   components: Record<string, ComponentSource>;
@@ -106,24 +140,59 @@ export interface ResolveOutput {
   changed: boolean;
 }
 
-// ── Caches ───────────────────────────────────────────────────────────────────
-//
-// Worker-lived and keyed by URL. The bundle cache is what makes resolving the
-// eighth component nearly free: it is the same four bundles as the first.
+// ── Worker-lived state ───────────────────────────────────────────────────────
 
-const bundleCache = new Map<string, string>();
-let bundleCacheBytes = 0;
+/**
+ * The provider this worker has been using, kept between passes.
+ *
+ * One provider for the life of the worker, retargeted rather than rebuilt: its
+ * bundle cache is what makes resolving the eighth component nearly free — it is
+ * the same four bundles as the first — and the recorder's debounce fires a pass
+ * every few seconds, so a fresh provider each time would throw the cache away
+ * before it ever paid for itself.
+ */
+let sharedProvider: WorkerProvider | null = null;
 
-/** In-flight fetches, so four components racing for one bundle fetch it once. */
-const bundleInflight = new Map<string, Promise<string | null>>();
+function providerFor(limits: ResolveLimits, scripts: Record<string, string[]>): WorkerProvider {
+  const budget = asBundleBudget(limits);
 
-/** Parsed maps, and the failures — a map that will not parse must not be re-parsed. */
+  if (sharedProvider) sharedProvider.retarget(budget, scripts);
+  else sharedProvider = createWorkerProvider(budget, { scripts });
+
+  return sharedProvider;
+}
+
+/**
+ * Parsed maps, and the failures — a map that will not parse must not be re-parsed.
+ *
+ * The one cache the provider cannot hold, because a `PreparedMap` is a core
+ * object and a provider deals only in text. It used to be unbounded, which was a
+ * slow leak with a loud ending: a `PreparedMap` keeps the whole `mappings`
+ * string, `react.maxMapBytes` allows 64 MB of one, and an MV3 worker that
+ * overruns its memory is killed outright with the resolution in flight simply
+ * lost. It is bounded by `react.bundleCacheEntries` — the same count as the
+ * bundle texts, because there is at most one map per bundle, and a second
+ * setting for a number that can only ever track another one is a setting nobody
+ * could reason about.
+ */
 const mapCache = new Map<string, PreparedMap | null>();
 
+function rememberMap(bundleUrl: string, map: PreparedMap | null, entries: number): void {
+  mapCache.set(bundleUrl, map);
+
+  // Oldest first, like the bundle cache and for the same reason: a pass walks
+  // the page's bundles in load order from the top, so insertion order and
+  // recency say the same thing here.
+  while (mapCache.size > entries) {
+    const oldest = mapCache.keys().next();
+    if (oldest.done) break;
+    mapCache.delete(oldest.value);
+  }
+}
+
 export function clearResolverCaches(): void {
-  bundleCache.clear();
-  bundleCacheBytes = 0;
-  bundleInflight.clear();
+  sharedProvider?.clear();
+  sharedProvider = null;
   mapCache.clear();
 }
 
@@ -139,6 +208,15 @@ export function clearResolverCaches(): void {
  *
  * The default is the shipped answer, for the tests that drive this module
  * directly and for any caller with no settings in hand.
+ *
+ * **This is `BundleBudget` under older names.** The two describe exactly the
+ * same five settings keys and are converted by `asBundleBudget` below, once.
+ * They are not merged because `background/index.ts` builds this literal and
+ * belongs to another package: renaming its fields from here would break a file
+ * this session must not touch. The merge risk `BundleBudget` exists to remove is
+ * two *values*, and there is still only one — both names read the same keys —
+ * but the day `runResolve` switches to `bundleBudget(settings)`, `ResolveLimits`
+ * and the converter should go with it.
  */
 export interface ResolveLimits {
   /** `react.resolveConcurrency` — bundles fetched at once. */
@@ -161,38 +239,37 @@ export const DEFAULT_RESOLVE_LIMITS: ResolveLimits = {
   mapBytes: MAX_MAP_BYTES,
 };
 
-/** Evicts oldest-first until the cache is back inside both of its limits. */
-function trimBundleCache(limits: ResolveLimits): void {
-  for (const [url, text] of bundleCache) {
-    if (bundleCache.size <= limits.cacheEntries && bundleCacheBytes <= limits.cacheBytes) return;
-    bundleCache.delete(url);
-    bundleCacheBytes -= text.length;
-  }
-}
-
-function loadBundle(url: string, deps: ResolveDeps, limits: ResolveLimits): Promise<string | null> {
-  const cached = bundleCache.get(url);
-  if (cached !== undefined) return Promise.resolve(cached);
-
-  const pending = bundleInflight.get(url);
-  if (pending) return pending;
-
-  const promise = deps
-    .fetchText(url, limits.resourceBytes)
-    .then((result) => {
-      if (!result.ok) return null;
-      bundleCache.set(url, result.value);
-      bundleCacheBytes += result.value.length;
-      trimBundleCache(limits);
-      return result.value;
-    })
-    .finally(() => bundleInflight.delete(url));
-
-  bundleInflight.set(url, promise);
-  return promise;
+/** The same five numbers, spelled the way the frozen contract spells them. */
+function asBundleBudget(limits: ResolveLimits): BundleBudget {
+  return {
+    concurrency: limits.concurrency,
+    maxResourceBytes: limits.resourceBytes,
+    maxMapBytes: limits.mapBytes,
+    cacheEntries: limits.cacheEntries,
+    cacheBytes: limits.cacheBytes,
+  };
 }
 
 // ── Resolving one component ──────────────────────────────────────────────────
+
+/**
+ * The four things every step of one component's pass needs.
+ *
+ * Grouped for the reason `ResolveLimits` is grouped: they travel together
+ * through four functions, and threading them as positional parameters is how a
+ * call site swaps two numbers and still typechecks. The deadline is in here
+ * rather than recomputed because it is the *pass's* deadline — one clock reading
+ * at the start, not a fresh budget per component.
+ */
+interface Pass {
+  provider: BundleProvider;
+  now(): number;
+  /** The clock value past which this pass stops, whatever it has found. */
+  deadline: number;
+  /** `react.bundleCacheEntries`, for the parsed-map cache. */
+  cacheEntries: number;
+}
+
 
 /**
  * Why a bundle search ended without a position.
@@ -239,21 +316,23 @@ interface SearchSuccess {
 async function searchForNeedle(
   needle: ComponentNeedle,
   urls: string[],
-  deps: ResolveDeps,
-  deadline: number,
-  limits: ResolveLimits,
+  pass: Pass,
 ): Promise<SearchSuccess | SearchFailure> {
   let hit: SearchSuccess | null = null;
   let anyLoaded = false;
   let outOfTime = false;
 
   for (const url of urls) {
-    if (deps.now() > deadline) {
+    if (pass.now() > pass.deadline) {
       outOfTime = true;
       break;
     }
 
-    const content = await loadBundle(url, deps, limits);
+    // Null covers every way a bundle can be unreadable — a 404 after a deploy,
+    // no CORS headers, a resource over `react.maxResourceBytes`. The provider
+    // never throws, so there is nothing to catch and nothing to distinguish:
+    // a bundle that cannot be read simply is not searched.
+    const content = await pass.provider.loadScript(url);
     if (!content) continue;
     anyLoaded = true;
 
@@ -292,19 +371,18 @@ async function searchForNeedle(
   return anyLoaded ? 'not-found' : 'unfetchable';
 }
 
-/** Fetches and parses a bundle's map. Null means the bundle ships none. */
+/** Reads and parses a bundle's map. Null means the bundle ships none. */
 async function loadMap(
   bundleUrl: string,
   bundleContent: string,
-  deps: ResolveDeps,
-  limits: ResolveLimits,
+  pass: Pass,
 ): Promise<PreparedMap | null> {
   const cached = mapCache.get(bundleUrl);
   if (cached !== undefined) return cached;
 
   const annotation = extractSourceMappingURL(bundleContent);
   if (!annotation) {
-    mapCache.set(bundleUrl, null);
+    rememberMap(bundleUrl, null, pass.cacheEntries);
     return null;
   }
 
@@ -322,15 +400,23 @@ async function loadMap(
       throw new SourceMapError(`the sourceMappingURL "${annotation}" is not a resolvable URL`);
     }
 
-    const fetched = await deps.fetchText(mapUrl, limits.mapBytes);
-    if (!fetched.ok) {
+    const fetched = await pass.provider.loadUrl(mapUrl);
+    if (fetched === null) {
       throw new SourceMapError('its source map could not be fetched — it may be 404 or private');
     }
-    json = fetched.value;
+    json = fetched;
   }
 
+  /*
+   * `keepSourcesContent` is left off (D3). A flow is sent to an AI, and inlined
+   * original source is both a token disaster and a way to leak code the user
+   * never meant to send. The panel, which renders a preview from it, opts in at
+   * its own call site — the failure mode of getting this wrong is a missing
+   * preview or a larger object, never a wrong path, which is exactly why this
+   * one is a parameter where the line base (D1) is a type.
+   */
   const map = parseSourceMap(json);
-  mapCache.set(bundleUrl, map);
+  rememberMap(bundleUrl, map, pass.cacheEntries);
   return map;
 }
 
@@ -353,9 +439,7 @@ async function resolveOne(
   entry: ComponentSource,
   needle: ComponentNeedle,
   urls: string[],
-  deps: ResolveDeps,
-  deadline: number,
-  limits: ResolveLimits,
+  pass: Pass,
 ): Promise<ResolveOutcome> {
   const name = entry.name;
 
@@ -370,7 +454,7 @@ async function resolveOne(
     };
   }
 
-  const found = await searchForNeedle(needle, urls, deps, deadline, limits);
+  const found = await searchForNeedle(needle, urls, pass);
 
   if (found === 'budget-exhausted') {
     // Nothing was learned, so nothing is written down. Saying "not found in the
@@ -407,7 +491,14 @@ async function resolveOne(
     };
   }
 
-  const compiled = { url: found.url, line: found.line + 1, column: found.column + 1 };
+  /*
+   * The compiled position stays 0-based (D1). `searchBundle` reports an offset
+   * into the bundle text, which is 0-based, and the only thing that ever opens
+   * it is DevTools' Sources panel, whose API is 0-based too. The `+ 1` that used
+   * to be here made this field agree with `line` below and disagree with every
+   * consumer of it; the brand is what makes the two impossible to confuse now.
+   */
+  const compiled = { url: found.url, line: pos0(found.line), column: pos0(found.column) };
   const ambiguous = found.matchCount > 1;
 
   /*
@@ -431,7 +522,7 @@ async function resolveOne(
 
   let map: PreparedMap | null;
   try {
-    map = await loadMap(found.url, found.content, deps, limits);
+    map = await loadMap(found.url, found.content, pass);
   } catch (error) {
     const reason = error instanceof SourceMapError ? error.message : 'its source map could not be read';
     return {
@@ -497,8 +588,11 @@ async function resolveOne(
       status: uncertain ? 'ambiguous' : 'resolved',
       via: 'bundle-search',
       source: original.source,
-      line: original.line,
-      column: original.column,
+      // The one bridge, applied once, at the recorder's existing 1-based edge.
+      // `lookupOriginal` is spec-true and answers in the map's own base; a file
+      // and a line are what a person and an editor read, and they start at 1.
+      line: toOneBased(original.line),
+      column: toOneBased(original.column),
       ...(isAbsolutePath(original.source) ? { absolutePath: original.source } : {}),
       ...(dependency ? { dependency: true } : {}),
       compiled,
@@ -550,7 +644,7 @@ function selectPending(input: ResolveInput): string[] {
  */
 export async function resolvePending(
   input: ResolveInput,
-  deps: ResolveDeps = defaultDeps,
+  deps?: ResolveDeps,
 ): Promise<ResolveOutput> {
   const components = { ...input.components };
   const needles = { ...input.needles };
@@ -560,8 +654,25 @@ export async function resolvePending(
     return finish(components, needles, input, false);
   }
 
-  const deadline = deps.now() + (input.budgetMs ?? MAX_RESOLVE_MS_PER_FLOW);
   const limits = input.limits ?? DEFAULT_RESOLVE_LIMITS;
+  // Called through rather than lifted off `deps`: a method plucked from its
+  // object loses its receiver, and `deps.now` in a test is a closure over state
+  // the test is driving.
+  const now = (): number => deps?.now() ?? Date.now();
+
+  /*
+   * The default provider is the worker's, retargeted to this pass rather than
+   * rebuilt — see `providerFor`. A caller that supplies one (a test, or a
+   * surface with a DevTools panel behind it) gets no shared state at all, which
+   * is what keeps the tests independent of each other's caches.
+   */
+  const pass: Pass = {
+    provider: deps?.provider ?? providerFor(limits, input.scripts),
+    now,
+    deadline: now() + (input.budgetMs ?? MAX_RESOLVE_MS_PER_FLOW),
+    cacheEntries: limits.cacheEntries,
+  };
+
   let changed = false;
   let next = 0;
 
@@ -569,7 +680,7 @@ export async function resolvePending(
     for (;;) {
       const index = next++;
       if (index >= ids.length) return;
-      if (deps.now() > deadline) return;
+      if (now() > pass.deadline) return;
 
       const id = ids[index];
       const needle = needles[id];
@@ -580,7 +691,7 @@ export async function resolvePending(
 
       let outcome: ResolveOutcome;
       try {
-        outcome = await resolveOne(entry, needle, urls, deps, deadline, limits);
+        outcome = await resolveOne(entry, needle, urls, pass);
       } catch (error) {
         // A bug in here must cost one component its path, not the whole pass.
         outcome = {

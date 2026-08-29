@@ -1,14 +1,20 @@
 /**
  * Which scripts a page loaded, so the resolver knows what to search.
  *
- * react-source-locator gets this for free from
+ * react-source-locator got this for free from
  * `chrome.devtools.inspectedWindow.getResources()`. FlowSnap has no DevTools
  * page, so the page itself reports what it loaded — a `PerformanceObserver` on
  * `resource` entries plus `document.scripts` — and this module folds those
  * deltas into something the worker can keep.
  *
- * The URL filters are ported from react-source-locator `src/core/resources.ts`
- * @ 6eb7a30 (`isLikelyScript`, `isSearchableUrl`).
+ * Both survive the merge as the two `BundleProvider` implementations, and this
+ * module is the worker one's inventory. **The two URL filters below are shared
+ * by both of them**, which is the reason they are exported rather than kept
+ * private to `mergeScripts`: the panel's provider runs the same rules over the
+ * DevTools resource list, so a `.woff2` cannot be searched as a bundle on one
+ * surface and skipped on the other. They came from the locator to begin with —
+ * ported from `src/core/resources.ts` @ 6eb7a30 — so this is one copy replacing
+ * two rather than a new dependency.
  *
  * **Divergence from the plan: the inventory is keyed by origin, not by document
  * URL.** A single-page app changes its URL by `pushState` without loading a new
@@ -53,6 +59,12 @@ export function isLikelyScript(url: string): boolean {
  * `data:` bundles cannot be re-fetched from the worker at all — the worker has
  * no access to the page's blob registry, so a fetch would fail well after the
  * component had been queued.
+ *
+ * `file:` is excluded here and added back by the DevTools provider alone, which
+ * is the one surface that can read a local file — out of the DevTools cache,
+ * without a fetch. Widening this predicate instead would let a `file:` URL into
+ * the worker's inventory, where every component filed under it would report a
+ * fetch failure as the reason it has no source.
  */
 export function isSearchableUrl(url: string): boolean {
   return url.startsWith('http:') || url.startsWith('https:');

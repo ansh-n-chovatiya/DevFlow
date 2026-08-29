@@ -21,9 +21,15 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildNeedle } from '../src/core/react/needle.js';
+import { bundleBudget, createWorkerProvider } from '../src/features/react/providers/worker.js';
 import { clearResolverCaches, resolvePending, type ResolveDeps } from '../src/features/react/resolver.js';
+import { resolve as resolveSettings } from '../src/features/settings/resolve.js';
+import { flowError } from '../src/shared/errors.js';
 import type { ComponentNeedle, ComponentSource } from '../src/shared/types.js';
 import { sourceMapJson } from './helpers/sourcemap-fixture.js';
+
+/** The shipped budget, derived from the field table rather than retyped. */
+const BUDGET = bundleBudget(resolveSettings({}));
 
 const PAGE = 'https://shop.test/products/42';
 const ORIGIN = 'https://shop.test';
@@ -44,18 +50,31 @@ function bundleWith(fnSource: string, mapName: string): string {
   return `var pad=1;\n${fnSource}\n//# sourceMappingURL=${mapName}`;
 }
 
+/**
+ * A real `WorkerProvider` over a fake web, on a clock the test drives.
+ *
+ * The clock stays on the resolver's side of the seam: the deadline is the
+ * *pass's*, not the provider's, and every reading of it that these tests count
+ * happens in `resolvePending` and `searchForNeedle`. A provider that consulted
+ * the clock would make `scriptedClock` below unreadable.
+ */
 function harness(files: Record<string, string>, now: () => number) {
   const fetched: string[] = [];
-  const deps: ResolveDeps = {
+
+  const provider = createWorkerProvider(BUDGET, {
+    scripts: {},
     fetchText: (url) => {
       fetched.push(url);
       const text = files[url];
       return Promise.resolve(
-        text === undefined ? { ok: false as const } : { ok: true as const, value: text },
+        text === undefined
+          ? { ok: false as const, error: flowError('RESOURCE_UNFETCHABLE', url) }
+          : { ok: true as const, value: text },
       );
     },
-    now,
-  };
+  });
+
+  const deps: ResolveDeps = { provider, now };
   return { deps, fetched };
 }
 

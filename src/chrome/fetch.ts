@@ -1,8 +1,16 @@
 /**
- * The only place the worker fetches from the web.
+ * The only place DevFlow fetches from the web.
  *
- * Used to read the page's own script bundles and their source maps. Three
- * things here are load-bearing:
+ * Used to read the page's own script bundles and their source maps, by both
+ * `BundleProvider` implementations: the worker's, which has no other way to get
+ * a bundle, and the DevTools panel's, for the resources the DevTools cache has a
+ * record of but no body for. The panel used to route this through the service
+ * worker, because react-source-locator asked for `<all_urls>` at runtime through
+ * `optional_host_permissions` and only the background held the grant. DevFlow
+ * holds `<all_urls>` statically — a superset — so the round trip, its message
+ * type and its permission prompt are all gone.
+ *
+ * Three things here are load-bearing:
  *
  *   - **`cache: 'force-cache'`.** The page has just loaded these bundles, so the
  *     search normally costs no network at all. This is also why resolution runs
