@@ -15,7 +15,7 @@
  * shipped build baked this badge into every screenshot it took.
  */
 
-#flowsnap-indicator {
+#devflow-indicator {
   /* Scoped copies of the dark tokens. tokens.css is the authority for values. */
   --fs-surface: #161b1d;
   --fs-record: #e5484d;
@@ -55,7 +55,7 @@
   direction: ltr;
 }
 
-#flowsnap-indicator::before {
+#devflow-indicator::before {
   content: '';
   width: 8px;
   height: 8px;
@@ -64,12 +64,12 @@
   animation: flowsnap-pulse 2s ease-in-out infinite;
 }
 
-#flowsnap-indicator.paused {
+#devflow-indicator.paused {
   border-color: color-mix(in srgb, var(--fs-warn) 50%, transparent);
   color: var(--fs-warn);
 }
 
-#flowsnap-indicator.paused::before {
+#devflow-indicator.paused::before {
   background: var(--fs-warn);
   animation: none;
 }
@@ -88,7 +88,7 @@
 
 /* The pulse is exactly the kind of ambient motion a vestibular disorder reacts to. */
 @media (prefers-reduced-motion: reduce) {
-  #flowsnap-indicator::before {
+  #devflow-indicator::before {
     animation: none;
   }
 }

@@ -56,7 +56,11 @@ import {
   REACT_PREWARM_TTL_MS,
   STACK_FRAMES,
 } from '../shared/constants.js';
-import type { AgentConfig } from '../shared/messages.js';
+import type {
+  AgentConfig,
+  AgentQueryMessage,
+  PickQuery,
+} from '../shared/messages.js';
 import { redactUrl } from '../core/redact/index.js';
 
 /**
@@ -983,56 +987,6 @@ function applyPicking(wanted: boolean): void {
   picking = wanted;
   if (wanted) startPick(onPickResult);
   else cancelPick();
-}
-
-/**
- * A question about the last pick, answered from the page.
- *
- * These are the two facts about a picked component that cannot cross
- * `postMessage` and therefore cannot be part of `PickResult`: the component's
- * compiled source, which is a function, and where it sits on screen, which is a
- * set of DOM nodes. Upstream read both by `eval`-ing into the page and reaching
- * into the globals its own injection had left there; here the extension asks
- * and the agent answers, over the channel that already exists.
- *
- * **These two interfaces belong in `src/shared/messages.ts`,** beside
- * `ControlMessage` and `AgentMessage`, and they are declared here only because
- * Wave 0 froze that file without them — `READ_COMPONENT_SOURCE` and
- * `HIGHLIGHT_COMPONENT` exist in `ContentRequest` with no way for the content
- * script to reach the agent, and `AgentMessage` has no reply. Editing a frozen
- * contract locally would invalidate every sibling session compiling against it,
- * so this package reports the gap instead and keeps the wire shape in the one
- * file that owns both ends of it. Move them when the contract is amended.
- */
-export type PickQuery = { id: number } & (
-  | { kind: 'source'; group: TreeGroup; index: number }
-  | { kind: 'highlight'; group: TreeGroup; index: number | null }
-);
-
-/**
- * A query, in the same envelope as `ControlMessage`.
- *
- * Same marker, because it comes from the same sender over the same channel and a
- * second marker would be a second thing for a page to forge. Discriminated by
- * the presence of `query`: a control message never carries one, and this is
- * answered and returned from before `recording` is read — a query that fell
- * through to the control path would be a message with no `recording` field,
- * which reads as `false` and would stop a live recording's capture.
- */
-export interface AgentQueryMessage {
-  __devflow_control__: string;
-  query: PickQuery;
-}
-
-/** What a query is answered with. `id` pairs it with the question. */
-export interface AgentQueryReply {
-  __devflow_source__: string;
-  kind: 'reply';
-  id: number;
-  /** `source` queries: the component's compiled source, or null. */
-  source?: string | null;
-  /** `highlight` queries: whether the component was still on the page to draw. */
-  ok?: boolean;
 }
 
 /**

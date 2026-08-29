@@ -42,7 +42,12 @@ import {
   BADGE_COLOR,
 } from '../shared/constants.js';
 import { flowError, type FlowError } from '../shared/errors.js';
-import type { BoundingBox, DraftStep, Step } from '../shared/types.js';
+import type {
+  BoundingBox,
+  DraftStep,
+  PickResult,
+  Step,
+} from '../shared/types.js';
 import type { CapturedComponent } from '../shared/messages.js';
 import { stripReactRef } from '../core/react/attribution.js';
 import { mergeTrailing, stepKey, type Pending } from '../core/flow/index.js';
@@ -1160,8 +1165,26 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
     }
 
     case 'START_PICK': {
-      void relayToTab(message.tabId, { type: 'START_PICK' }).then((answer) =>
-        sendResponse({ ok: answer.ok }),
+      /*
+       * The pick itself comes back through here, not an acknowledgement.
+       *
+       * The content script holds its `sendResponse` until the agent reports,
+       * so this promise settles when the user clicks — or presses Escape, or
+       * lets `PICK_TIMEOUT_MS` run out. The worker is a relay for the whole
+       * round trip and not just the outbound half, which is what makes the
+       * popup a real door into locating: it has no scripting relationship with
+       * the page except this one.
+       *
+       * A tab that never answered is a `PickFailure`. To the surface that asked,
+       * a page it cannot reach and a user who changed their mind are the same
+       * outcome — nothing was picked — and the difference is a sentence.
+       */
+      void relayToTab<PickResult>(message.tabId, { type: 'START_PICK' }).then((answer) =>
+        sendResponse(
+          answer.ok
+            ? answer.value
+            : { kind: 'error', error: 'That page cannot be picked on. Reload it and try again.' },
+        ),
       );
       return true;
     }

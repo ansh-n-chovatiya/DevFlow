@@ -322,7 +322,21 @@ export interface ComponentSourceResponse {
 export interface ResponseByType {
   FETCH_CONTENT: FetchContentResponse;
   DEVTOOLS_OPENED: OkResponse;
-  START_PICK: OkResponse;
+  /**
+   * The pick itself, not an acknowledgement.
+   *
+   * The freeze had this as `OkResponse`, which said the request landed and
+   * nothing about what the user picked — so the answer had nowhere to go and
+   * both locate surfaces were blocked. The response is deferred: the content
+   * script holds `sendResponse` until the agent reports, which is however long
+   * the user takes, bounded by `PICK_TIMEOUT_MS`.
+   *
+   * A relay failure is a `PickFailure`, not a separate channel. A tab that has
+   * navigated to `chrome://` and a user who pressed Escape are the same thing to
+   * the caller — no component was picked — and the difference is a sentence,
+   * which `PickFailure.error` already carries.
+   */
+  START_PICK: PickResult;
   CANCEL_PICK: OkResponse;
   READ_COMPONENT_SOURCE: ComponentSourceResponse;
   HIGHLIGHT_COMPONENT: OkResponse;
@@ -462,6 +476,54 @@ export interface AgentPickMessage {
   __devflow_source__: string;
   kind: 'pick';
   result: PickResult;
+}
+
+/**
+ * A question about the last pick, answered from the page.
+ *
+ * These are the two facts about a picked component that cannot cross
+ * `postMessage` and therefore cannot be part of `PickResult`: the component's
+ * compiled source, which is a function, and where it sits on screen, which is a
+ * set of DOM nodes. react-source-locator read both by `eval`-ing into the page
+ * and reaching into the globals its own injection had left there; here the
+ * extension asks and the agent answers, over the channel that already exists.
+ *
+ * Added in the Wave 0 amendment. The freeze declared `READ_COMPONENT_SOURCE` and
+ * `HIGHLIGHT_COMPONENT` on `ContentRequest` and then gave the content script no
+ * way to reach the agent with either — the round trip stopped one hop short.
+ * Package C found it, declared the shapes locally rather than editing a contract
+ * six sibling sessions were compiling against, and reported. This is where they
+ * belong.
+ */
+export type PickQuery = { id: number } & (
+  | { kind: 'source'; group: TreeGroup; index: number }
+  | { kind: 'highlight'; group: TreeGroup; index: number | null }
+);
+
+/**
+ * A query, in the same envelope as `ControlMessage`.
+ *
+ * Same marker, because it comes from the same sender over the same channel and a
+ * second marker would be a second thing for a page to forge. Discriminated by
+ * the presence of `query`: a control message never carries one, and this is
+ * answered and returned from before `recording` is read — a query that fell
+ * through to the control path would be a message with no `recording` field,
+ * which reads as `false` and would stop a live recording's capture.
+ */
+export interface AgentQueryMessage {
+  __devflow_control__: string;
+  query: PickQuery;
+}
+
+/** What a query is answered with. `id` pairs it with the question. */
+export interface AgentQueryReply {
+  __devflow_source__: string;
+  kind: 'reply';
+  id: number;
+  /** `source` queries: the component's compiled source, or null. */
+  source?: string | null;
+  /** `highlight` queries: whether the component was still on the page to draw. */
+  ok?: boolean;
 }
 
 export type AgentMessage =

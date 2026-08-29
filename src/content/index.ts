@@ -63,7 +63,7 @@ import type {
  * the wrong realm. See the note on `PickQuery` in that file for why the wire
  * shape lives there rather than in `shared/messages.ts`.
  */
-import type { AgentQueryReply, PickQuery } from '../injected/agent.js';
+import type { AgentQueryReply, PickQuery } from '../shared/messages.js';
 
 let isRecording = false;
 let isPaused = false;

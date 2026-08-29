@@ -583,10 +583,12 @@ export const PICK_TIMEOUT_MS = 120_000;
 /**
  * Globals the injected agent owns on the inspected page.
  *
- * One namespace, because there is one agent. The locator's `__RST_*` prefix does
- * not survive — see the banned list in docs/CONTRACTS.md §4.5 — and neither does
- * the shape it named: these are the agent's own working state for a live pick,
- * not a channel the extension reads across worlds. The channel is `postMessage`.
+ * One namespace, because there is one agent. The nine globals the locator kept
+ * under its own prefix do not survive — see the banned list in
+ * docs/CONTRACTS.md §4.5, which the literal is deliberately not written out
+ * here to satisfy — and neither does the shape they named: these two are the
+ * agent's own working state for a live pick, not a channel the extension reads
+ * across worlds. The channel is `postMessage`.
  */
 export const PAGE_GLOBALS = {
   /** The agent's own API object, so a second injection can detect the first. */
