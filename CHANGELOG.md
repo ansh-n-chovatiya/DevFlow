@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.1.0 — 2026-08-29
+
+**Locating is the DevTools panel's alone.** The popup's **Locate component**
+action is gone, along with the detached window behind it and the **Recent** card
+it fed. It could show you where a component was written and then not take you
+there: `Open in Sources` needs a DevTools window to reveal a compiled position
+in, and a popup has none — so every answer arrived one action short of the one
+people actually wanted next. Picking, the parent tree, the siblings, the history
+and both `Open in` actions now live in one surface that can serve all four:
+**React Locator**, in DevTools beside Elements and Sources.
+
+Nothing about recording changes, and nothing about attribution changes: a
+recorded step still carries the component it happened in, resolved in the service
+worker, whether or not DevTools was ever opened.
+
+Upgrading drops the now-unread `lastLocate` key, which was otherwise counted into
+the storage figure in the popup's footer for good.
+
+**The popup no longer squashes itself.** Its body is a flex column with a bounded
+height, so once the content passed 600px Chrome compressed **Start recording**
+from 40px down to its line box instead of scrolling. It scrolls.
+
 ## 3.0.0 — 2026-08-29
 
 **DevFlow 3.0.0 replaces two extensions: DevFlow 2.7.1 and react-source-locator

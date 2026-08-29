@@ -226,11 +226,13 @@ export interface DevtoolsOpened {
 /**
  * Arm the picker on a tab, from a surface that is not the page.
  *
- * The popup and the panel both send this; the worker relays it to the tab's
- * content script, which pushes a control message to the agent. That relay is
- * what makes locating reachable from either door — the popup has no scripting
- * relationship with the page beyond the worker, and the panel no longer has one
- * at all now that the `eval` injection path is deleted.
+ * The panel sends this; the worker relays it to the tab's content script, which
+ * pushes a control message to the agent. That relay is what lets the panel keep
+ * no scripting relationship with the page at all, now that the `eval` injection
+ * path is deleted. `tabId` rather than the sender's own tab because a DevTools
+ * page has none — it is about the window it inspects, never the one it is in.
+ *
+ * The popup used to send it too, from a detached window; that surface is gone.
  */
 export interface StartPick {
   type: 'START_PICK';

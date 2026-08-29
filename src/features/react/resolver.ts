@@ -34,8 +34,9 @@
  * object the provider knows nothing about — it hands back text.
  *
  * **The provider is asked for text, never for the script list.** `listScripts`
- * exists for a caller holding only a tab — the popup's one-shot locate. A
- * resolve pass instead works from the inventory snapshot it was handed, because
+ * is part of `BundleProvider` (CONTRACTS §2) and belongs to a caller holding
+ * only a tab. A resolve pass instead works from the inventory snapshot it was
+ * handed, because
  * every answer it writes down is recorded against *that* snapshot's size: "not
  * found in the 3 scripts the page had loaded" is only ever retried once there
  * are more than 3, and re-reading storage mid-pass would let the number move

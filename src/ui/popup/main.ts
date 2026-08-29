@@ -10,51 +10,22 @@
  * watches storage, so a recording follows the user across tabs — messaging only
  * the active tab is what made recording silently stop the moment you switched.
  *
- * ## Why locating opens a second window
+ * ## It does not locate
  *
- * A popup cannot survive the gesture that locating is made of. Chrome dismisses
- * it the moment focus leaves, the dismissing click never reaches the page — the
- * same fact `beginRecording` closes the popup over, one paragraph down — and
- * `START_PICK` answers with *the pick itself*, however long the user takes. So
- * the surface that asks has to be alive when the answer lands, and the toolbar
- * popup is guaranteed not to be. Four ways out were on the table:
- *
- *  1. **Ask, then die, and let something else remember.** Nothing else does: the
- *     worker relays the round trip and stores nothing, the content script
- *     answers the one request and forgets, and both belong to other packages.
- *     A result computed with nobody left to receive it is simply dropped.
- *  2. **Hand it to the viewer tab.** The natural home — it is already the
- *     product's large surface — but reaching a locate view there means routing
- *     it, and `viewer/{main,route}.ts` are not this package's to write. A door
- *     that needs another session's edit before it opens is not a door.
- *  3. **Open this same page in a window of its own.** It outlives the click, it
- *     is the popup rather than an imitation of it — same document, same view
- *     model, same card — and `chrome.windows.create` needs no permission the
- *     manifest does not already hold.
- *  4. **Write the answer down.** Necessary regardless: a window can be closed
- *     mid-pick, and the next popup should still know what was found.
- *
- * This file does (3) and (4), which together make the mechanism invisible: press
- * `Locate component`, the popup detaches into a small window over the page, pick
- * anything, and the answer arrives there and stays in `Recent` afterwards. The
- * one sentence the user is told is that the window stays open for the answer —
- * everything else about popup lifetimes is the extension's problem, not theirs.
- *
- * When the viewer grows a locate route, (2) becomes the better home for the
- * result and this window becomes the thing that hands it over; nothing above the
- * `beginLocate`/`runPick` seam would have to change.
+ * It used to, in a detached window of this same document, because the click that
+ * picks is the click that dismisses a popup. That window is deleted rather than
+ * hidden. It could show a component's path and not open it — `Open in Sources`
+ * needs a DevTools window to reveal a compiled position in, and a popup has none
+ * — so its answers ended one action short of the one people wanted. Locating is
+ * the DevTools panel's, whole: `ui/locator/` has the Sources window, the parent
+ * tree and the history. The recorder still attributes each step to the component
+ * it happened in; that path is the resolver's and never came through here.
  */
 
 import { bytesInUse, getLocal, setLocal } from '../../chrome/storage.js';
 import { hydrateTail, sweep as sweepShots } from '../../features/flows/shots.js';
-import { ensureContentScript } from '../../chrome/scripting.js';
 import { reloadAndWait } from '../../chrome/tabs.js';
-import {
-  prepare,
-  probe,
-  type Preflight,
-  type RecordingTarget,
-} from '../../features/recording/preflight.js';
+import { prepare, probe, type Preflight } from '../../features/recording/preflight.js';
 import { sendToWorker } from '../../shared/messages.js';
 import {
   RECORDING_DEFAULTS,
@@ -63,46 +34,19 @@ import {
 } from '../../features/settings/recording.js';
 import { DEFAULTS, type RecordingSettings, type Settings } from '../../features/settings/fields.js';
 import { load as loadSettings } from '../../features/settings/index.js';
-import { editorTemplate, type EditorLink } from '../../core/react/editor.js';
-import { bundleBudget, createWorkerProvider } from '../../features/react/providers/worker.js';
-import type { PickSuccess, RecordingState, Step, StoredError } from '../../shared/types.js';
-import { resultCard } from '../components/result-card.js';
+import type { RecordingState, Step, StoredError } from '../../shared/types.js';
 import { formatAgo, formatBytes, formatElapsed, formatRelative } from '../format.js';
 import { hydrateIcons, setIcon } from '../icons.js';
 import { initTheme } from '../theme.js';
-import { showToast } from '../toast.js';
 import {
-  chooseComponent,
-  locatePicked,
-  locateSettings,
-  type LocateDeps,
-} from './locate.js';
-import {
-  LOCATE_KEY,
   derivePopupView,
-  parseLocateHash,
-  parseLocated,
-  toLocated,
   THUMBNAIL_LIMIT,
-  type Located,
-  type LocateState,
-  type LocateView,
   type NoticeView,
   type PopupView,
 } from './view.js';
 
 initTheme();
 hydrateIcons();
-
-/**
- * The tab this window is picking on, or null in the toolbar popup.
- *
- * The hash is the whole hand-off. A detached window has no active tab of its
- * own — `chrome.tabs.query({ currentWindow: true })` would answer with itself —
- * so the tab it is about has to travel with the URL rather than be looked up.
- */
-const locateTabId = parseLocateHash(location.hash);
-const surface = locateTabId === null ? 'toolbar' : 'locate';
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -155,24 +99,6 @@ const dom = {
 
   empty: el('s-empty'),
 
-  locateAction: el<HTMLButtonElement>('btn-locate'),
-  locateActionLabel: el('btn-locate-label'),
-
-  recent: el('s-recent'),
-  recentWhen: el('recent-when'),
-  recentCard: el('recent-card'),
-
-  locate: el('s-locate'),
-  locateSpinner: el('locate-spinner'),
-  locateStatus: el('locate-status'),
-  locateNotice: el('locate-notice'),
-  locateNoticeTitle: el('locate-notice-title'),
-  locateNoticeBody: el('locate-notice-body'),
-  locateCard: el('locate-card'),
-  pick: el<HTMLButtonElement>('btn-pick'),
-  pickLabel: el('btn-pick-label'),
-  cancelPick: el<HTMLButtonElement>('btn-cancel-pick'),
-
   footer: el('footer'),
   storageText: el('storage-text'),
   library: el<HTMLButtonElement>('btn-library'),
@@ -208,18 +134,6 @@ interface PopupState {
    * from the snapshot.
    */
   live: Settings;
-  /** How far this window's locate has got. Only moves on the locate surface. */
-  locate: LocateState;
-  /** The last locate, read from storage. Only shown on the toolbar. */
-  recent: Located | null;
-  /**
-   * The two settings that decide whether a path is clickable, resolved once.
-   *
-   * Null is the ordinary state — most people have no project root configured —
-   * and it is the card's signal to show the path without an Open in Editor
-   * button rather than one that would open nothing.
-   */
-  editor: EditorLink | null;
 }
 
 const state: PopupState = {
@@ -231,9 +145,6 @@ const state: PopupState = {
   lastError: null,
   frozen: RECORDING_DEFAULTS,
   live: DEFAULTS,
-  locate: { phase: 'starting', component: null, answer: null, stopped: null },
-  recent: null,
-  editor: null,
 };
 
 function show(node: HTMLElement, visible: boolean): void {
@@ -277,59 +188,11 @@ function renderThumbs(thumbnails: string[], extra: number): void {
   show(dom.flowThumbs, thumbnails.length > 0);
 }
 
-/**
- * The card, wherever it appears.
- *
- * Rebuilt rather than updated, which is what `result-card.ts` documents as the
- * contract for all three of its callers: a card is content, not chrome, and a
- * new answer or a changed editor setting produces a new one.
- *
- * No `onOpenSources`. The popup has no DevTools window to reveal a compiled
- * position in, and omitting the handler is how a surface says so — the card
- * leaves the button out rather than rendering one that cannot work.
- */
-function renderCard(mount: HTMLElement, located: Located | null): void {
-  mount.replaceChildren();
-  if (!located) return;
-
-  mount.append(
-    resultCard({
-      source: located.source,
-      link: state.editor,
-      resourcesSearched: located.resourcesSearched,
-      onCopyPath: (path) => void copyPath(path),
-      onOpenEditor: (url) => void openInEditor(url),
-      onPickAnother: locateTabId !== null ? () => void runPick(locateTabId) : undefined,
-    }),
-  );
-}
-
-function renderLocate(locate: LocateView): void {
-  show(dom.locateSpinner, locate.busy);
-  dom.locateStatus.textContent = locate.status;
-
-  show(dom.locateNotice, locate.notice !== null);
-  if (locate.notice) {
-    dom.locateNotice.className = `banner banner--${locate.notice.tone}`;
-    dom.locateNoticeTitle.textContent = locate.notice.title;
-    dom.locateNoticeBody.textContent = locate.notice.body;
-  }
-
-  renderCard(dom.locateCard, locate.answer);
-
-  show(dom.pick, locate.pick !== null);
-  if (locate.pick) dom.pickLabel.textContent = locate.pick.label;
-  show(dom.cancelPick, locate.cancel);
-}
-
 function render(view: PopupView): void {
-  document.body.classList.toggle('popup--window', view.surface === 'locate');
-
   show(dom.loading, view.body === 'loading');
   dom.loading.setAttribute('aria-hidden', String(view.body !== 'loading'));
 
   show(dom.target, view.target !== null);
-  dom.targetLabel.textContent = view.targetLabel;
   if (view.target) {
     dom.targetHost.textContent = view.target.host || view.target.title || 'this tab';
     const favicon = view.target.favIconUrl;
@@ -393,21 +256,6 @@ function render(view: PopupView): void {
 
   show(dom.empty, view.body === 'empty');
 
-  show(dom.locateAction, view.locateAction !== null);
-  if (view.locateAction) {
-    dom.locateAction.disabled = view.locateAction.disabled;
-    dom.locateActionLabel.textContent = view.locateAction.label;
-  }
-
-  show(dom.recent, view.recent !== null);
-  if (view.recent) {
-    dom.recentWhen.textContent = formatRelative(Date.now() - view.recent.at) ?? 'a while ago';
-    renderCard(dom.recentCard, view.recent);
-  }
-
-  show(dom.locate, view.locate !== null);
-  if (view.locate) renderLocate(view.locate);
-
   show(dom.footer, view.storage !== null);
   if (view.storage) {
     dom.storageText.textContent = `${formatBytes(view.storage.usedBytes)} stored`;
@@ -421,7 +269,6 @@ function paint(): void {
   render(
     derivePopupView({
       ...state,
-      surface,
       now: Date.now(),
       warnSteps: state.frozen['recording.warnSteps'],
       errorTtlMs: state.live['ui.errorTtlMs'],
@@ -471,45 +318,6 @@ async function readUsage(): Promise<void> {
 }
 
 /**
- * The last locate, and whether its path can be opened.
- *
- * Both are read on every refresh rather than once at start-up: the locate window
- * writes the key while this popup may be open beside it, and the editor pair
- * lives in Settings, which is a different tab entirely.
- */
-async function readLocate(): Promise<void> {
-  const stored = await getLocal(LOCATE_KEY);
-  state.recent = stored.ok ? parseLocated(stored.value[LOCATE_KEY]) : null;
-
-  const { projectRoot, editor, customEditorTemplate } = state.live;
-  const template = editorTemplate(editor, customEditorTemplate);
-  state.editor = projectRoot && template ? { projectRoot, template } : null;
-}
-
-async function copyPath(path: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(path);
-    showToast({ message: 'Path copied.', tone: 'success', durationMs: 2500 });
-  } catch {
-    // Chrome refuses the clipboard when the document is not focused, which is
-    // easy to hit here: the window that shows this card is usually not the one
-    // the user is clicking in.
-    showToast({ message: 'Chrome wouldn’t copy that. Select it and press Ctrl+C.', tone: 'danger' });
-  }
-}
-
-/**
- * The worker opens editor links, because an extension page cannot navigate
- * itself to a custom scheme — see `OpenEditor` in shared/messages.ts.
- */
-async function openInEditor(url: string): Promise<void> {
-  const response = await sendToWorker({ type: 'OPEN_EDITOR', url });
-  if (response?.ok) return;
-
-  showToast({ message: response?.error ?? 'Chrome wouldn’t open that link.', tone: 'danger' });
-}
-
-/**
  * The timer is the only thing that changes without an event, so it is the only
  * thing on an interval — and only while a recording is actually running.
  */
@@ -524,36 +332,9 @@ function syncTicker(): void {
   }
 }
 
-/**
- * What the locate window needs, which is much less than the popup does.
- *
- * No steps, no thumbnails, no storage figure: this window shows one gesture and
- * its answer. The recording flags are still read, because the brand dot carries
- * them on every surface, and the settings because the card's editor link comes
- * out of them.
- */
-async function readForLocateWindow(): Promise<void> {
-  const stored = await getLocal(['recordingActive', 'recordingPaused']);
-
-  if (stored.ok) {
-    const { recordingActive, recordingPaused } = stored.value;
-    state.recording = recordingActive ? (recordingPaused ? 'paused' : 'recording') : 'idle';
-  }
-
-  state.live = await loadSettings();
-  await readLocate();
-}
-
 async function refresh(): Promise<void> {
-  if (surface === 'locate') {
-    await readForLocateWindow();
-    paint();
-    return;
-  }
-
   await readStored();
   await readUsage();
-  await readLocate();
   syncTicker();
   paint();
 }
@@ -726,343 +507,6 @@ dom.discardDialog.addEventListener('close', () => {
   })();
 });
 
-// ── Locating: the toolbar side ───────────────────────────────────────────────
-
-/** The detached window's size. Wide enough for the popup body, tall enough for a card. */
-const LOCATE_WINDOW = { width: 380, height: 620 };
-
-/**
- * Where to put it: under the toolbar button it just came from.
- *
- * The illusion is worth the four lines. A window that opens in the middle of the
- * screen reads as a new thing that has appeared; one that opens where the popup
- * was reads as the popup staying put, which is what it is.
- */
-async function locateWindowBounds(windowId: number): Promise<{ left?: number; top?: number }> {
-  try {
-    const host = await chrome.windows.get(windowId);
-    if (host.left == null || host.top == null || host.width == null) return {};
-
-    return {
-      left: Math.max(0, host.left + host.width - LOCATE_WINDOW.width - 16),
-      top: Math.max(0, host.top + 72),
-    };
-  } catch {
-    // Positioning is a nicety; Chrome placing it wherever it likes is not a
-    // failure worth abandoning the locate over.
-    return {};
-  }
-}
-
-/**
- * The locate window that is already open, if there is one.
- *
- * Found by looking rather than remembered, because the alternative is a stored
- * window id that outlives the window: an id written to storage survives the user
- * closing the window, the worker restarting and Chrome quitting, and every one
- * of those leaves a locate that silently targets nothing.
- */
-async function existingLocateWindow(): Promise<{ windowId: number; tabId: number } | null> {
-  const ours = chrome.runtime.getURL('popup.html');
-
-  try {
-    for (const open of await chrome.windows.getAll({ populate: true })) {
-      if (open.type !== 'popup' || open.id == null) continue;
-
-      const tab = open.tabs?.find((candidate) => candidate.url?.startsWith(ours));
-      if (tab?.id != null) return { windowId: open.id, tabId: tab.id };
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
-/**
- * Detach the popup onto a tab and get out of the way.
- *
- * `prepare()` rather than `probe()`: it injects the content script the same way
- * pressing Start does, so a tab that predates the extension is pickable rather
- * than merely reported as not ready. The window is opened before this one
- * closes, because after `window.close()` there is nothing left to open it with.
- */
-async function beginLocate(): Promise<void> {
-  const ready = await prepare();
-
-  if (!ready.ok) {
-    state.preflight = await probe();
-    state.lastError = { ...ready.error, at: Date.now() };
-    paint();
-    return;
-  }
-
-  await showLocateWindow(ready.value);
-  window.close();
-}
-
-async function showLocateWindow(target: RecordingTarget): Promise<void> {
-  const url = chrome.runtime.getURL(`popup.html#locate=${target.tabId}`);
-  const existing = await existingLocateWindow();
-
-  // One locate window, re-pointed. Two windows picking on two tabs is two live
-  // pickers and two answers, and the second one to arrive would look like the
-  // answer to whichever gesture the user remembers making.
-  if (existing) {
-    await chrome.tabs.update(existing.tabId, { url });
-    /*
-     * Reloaded, not merely re-pointed.
-     *
-     * Pressing `Locate component` arms a pick — that is what the button says.
-     * Pointing an open window at the tab it is already showing changes nothing
-     * about the URL, so nothing reloads, and the window would sit there with the
-     * previous answer on screen and no picker armed. A reload is one start-up
-     * path for both cases, and there is no half-torn-down pick left behind.
-     */
-    await chrome.tabs.reload(existing.tabId);
-    await chrome.windows.update(existing.windowId, { focused: true });
-    return;
-  }
-
-  await chrome.windows.create({
-    url,
-    type: 'popup',
-    focused: true,
-    ...LOCATE_WINDOW,
-    ...(await locateWindowBounds(target.windowId)),
-  });
-}
-
-// ── Locating: the window's side ──────────────────────────────────────────────
-
-function setLocate(next: Partial<LocateState>): void {
-  state.locate = { ...state.locate, ...next };
-  paint();
-}
-
-/**
- * Bring the answer forward.
- *
- * The pick happens in the page's window, which is on top by the time it lands,
- * so an answer that arrives quietly arrives behind whatever the user is looking
- * at. Called for a result and for a failure, never for a plain cancel: someone
- * who pressed Escape has said what they want, and stealing their focus to
- * confirm it would be the window arguing back.
- */
-async function surfaceWindow(): Promise<void> {
-  try {
-    const current = await chrome.windows.getCurrent();
-    if (current.id != null) await chrome.windows.update(current.id, { focused: true });
-  } catch {
-    // A window that cannot be focused is still a window with the answer in it.
-  }
-}
-
-function stopLocate(reason: string | null): void {
-  setLocate({ phase: 'stopped', component: null, stopped: reason });
-  if (reason) void surfaceWindow();
-}
-
-/** Display only, so a URL that will not parse costs a hostname and nothing else. */
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return '';
-  }
-}
-
-/**
- * The tab named in the hash, as the view's target row wants it.
- *
- * Null means the tab itself is gone — closed, or never there. A tab that is
- * present but cannot be picked on is *not* rejected here: `ensureContentScript`
- * is the one that knows why, and it says so in a sentence this window can show.
- */
-async function readPickTarget(tabId: number): Promise<RecordingTarget | null> {
-  try {
-    const tab = await chrome.tabs.get(tabId);
-    if (tab.id == null || !tab.url) return null;
-
-    return {
-      tabId: tab.id,
-      windowId: tab.windowId,
-      url: tab.url,
-      host: hostOf(tab.url),
-      title: tab.title ?? '',
-      favIconUrl: tab.favIconUrl,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * What the page has loaded, asked of the page.
- *
- * The resolver's inventory (`reactScripts`) is written by the recorder while it
- * records, so on this path it is usually empty — and a locate that trusted it
- * would answer "nothing to search" on every page nobody was recording. The tab
- * knows, so the tab is asked.
- */
-async function scriptsInTab(tabId: number): Promise<string[]> {
-  try {
-    const [result] = await chrome.scripting.executeScript({ target: { tabId }, func: collectScripts });
-    return Array.isArray(result?.result) ? result.result : [];
-  } catch {
-    // A tab that navigated to somewhere unscriptable mid-pick. The locate goes
-    // on and reports having found nothing to search, which is what happened.
-    return [];
-  }
-}
-
-/**
- * Runs inside the page, so it is serialised to get there: no imports, no
- * closure, nothing but what the DOM and the timeline already know.
- *
- * Both sources, for the reason `inventory.ts` gives: the resource timeline is
- * the complete load order but can be evicted under buffer pressure, and
- * `document.scripts` catches the tags whatever the timeline dropped.
- */
-function collectScripts(): string[] {
-  const urls: string[] = [];
-
-  for (const entry of performance.getEntriesByType('resource')) {
-    if ((entry as PerformanceResourceTiming).initiatorType === 'script') urls.push(entry.name);
-  }
-  for (const script of Array.from(document.scripts)) {
-    if (script.src) urls.push(script.src);
-  }
-
-  return urls;
-}
-
-/** Everything one locate reaches outside itself, pointed at this tab. */
-function locateDeps(tabId: number, settings: Settings): LocateDeps {
-  return {
-    readSource: async (group, index) => {
-      const answer = await sendToWorker({ type: 'READ_COMPONENT_SOURCE', tabId, group, index });
-      return answer?.source ?? null;
-    },
-    listScripts: () => scriptsInTab(tabId),
-    // Built per locate rather than kept: this window exists for one gesture, and
-    // a cache that outlives it would only ever be paid for and never used.
-    provider: createWorkerProvider(bundleBudget(settings)),
-    now: Date.now,
-  };
-}
-
-/**
- * Arm the picker, wait however long the user takes, then answer.
- *
- * `START_PICK` resolves with the pick itself — the content script holds its
- * response until the agent reports, bounded by `PICK_TIMEOUT_MS` — which is the
- * whole reason this window has to still exist. Everything after the await is
- * running two minutes later than the click that started it.
- */
-async function runPick(tabId: number): Promise<void> {
-  setLocate({ phase: 'starting', component: null, answer: null, stopped: null });
-
-  const target = await readPickTarget(tabId);
-  if (!target) {
-    stopLocate('That tab has gone. Open the popup on the page you want to pick on.');
-    return;
-  }
-
-  state.preflight = { status: 'ready', target };
-  paint();
-
-  const attached = await ensureContentScript(target.tabId, target.url);
-  if (!attached.ok) {
-    stopLocate(attached.error.message);
-    return;
-  }
-
-  setLocate({ phase: 'picking' });
-
-  const pick = await sendToWorker({ type: 'START_PICK', tabId });
-
-  if (!pick) {
-    stopLocate('The extension stopped listening before the pick came back. Try again.');
-    return;
-  }
-  // Escape, or a second surface taking the picker over. Nothing went wrong, so
-  // nothing is said and nothing takes the user's focus.
-  if (pick.kind === 'cancelled') {
-    stopLocate(null);
-    return;
-  }
-  if (pick.kind === 'error') {
-    stopLocate(pick.error);
-    return;
-  }
-
-  await locate(pick, target);
-}
-
-async function locate(pick: PickSuccess, target: RecordingTarget): Promise<void> {
-  const settings = await loadSettings();
-  const options = locateSettings(settings);
-
-  // Asked here only for the name to put on screen while the search runs.
-  // `locatePicked` chooses again from the same pure function rather than being
-  // handed the answer, so nothing about which component is located depends on
-  // this window having painted first.
-  const chosen = chooseComponent(pick, options.hidden);
-  setLocate({ phase: 'locating', component: chosen?.component.name ?? null });
-
-  const result = await locatePicked(pick, target.url, options, locateDeps(target.tabId, settings));
-
-  if (!result) {
-    stopLocate('There is no React component around what you clicked.');
-    return;
-  }
-
-  const located = toLocated(result, target.host, Date.now());
-
-  // Written before it is shown, so the answer survives this window being closed
-  // — the next popup opens with it under `Recent`. A failed write costs the
-  // memory, not the answer that is about to be on screen.
-  await setLocal({ [LOCATE_KEY]: located });
-
-  setLocate({ phase: 'answered', component: result.component, answer: located, stopped: null });
-  void surfaceWindow();
-}
-
-dom.locateAction.addEventListener('click', () => {
-  dom.locateAction.disabled = true;
-  void beginLocate();
-});
-
-dom.pick.addEventListener('click', () => {
-  if (locateTabId !== null) void runPick(locateTabId);
-});
-
-dom.cancelPick.addEventListener('click', () => {
-  if (locateTabId !== null) void sendToWorker({ type: 'CANCEL_PICK', tabId: locateTabId });
-});
-
-/** Esc cancels from this window too, so the pair in CONTRACTS §4.4 both work. */
-window.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape' || locateTabId === null) return;
-  if (state.locate.phase !== 'picking') return;
-
-  void sendToWorker({ type: 'CANCEL_PICK', tabId: locateTabId });
-});
-
-/*
- * A window closed mid-pick leaves the page armed.
- *
- * The agent's crosshair and its capture-phase listeners are on a page the user
- * is still trying to use, and `PICK_TIMEOUT_MS` is two minutes of that. Sent
- * from `pagehide` on a best-effort basis — an unloading document may not get the
- * message out, which is exactly what the timeout is the backstop for.
- */
-window.addEventListener('pagehide', () => {
-  if (locateTabId === null || state.locate.phase !== 'picking') return;
-  void sendToWorker({ type: 'CANCEL_PICK', tabId: locateTabId });
-});
-
 // ── Live updates ─────────────────────────────────────────────────────────────
 
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -1074,9 +518,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
     'recordingPaused',
     'recordingStartedAt',
     'lastError',
-    // The locate window writes this one, and it can be open beside the popup —
-    // so `Recent` follows a pick made while this window is on screen.
-    LOCATE_KEY,
   ];
   if (watched.some((key) => key in changes)) void refresh();
 });
@@ -1087,20 +528,6 @@ void (async () => {
   // Stored state first: it is what decides whether the popup shows a recording
   // at all, and it resolves faster than the tab probe.
   await refresh();
-
-  /*
-   * The locate window arms immediately.
-   *
-   * It was opened by a press of `Locate component`, so waiting behind a second
-   * button would be asking the user to say the same thing twice. It does not
-   * probe either: `probe()` reads the active tab of the current window, which
-   * in a detached window is this page, and the tab it is actually about came in
-   * the hash.
-   */
-  if (locateTabId !== null) {
-    await runPick(locateTabId);
-    return;
-  }
 
   state.preflight = await probe();
   paint();

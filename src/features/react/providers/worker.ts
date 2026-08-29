@@ -307,8 +307,9 @@ export interface WorkerProviderOptions {
    * the page had loaded" is only retried once there are more than 3. Reading
    * storage again mid-pass would let that number move under the answer.
    *
-   * Omitted, `listScripts` reads the local area itself, which is what the
-   * popup's locate path needs: it has no pass and no snapshot, just a tab.
+   * Omitted, `listScripts` reads the local area itself. That is the provider
+   * standing on its own — a caller holding a tab and no pass — which is how
+   * `BundleProvider` is specified (CONTRACTS §2) and what its tests drive.
    */
   scripts?: Record<string, string[]>;
   /** Injected by tests. Defaults to `chrome/fetch.ts`. */

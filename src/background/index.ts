@@ -1310,9 +1310,9 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
        * The content script holds its `sendResponse` until the agent reports,
        * so this promise settles when the user clicks — or presses Escape, or
        * lets `PICK_TIMEOUT_MS` run out. The worker is a relay for the whole
-       * round trip and not just the outbound half, which is what makes the
-       * popup a real door into locating: it has no scripting relationship with
-       * the page except this one.
+       * round trip and not just the outbound half, which is what lets the panel
+       * hold no scripting relationship with the page at all: one message out,
+       * one gesture back, however long it takes.
        *
        * A tab that never answered is a `PickFailure`. To the surface that asked,
        * a page it cannot reach and a user who changed their mind are the same
@@ -1405,7 +1405,24 @@ chrome.runtime.onStartup.addListener(() => {
  */
 void reconcileRecordingTab();
 
+/**
+ * The popup's locate answer, from the release that had one.
+ *
+ * `lastLocate` was written by the detached locate window and read by the popup
+ * that outlived it. Both are gone — locating is the panel's, and the panel keeps
+ * its own history — so on an upgrade the key is a record nothing will ever read
+ * again, quietly counted into the storage figure the footer shows. Removing a
+ * key that is already absent is a no-op, so this costs a fresh install nothing.
+ */
+function dropRetiredKeys(): void {
+  void chrome.storage.local.remove('lastLocate').catch(() => {
+    /* A key that will not delete is a stale figure, not a broken install. */
+  });
+}
+
 chrome.runtime.onInstalled.addListener(() => {
+  dropRetiredKeys();
+
   void migrateLegacySettings().then(
     (migrated) => {
       if (migrated.length > 0) {

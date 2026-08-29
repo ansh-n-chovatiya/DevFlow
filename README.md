@@ -65,18 +65,22 @@ answer than the original, and a much better one than nothing.
 
 | | Where | For |
 | --- | --- | --- |
-| **Popup** | the toolbar button | start, pause and stop a recording; **Locate component** without opening DevTools |
-| **Panel** | the DevTools panel, "DevFlow" | picking with the full component tree — **Parent tree**, **Siblings** and **Recent** |
+| **Popup** | the toolbar button | start, pause and stop a recording |
+| **Panel** | the DevTools panel, "React Locator" | locating: picking, the full component tree — **Parent tree**, **Siblings** — and **Recent** |
 | **Library** | opens in a tab | every flow you have kept |
 | **Flow review** | a flow in that tab | one recording, step by step, with annotation, export and send |
 | **Settings** | the extension's options page | the whole table, grouped by concept |
 
-Picking works from the popup **and** from the panel because the engine does not
-depend on DevTools being open. The panel reads the scripts DevTools has already
-cached, so it re-fetches nothing and sees scripts that loaded before anything was
-watching; the popup path collects them from the page and fetches in the service
-worker, under explicit concurrency and size budgets. Same engine, same answer,
-same card.
+Picking is the panel's, and only the panel's. The popup used to offer it too,
+from a small window of its own, but a popup has no DevTools window to reveal a
+compiled position in — so **Open in Sources** was missing from every answer it
+gave, at exactly the point somebody wanted to act on one. The panel has the
+Sources window, the component tree and the history beside it.
+
+The recorder still attributes each step to the component it happened in, whether
+or not DevTools was ever opened: that runs in the service worker, over the
+scripts the page reported while recording, under explicit concurrency and size
+budgets. Same engine as the panel, same answer, same card.
 
 ---
 

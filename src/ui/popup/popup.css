@@ -8,19 +8,6 @@
  */
 
 @import '../styles/index.css';
-/*
- * The result card, imported rather than linked from popup.html.
- *
- * panel.html links it, and says why the order matters: the card's sheet opens
- * with its own `@import '../styles/index.css'` because it renders on three pages
- * and cannot assume any of them loaded the shell, so anything that pulls it in
- * *after* the page's own rules replays the whole shared sheet on top of them.
- * A second `<link>` here would do that — and, measurably, ship the shared sheet
- * twice: two links are two CSS graphs, and only one graph deduplicates. Pulled
- * in from inside this file it is one graph, one copy, and the cascade the panel
- * documents.
- */
-@import '../components/result-card.css';
 
 body {
   width: var(--popup-width);
@@ -53,6 +40,21 @@ body {
   gap: var(--space-3);
   padding: var(--pad-popup);
   overflow-y: auto;
+}
+
+/*
+ * A column that scrolls, not one that squashes.
+ *
+ * `.popup__body` is a flex container with a bounded height, so every section and
+ * every button inside it is a flex item carrying the default `flex-shrink: 1` —
+ * and in a column, that shrinks *heights*. As soon as the content was taller
+ * than the popup, Chrome compressed `Start recording` from
+ * `--control-height-primary` down to its line box rather than overflowing, and
+ * the whole page came out squeezed with it. Pinning the children to their
+ * natural height is what hands the excess to `overflow-y` instead.
+ */
+.popup__body > * {
+  flex: none;
 }
 
 /* ── Target ─────────────────────────────────────────────────────────────── */
@@ -271,51 +273,4 @@ body {
 .loading__card {
   height: 96px;
   border-radius: var(--radius-card);
-}
-
-/* ── Locating ───────────────────────────────────────────────────────────── */
-
-/*
- * The popup, detached.
- *
- * Same document, opened in a window of its own because a popup cannot survive
- * the click that picks — see ui/popup/main.ts. So the only thing that changes is
- * the frame: a real window has its own height, and a body pinned to 360px inside
- * one leaves a strip of page background down the side.
- */
-body.popup--window {
-  width: 100%;
-  max-height: none;
-  height: 100vh;
-}
-
-/* A label with something to say on the right of it: a time, or a spinner. */
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-/*
- * The status line carries the one sentence about how this works ("this window
- * stays open for the answer"), so it wraps rather than truncating.
- */
-#locate-status:empty {
-  display: none;
-}
-
-/*
- * Esc, on the button that says Cancel — the pair CONTRACTS §4.4 freezes
- * together. Quieter than the label it sits beside: it names the same action a
- * second way, for the hand already on the keyboard.
- */
-.locate__kbd {
-  margin-left: var(--space-2);
-  padding: 1px var(--space-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-label);
-  color: var(--fg-faint);
 }

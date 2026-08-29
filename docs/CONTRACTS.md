@@ -97,7 +97,7 @@ export interface BundleProvider {
 | Implementation | Ported from | Used by | Strength |
 | --- | --- | --- | --- |
 | `DevtoolsProvider` | locator `core/resources.ts` | DevTools panel | Reads the DevTools cache; sees scripts loaded before the extension was watching; no re-fetch |
-| `WorkerProvider` | DevFlow `features/react/{inventory,resolver}.ts` | Recorder, popup locate | Works with DevTools closed; budgeted, idempotent across MV3 worker deaths |
+| `WorkerProvider` | DevFlow `features/react/{inventory,resolver}.ts` | Recorder | Works with DevTools closed; budgeted, idempotent across MV3 worker deaths |
 
 The contract, in four points:
 
@@ -314,15 +314,25 @@ the difference is exactly what the `detail` sentence on a non-`resolved`
 
 | String | Where |
 | --- | --- |
-| `Pick component` | popup, panel idle, empty states |
+| `Pick component` | panel idle, empty states |
 | `Pick another` | panel result, panel error |
 | `Cancel` + `Esc` | panel picking |
 | `Open in Editor` | result card, panel status bar |
 | `Open in Sources` | result card, panel status bar |
 | `Copy path` | result card |
-| `Locate component` | popup — H's new action |
-| `Recent` | the panel's history drawer, and the popup's |
+| `Recent` | the panel's history drawer |
 | `Parent tree` / `Siblings` | panel tree sections |
+
+**`Locate component` is retired, and with it the popup's half of three other
+rows.** H's action, the detached window behind it and the popup's `Recent` are
+all deleted; `src/ui/popup/locate.ts` is gone. The contract was not wrong about
+the words — it was wrong that the popup could finish the job they start. A popup
+has no DevTools window, so `Open in Sources` could never be offered from one:
+every answer the action produced arrived one action short of the one a person
+wanted next, and the frozen row for `Recent` had the popup keeping a card whose
+most useful button was structurally missing. Locating is the panel's alone —
+picking, the tree, the history and both `Open in` actions in the surface that can
+serve all four. The popup records; that is the whole of what it does.
 
 ### 4.5 · Banned, and grep-checkable
 

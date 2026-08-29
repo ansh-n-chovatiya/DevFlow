@@ -2,11 +2,11 @@
 
 `src/core/react/` answers one question — **where was this component written?** —
 and it answers it for every surface that asks. The DevTools panel asks about a
-component someone just picked. The popup asks the same about a pick made with
-DevTools closed. The flow review asks it about a component a recorded step
-touched. The service worker asks it, unattended, for every step of a recording.
+component someone just picked. The flow review asks it about a component a
+recorded step touched. The service worker asks it, unattended, for every step of
+a recording.
 
-All four get one implementation. That is worth saying explicitly because it is
+All three get one implementation. That is worth saying explicitly because it is
 the thing most easily lost: a second copy of any of this does not announce
 itself, and two copies of a source-map decoder disagree slowly.
 
@@ -88,7 +88,7 @@ The seam is `BundleProvider` (`core/react/provider.ts`, contract in CONTRACTS
 | | Reads from | Strength |
 | --- | --- | --- |
 | `DevtoolsProvider` | the DevTools resource cache | sees scripts that loaded before anything was watching; never re-fetches |
-| `WorkerProvider` | script URLs collected from the page, fetched in the worker | works with DevTools closed, which is the only way picking is reachable from the popup |
+| `WorkerProvider` | script URLs collected from the page, fetched in the worker | works with DevTools closed, which is how a recording attributes its steps whether or not anyone opened the panel |
 
 Both are constructed with a `BundleBudget` built from the same five settings, so
 "how many bundles at once" and "how large a resource is too large" mean the same
