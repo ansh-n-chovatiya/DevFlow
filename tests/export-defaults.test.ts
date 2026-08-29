@@ -131,7 +131,7 @@ vi.mock('../src/chrome/storage.js', () => ({
 
 vi.mock('../src/features/export/download.js', () => ({
   exportFlow: () => new Promise(() => {}),
-  suggestFilename: () => 'flowsnap-test',
+  suggestFilename: () => 'devflow-test',
 }));
 
 /*

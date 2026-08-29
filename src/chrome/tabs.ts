@@ -29,7 +29,7 @@ const BLOCKED_SCHEMES = [
 /** Hosts that are ordinary https but still off-limits to extension scripts. */
 const BLOCKED_HOSTS = ['chromewebstore.google.com', 'chrome.google.com'];
 
-/** Whether FlowSnap is allowed to run on a URL at all. Pure — see tests. */
+/** Whether DevFlow is allowed to run on a URL at all. Pure — see tests. */
 export function isRecordableUrl(url: string | undefined): boolean {
   if (!url) return false;
 

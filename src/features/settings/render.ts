@@ -1,5 +1,5 @@
 /**
- * The settings that govern what a flow looks like once it has left FlowSnap.
+ * The settings that govern what a flow looks like once it has left DevFlow.
  *
  * The MCP server's settings split in two, and this file is the first half:
  * **per-flow rendering settings travel inside the flow.** The response budget,

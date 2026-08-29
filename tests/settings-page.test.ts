@@ -564,7 +564,7 @@ describe('the rest of the screen', () => {
      * one who never got it, with a settings file that says they chose the old
      * value.
      *
-     * A key from a newer FlowSnap is left where it is. This build has no
+     * A key from a newer DevFlow is left where it is. This build has no
      * opinion about it, and "reset the settings I can see" must not silently
      * discard the settings of a version that can see more.
      */

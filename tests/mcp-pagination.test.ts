@@ -237,7 +237,7 @@ function writeStamped(): void {
         action: 'Clicked "Checkout"',
         stepNumber: 1,
         screenshot: null,
-        screenshotOmitted: 'Screenshots are switched off in FlowSnap settings for this recording.',
+        screenshotOmitted: 'Screenshots are switched off in DevFlow settings for this recording.',
         element: { tag: 'button', cssSelector: '#checkout', xpath: '/html/body/button' },
         networkCalls: [
           {
@@ -258,14 +258,14 @@ function writeStamped(): void {
 }
 
 beforeAll(async () => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsnap-test-'));
+  home = fs.mkdtempSync(path.join(os.tmpdir(), 'devflow-test-'));
   writeBigFlow();
   writeUncompacted();
   writeFutureSchema();
   writeCallHeavy();
   writeStamped();
 
-  server = await startServer({ home, env: { FLOWSNAP_MAX_TOKENS: String(BUDGET) } });
+  server = await startServer({ home, env: { DEVFLOW_MAX_TOKENS: String(BUDGET) } });
 }, 20_000);
 
 afterAll(() => {
@@ -416,7 +416,7 @@ describe('a flow recorded by a newer build', () => {
     // them hunting for a recording they already have.
     expect(answer).not.toContain('not found');
     expect(answer).toContain('v99');
-    expect(answer).toContain('npx -y flowsnap-mcp@latest');
+    expect(answer).toContain('npx -y devflow-mcp-server@latest');
   });
 });
 
@@ -547,7 +547,7 @@ describe('a flow recorded under non-default settings says so', () => {
     const text = await call('get_flow', { id: 'flow-stamped' });
 
     expect(text).toContain('🚫 no screenshot');
-    expect(text).toContain('switched off in FlowSnap settings');
+    expect(text).toContain('switched off in DevFlow settings');
   });
 
   it('renders bodies under the sender rules rather than its own', async () => {

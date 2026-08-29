@@ -1,20 +1,32 @@
 # Changelog
 
-## 3.0.0 — unreleased
+## 3.0.0 — 2026-08-29
 
-**DevFlow 3.0.0 replaces two extensions: FlowSnap 2.7.1 and react-source-locator
+**DevFlow 3.0.0 replaces two extensions: DevFlow 2.7.1 and react-source-locator
 2.2.0.** Both are superseded; neither will get another release. The version is 3
 rather than 1 because it continues from the higher of the two — an installed
-FlowSnap should see this as an upgrade, not as something older.
+DevFlow should see this as an upgrade, not as something older.
 
 Everything both extensions did, DevFlow does. What follows is what actually
 changes for someone who had one of them, because most of it is invisible and two
 things are not.
 
-The one line worth reading first: **flows recorded by FlowSnap 2.7.1 still read.**
-The flow schema is unchanged, and so is the MCP server's wire contract, its
-package name, its `~/.flowsnap` directory and its tools. Nothing you have
-recorded or registered needs redoing.
+The one line worth reading first: **flows recorded by DevFlow 2.7.1 still read.**
+The flow schema is unchanged, and so are the MCP server's wire contract, its
+`~/.devflow` directory and its tools. Nothing you have recorded needs redoing.
+
+**One thing does need redoing: the MCP registration.** The server is published
+under a new name — `devflow-mcp-server`, not the 2.7.1 package — so an existing
+`npx -y flowsnap-mcp` registration keeps resolving to 2.7.1 forever and upgrades
+to nothing. It does not break; it just silently stops moving, which is worse.
+Re-register once:
+
+```sh
+npx -y devflow-mcp-server install --force
+```
+
+`--force` is what replaces a user-scope registration that points somewhere else.
+The registration is still named `devflow`, so nothing you type at Claude changes.
 
 ---
 
@@ -91,7 +103,7 @@ moment it happens.
 
 ---
 
-### If you had FlowSnap
+### If you had DevFlow
 
 **Recording is unchanged.** Flows, the library, review, annotation, export, send,
 the MCP server and every existing setting behave as they did. The flow schema

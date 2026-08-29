@@ -50,8 +50,19 @@ describe('versions', () => {
 });
 
 describe('the published MCP server', () => {
-  it('exposes a bin, which is what makes `npx flowsnap-mcp` work at all', () => {
-    expect(server.bin).toEqual({ 'flowsnap-mcp': 'server.js' });
+  /*
+   * The bin is deliberately *not* the package name. `devflow-mcp` was taken on
+   * npm by an unrelated package before this one existed, so the package is
+   * `devflow-mcp-server` and the command it installs stays the shorter name.
+   *
+   * `npx -y devflow-mcp-server` still works: npm exec falls back to the only
+   * bin when the requested name matches none. That fallback is the whole reason
+   * a single entry here matters — add a second bin and the fallback is gone,
+   * and every install instruction in the README breaks at once.
+   */
+  it('exposes exactly one bin, which is what makes `npx devflow-mcp-server` work', () => {
+    expect(server.bin).toEqual({ 'devflow-mcp': 'server.js' });
+    expect(Object.keys(server.bin)).toHaveLength(1);
   });
 
   it('starts with a shebang, or the bin is not executable', () => {
@@ -67,7 +78,7 @@ describe('the published MCP server', () => {
      * that leaves it out ships something that throws on its first tool call.
      *
      * `install.js` is the same kind of hazard from the other direction: it is
-     * imported only on the `npx flowsnap-mcp install` path, so a publish without
+     * imported only on the `npx devflow-mcp-server install` path, so a publish without
      * it passes every test that runs the server and fails the one command a
      * person types before they have a server at all.
      */

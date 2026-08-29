@@ -15,7 +15,7 @@
  *   - **`cache: 'force-cache'`.** The page has just loaded these bundles, so the
  *     search normally costs no network at all. This is also why resolution runs
  *     during recording rather than after it.
- *   - **`credentials: 'omit'`.** FlowSnap is reading a file, not acting as the
+ *   - **`credentials: 'omit'`.** DevFlow is reading a file, not acting as the
  *     user. A cookie sent from the worker would be a request the user never
  *     made, to an origin they may no longer be on.
  *   - **The scheme check.** A page controls the URLs it loads. Only `http:` and

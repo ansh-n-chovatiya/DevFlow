@@ -37,7 +37,7 @@ vi.mock('../src/features/export/download.js', () => ({
   // The request is not inspected — these tests are about the dialog's own state
   // machine, not what it hands the exporter — so the stub simply drops it.
   exportFlow: () => exportFlow(),
-  suggestFilename: () => 'flowsnap-test',
+  suggestFilename: () => 'devflow-test',
 }));
 
 vi.mock('../src/chrome/storage.js', () => ({
@@ -117,7 +117,7 @@ describe('the close button obeys the busy guard', () => {
     expect(el<HTMLButtonElement>('export-cancel').disabled).toBe(true);
     expect(el<HTMLButtonElement>('export-close').disabled).toBe(true);
 
-    settle({ ok: true, value: 'flowsnap-test.zip' });
+    settle({ ok: true, value: 'devflow-test.zip' });
     await flush();
 
     expect(el<HTMLButtonElement>('export-close').disabled).toBe(false);

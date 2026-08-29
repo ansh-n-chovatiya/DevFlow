@@ -5,7 +5,7 @@ releases/
 *.zip
 
 # Recorded flow exports (generated output, may contain PII)
-flowsnap-flow-*/
+devflow-flow-*/
 
 # MCP server recorded flows (generated output, may contain PII)
 mcp-server/flows/

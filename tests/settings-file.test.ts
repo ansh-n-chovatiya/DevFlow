@@ -92,7 +92,7 @@ describe('what an export contains', () => {
   });
 
   it('names the file with no date either, for the same reason', () => {
-    expect(EXPORT_FILENAME).toBe('flowsnap-settings.json');
+    expect(EXPORT_FILENAME).toBe('devflow-settings.json');
   });
 });
 
@@ -169,7 +169,7 @@ describe('keys this version does not recognise', () => {
   });
 
   it('are found by line, so the pane can mark them while it does not parse', () => {
-    const text = '{\n  "$schema": "flowsnap/settings-1",\n  "screenshots.quality": 20,\n  "nope.nope": 1,\n';
+    const text = '{\n  "$schema": "devflow/settings-1",\n  "screenshots.quality": 20,\n  "nope.nope": 1,\n';
     // Deliberately unterminated: the gutter is most useful mid-edit, which is
     // exactly when `JSON.parse` has nothing to say.
     expect(parseSettingsFile(text).ok).toBe(false);
@@ -177,7 +177,7 @@ describe('keys this version does not recognise', () => {
   });
 
   it('does not mark `$schema`, which is the format marker and not a setting', () => {
-    expect(unknownLines('{\n  "$schema": "flowsnap/settings-1"\n}\n')).toEqual([]);
+    expect(unknownLines('{\n  "$schema": "devflow/settings-1"\n}\n')).toEqual([]);
   });
 });
 
@@ -325,7 +325,7 @@ describe('the diff', () => {
 describe('a file this version cannot read', () => {
   it('names the line — the archetypal hand-edit, a missing comma', () => {
     const result = parseSettingsFile(
-      '{\n  "$schema": "flowsnap/settings-1",\n  "screenshots.quality": 20\n  "mcpAutoSend": true\n}\n',
+      '{\n  "$schema": "devflow/settings-1",\n  "screenshots.quality": 20\n  "mcpAutoSend": true\n}\n',
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -369,11 +369,11 @@ describe('$schema', () => {
     // updated first — the one person who most needs to move their settings.
     const plan = planImport(
       {},
-      parsed('{"$schema": "flowsnap/settings-9", "screenshots.quality": 20}'),
+      parsed('{"$schema": "devflow/settings-9", "screenshots.quality": 20}'),
     );
 
-    expect(plan.schema).toBe('flowsnap/settings-9');
-    expect(plan.schemaNote).toContain('flowsnap/settings-9');
+    expect(plan.schema).toBe('devflow/settings-9');
+    expect(plan.schemaNote).toContain('devflow/settings-9');
     expect(plan.changes.map((change) => change.key)).toEqual(['screenshots.quality']);
   });
 

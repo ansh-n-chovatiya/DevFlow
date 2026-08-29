@@ -1,7 +1,7 @@
 /*
  * The on-page recording indicator.
  *
- * This is the only FlowSnap CSS that lands in someone else's document, so it
+ * This is the only DevFlow CSS that lands in someone else's document, so it
  * cannot use tokens.css — that file is only linked by extension pages, and
  * `:root` here belongs to the page. The values are therefore scoped to the
  * indicator itself, and are the dark-theme tokens by design: the pill must read
@@ -61,7 +61,7 @@
   height: 8px;
   border-radius: 50%;
   background: var(--fs-record);
-  animation: flowsnap-pulse 2s ease-in-out infinite;
+  animation: devflow-pulse 2s ease-in-out infinite;
 }
 
 #devflow-indicator.paused {
@@ -74,7 +74,7 @@
   animation: none;
 }
 
-@keyframes flowsnap-pulse {
+@keyframes devflow-pulse {
   0%,
   100% {
     opacity: 1;

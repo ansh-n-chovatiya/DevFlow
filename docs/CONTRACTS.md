@@ -29,7 +29,7 @@ why neither is coming across.
 
 **File:** `src/core/react/positions.ts` · **Divergence:** D1
 
-react-source-locator was 0-based end to end. FlowSnap converts once, at the
+react-source-locator was 0-based end to end. DevFlow converts once, at the
 source-map edge, so everything downstream of `lookupOriginal` is 1-based. Both
 were right in their own repo, and the consequence was that `buildEditorUrl` meant
 **opposite things** by `{line1}` in the two copies of the same file.
@@ -82,7 +82,7 @@ not give, and the reason D1 gets a type where D3 gets a parameter (§6).
 **File:** `src/core/react/provider.ts` · **Divergence:** D4
 
 The locator's only hard dependency on being a DevTools panel was
-`chrome.devtools.inspectedWindow.getResources()`. FlowSnap, having no DevTools
+`chrome.devtools.inspectedWindow.getResources()`. DevFlow, having no DevTools
 page, had already solved the same problem from the page side. Both strategies are
 real and neither is deleted.
 
@@ -97,14 +97,14 @@ export interface BundleProvider {
 | Implementation | Ported from | Used by | Strength |
 | --- | --- | --- | --- |
 | `DevtoolsProvider` | locator `core/resources.ts` | DevTools panel | Reads the DevTools cache; sees scripts loaded before the extension was watching; no re-fetch |
-| `WorkerProvider` | FlowSnap `features/react/{inventory,resolver}.ts` | Recorder, popup locate | Works with DevTools closed; budgeted, idempotent across MV3 worker deaths |
+| `WorkerProvider` | DevFlow `features/react/{inventory,resolver}.ts` | Recorder, popup locate | Works with DevTools closed; budgeted, idempotent across MV3 worker deaths |
 
 The contract, in four points:
 
 - **Caching is the provider's job.** `src/core/` is bundled into
   `mcp-server/core.js` for a Node process with no `chrome` object, so a `fetch`
   or a `chrome.*` in core fails `npm run build:mcp`. The purity rule is
-  CI-enforced, not a convention — which is why D4 is settled by "FlowSnap's
+  CI-enforced, not a convention — which is why D4 is settled by "DevFlow's
   purity wins" rather than by preference.
 - **Every method resolves, never rejects.** Unreadable is `null`, and `null` is an
   ordinary outcome: a cross-origin script with no CORS headers, a chunk that 404s
@@ -115,7 +115,7 @@ The contract, in four points:
   must be safe and should be cheap.
 - **Budgets are constructor arguments**, as `BundleBudget` — the five Tier 2 keys
   in §3.2. This is what stops the locator's hardcoded `FETCH_CONCURRENCY = 6` and
-  FlowSnap's `react.resolveConcurrency` from being two numbers again.
+  DevFlow's `react.resolveConcurrency` from being two numbers again.
 
 ---
 
@@ -123,7 +123,7 @@ The contract, in four points:
 
 **Owner:** J · **Divergences:** D7, D8, D9
 
-FlowSnap's settings system is not a config file. `features/settings/fields.ts` is
+DevFlow's settings system is not a config file. `features/settings/fields.ts` is
 a data table from which the `Settings` type, `DEFAULTS`, the `resolve()` clamp,
 the Settings screen inputs, the reset affordance and
 `public/settings.default.json` are all *derived*. Its own header states the goal:
@@ -150,10 +150,10 @@ their values. Grouped by prefix: `annotation.*`, `console.*`, `export.*`,
 `reactCapture`, `reactResolve`, `mcpAutoSend`, `mcpServerUrl`, `theme`.
 
 Three of those already align exactly with the locator's own settings, because
-FlowSnap does source resolution too and its `EDITORS` table was *"kept in step
+DevFlow does source resolution too and its `EDITORS` table was *"kept in step
 with the sibling extension's table, in the same order"*:
 
-| Key | FlowSnap | Locator | Action |
+| Key | DevFlow | Locator | Action |
 | --- | --- | --- | --- |
 | `editor` | `"vscode"` | `"vscode"` | confirm the `EDITORS` tables still match; then nothing |
 | `customEditorTemplate` | `""` | `""` | nothing |
@@ -163,7 +163,7 @@ with the sibling extension's table, in the same order"*:
 
 These already exist and already have these defaults. What changes is who reads
 them: **both** `BundleProvider` implementations, via `BundleBudget` (§2), where
-before only FlowSnap's worker did and the panel hardcoded its own numbers.
+before only DevFlow's worker did and the panel hardcoded its own numbers.
 
 | Key | Type | Default | Was, in the locator |
 | --- | --- | --- | --- |
@@ -195,7 +195,7 @@ Every one of these is J's to register. Nothing else may invent a key.
 
 **D7 — the managed-policy layer.** The locator reads `chrome.storage.managed` so
 an IT admin can push `editor` / `projectRoot` org-wide, and `managedKeys()`
-disables those inputs. FlowSnap dropped this deliberately — `core/react/editor.ts`
+disables those inputs. DevFlow dropped this deliberately — `core/react/editor.ts`
 says *"a recorder has no such deployment story."* The merged product **is** also a
 locator, so the story comes back with it, and dropping the layer would silently
 break every enterprise deployment of react-source-locator.
@@ -212,8 +212,8 @@ than reading storage itself. `managedKeys()` drives a disabled state in the
 Settings screen and in the panel's drawer.
 
 **D8 — the `rst:settings` migration.** The locator stored one JSON blob under
-`rst:settings` in `sync` + `managed`; FlowSnap stores flat dotted keys, sparse
-overrides only. FlowSnap's model is the one to keep — it is the one with the
+`rst:settings` in `sync` + `managed`; DevFlow stores flat dotted keys, sparse
+overrides only. DevFlow's model is the one to keep — it is the one with the
 derivation guarantees, the generated defaults file and the validator the MCP
 server imports. But an existing react-source-locator user upgrading to DevFlow
 would find `rst:settings` unreadable and **silently lose their editor and project
@@ -248,7 +248,7 @@ encapsulated, so the drawer goes through the same components or CI fails.
 ### 3.5 · Theme
 
 The panel currently follows `chrome.devtools.panels.themeName`, which DevTools
-lets the user choose independently of the OS. FlowSnap has an explicit
+lets the user choose independently of the OS. DevFlow has an explicit
 `theme: system | light | dark`.
 
 **The explicit setting wins whenever it is not `system`.** When it *is* `system`,
@@ -338,7 +338,7 @@ explain what did not survive says it without naming it.
 | `rst:settings` | the other product's storage key. **Not bare `rst:`** — that matches `first:` and `worst:` in ordinary prose, and a gate that cries wolf is one nobody reads. **One exemption, and it is permanent: `src/features/settings/migrate.ts`.** See below. |
 | `__RST` | the other product's page globals — one agent now, one namespace |
 | `symbol id="i-` | the bespoke SVG sprite (§5) |
-| `FlowSnap` **in user-facing strings** | the recorder's own former product name, which is as much a tell as the locator's. Ordinary comments may still name FlowSnap and react-source-locator as the repos this code came from — that is provenance, and it is worth keeping. What may not survive is a string a person reads: page titles, button labels, error sentences, settings copy, console prefixes. |
+| `DevFlow` **in user-facing strings** | the recorder's own former product name, which is as much a tell as the locator's. Ordinary comments may still name DevFlow and react-source-locator as the repos this code came from — that is provenance, and it is worth keeping. What may not survive is a string a person reads: page titles, button labels, error sentences, settings copy, console prefixes. |
 | "the recorder" / "the locator" *in user-facing text* | names the two halves the merge exists to dissolve. Fine in code comments and in this document; never on screen. |
 
 DevFlow's page globals take the `__DEVFLOW_*` prefix, and its `localStorage`
@@ -364,7 +364,7 @@ wrong and this is the correction.
 **Source:** `src/ui/icons.ts` + `src/ui/icons.generated.ts`, generated by
 `scripts/build-icons.mjs` from `lucide-static`.
 
-FlowSnap generates icons from `lucide-static`; the locator hand-drew a bespoke
+DevFlow generates icons from `lucide-static`; the locator hand-drew a bespoke
 SVG sprite in `panel.html` (`#i-react`, `#i-target`, `#i-mouse`…). **Two icon
 vocabularies is the single most visible tell that a product used to be two
 products**, so the sprite is replaced, not ported. `<use href="#i-…">` does not
@@ -377,7 +377,7 @@ Every sprite symbol, resolved:
 
 | Sprite symbol | DevFlow icon | Affordance |
 | --- | --- | --- |
-| `#i-react` | `atom` | a React component — already FlowSnap's word for it |
+| `#i-react` | `atom` | a React component — already DevFlow's word for it |
 | `#i-target` | `crosshair` | **new** · pick a component |
 | `#i-mouse` | `mouse-pointer` | hover-to-highlight |
 | `#i-cursor` | `mouse-pointer` | the picking view's decorative cursor |
@@ -389,7 +389,7 @@ Every sprite symbol, resolved:
 | `#i-check` | `check` | a completed stage |
 | `#i-warning` | `triangle-alert` | ambiguity, error banner |
 | `#i-copy` | `copy` | copy a path |
-| `#i-external` | `arrow-up-right` | Open in Editor — FlowSnap's "leave for another surface" |
+| `#i-external` | `arrow-up-right` | Open in Editor — DevFlow's "leave for another surface" |
 
 Plus one addition the sprite had no equivalent for, because the surface is new:
 

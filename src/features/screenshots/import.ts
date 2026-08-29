@@ -121,7 +121,7 @@ export function validateImageFile(file: FileFacts): Result<void> {
  * Asked the moment the dimensions are known and before a single pixel is
  * rasterised, because `fitWithin` runs *after* the decode and so bounds only
  * what is kept, never what it costs to get there. The numbers are in the
- * message: "too big" with no size reads as a bug in FlowSnap, and the user
+ * message: "too big" with no size reads as a bug in DevFlow, and the user
  * cannot tell how much smaller is small enough.
  */
 export function checkPixelBudget(width: number, height: number, name?: string): Result<void> {

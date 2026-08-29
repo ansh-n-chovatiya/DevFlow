@@ -92,7 +92,7 @@ describe('what storage holds is clamped on the way in as well as out', () => {
 
 describe('a value from a newer version', () => {
   beforeEach(() => {
-    // What a synced profile from a newer FlowSnap actually looks like.
+    // What a synced profile from a newer DevFlow actually looks like.
     chromeSync.seed({ 'recording.maxSteps': 250, 'video.frameRate': 60 });
   });
 

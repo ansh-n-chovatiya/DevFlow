@@ -11,7 +11,7 @@
  * hydrateIcons() puts an `<svg class="icon">` inside it, so any rule that has to
  * reach the drawing itself — size, fill, stroke — targets `.icon` as a
  * descendant. Sizing by `font-size` on the parent, which is how the locator did
- * it, does nothing here: FlowSnap's `.icon` is a fixed 16px box, not `1em`.
+ * it, does nothing here: DevFlow's `.icon` is a fixed 16px box, not `1em`.
  */
 
 .picking-view {

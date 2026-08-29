@@ -74,7 +74,7 @@ export function clearPending(): Promise<Result<void>> {
  * confirmed once quietly reapplying itself every time they finished recording is
  * a far worse failure than one import that did not land and said so.
  *
- * `keepUnknown`, like every other import: a key from a newer FlowSnap that
+ * `keepUnknown`, like every other import: a key from a newer DevFlow that
  * synced onto this machine did not come from this file and is not this file's
  * to delete.
  */

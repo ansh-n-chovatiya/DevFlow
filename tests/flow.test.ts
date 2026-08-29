@@ -42,14 +42,14 @@ describe('sanitizeFilename', () => {
   });
 
   it('falls back rather than returning an empty name', () => {
-    expect(sanitizeFilename('///')).toBe('flowsnap-flow');
-    expect(sanitizeFilename('   ')).toBe('flowsnap-flow');
+    expect(sanitizeFilename('///')).toBe('devflow-flow');
+    expect(sanitizeFilename('   ')).toBe('devflow-flow');
   });
 });
 
 describe('defaultFilename', () => {
   it('zero-pads the date', () => {
-    expect(defaultFilename(new Date(2026, 0, 5))).toBe('flowsnap-flow-2026-01-05');
+    expect(defaultFilename(new Date(2026, 0, 5))).toBe('devflow-flow-2026-01-05');
   });
 });
 

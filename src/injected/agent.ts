@@ -274,7 +274,7 @@ function patchConsole(): void {
  * where everything had.
  *
  * That is the highest-information artifact a bug report can carry — a stack
- * trace naming the file and line — and it was the one thing FlowSnap could not
+ * trace naming the file and line — and it was the one thing DevFlow could not
  * record. The README documented the gap rather than closing it.
  *
  * Recorded as `error`, because that is what they are: everything downstream

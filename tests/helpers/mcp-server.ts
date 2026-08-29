@@ -15,7 +15,7 @@
  * different environments, which is what turned the plumbing into a helper
  * rather than a copy.
  *
- * Flows are written straight into `FLOWSNAP_DIR` rather than POSTed, so the
+ * Flows are written straight into `DEVFLOW_DIR` rather than POSTed, so the
  * receiver is only involved where a test is about the receiver. Each server
  * still gets its own port, so those tests can have one without hunting for it.
  */
@@ -37,7 +37,7 @@ const SERVER = fileURLToPath(new URL('../../mcp-server/server.js', import.meta.u
  * same number, and the loser of the race logs "already taken" and carries on
  * without listening. Everything still passed, because the tests that noticed
  * were the ones that then posted to the winner — a different server, with a
- * different `FLOWSNAP_DIR`, quietly answering for it.
+ * different `DEVFLOW_DIR`, quietly answering for it.
  *
  * Asking the operating system for a free one removes the shared number that
  * made that possible. The port is released before the server is spawned, so
@@ -93,7 +93,7 @@ export interface StartOptions {
   /** Extra environment for the process — the top of the precedence chain. */
   env?: Record<string, string>;
   /**
-   * Start without `FLOWSNAP_PORT`, so `config.json` is what decides the port.
+   * Start without `DEVFLOW_PORT`, so `config.json` is what decides the port.
    *
    * The helper sets the variable for every other server, which is right — it is
    * how each one gets a port of its own — but it is also the top of the
@@ -113,17 +113,17 @@ export interface StartOptions {
  * discarded — nowhere in the report.
  */
 export async function startServer(options: StartOptions = {}): Promise<McpSession> {
-  const home = options.home ?? fs.mkdtempSync(path.join(os.tmpdir(), 'flowsnap-test-'));
+  const home = options.home ?? fs.mkdtempSync(path.join(os.tmpdir(), 'devflow-test-'));
   fs.mkdirSync(path.join(home, 'flows'), { recursive: true });
 
   const port = options.portFromConfig ?? (await freePort());
   const env: Record<string, string | undefined> = {
     ...process.env,
-    FLOWSNAP_DIR: home,
-    FLOWSNAP_PORT: String(port),
+    DEVFLOW_DIR: home,
+    DEVFLOW_PORT: String(port),
     ...options.env,
   };
-  if (options.portFromConfig !== undefined) delete env.FLOWSNAP_PORT;
+  if (options.portFromConfig !== undefined) delete env.DEVFLOW_PORT;
 
   const server: ChildProcessWithoutNullStreams = spawn('node', [SERVER], {
     env,

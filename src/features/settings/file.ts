@@ -27,7 +27,7 @@
  * force, which is the thing a colleague asked for.
  *
  * **Unknown keys are preserved, ignored and flagged.** Dropping them means a
- * file that round-trips through an older FlowSnap comes back with the newer
+ * file that round-trips through an older DevFlow comes back with the newer
  * version's settings silently deleted. They cost a few unused bytes; `resolve`
  * never sees them, `passthrough` carries them, and the import diff lists them
  * separately with the reason.
@@ -57,7 +57,7 @@ import {
  * `resolve` returns them" — the specified shape, and the only one there has
  * ever been.
  */
-export const SCHEMA = 'flowsnap/settings-1';
+export const SCHEMA = 'devflow/settings-1';
 
 /** The one key in a settings file that is not a setting. */
 export const SCHEMA_KEY = '$schema';
@@ -71,7 +71,7 @@ export const SCHEMA_KEY = '$schema';
  * exists to answer — back into a question you have to read sixty lines to
  * answer.
  */
-export const EXPORT_FILENAME = 'flowsnap-settings.json';
+export const EXPORT_FILENAME = 'devflow-settings.json';
 
 // ── Writing ──────────────────────────────────────────────────────────────────
 
@@ -291,7 +291,7 @@ function same(a: unknown, b: unknown): boolean {
 
 function schemaNoteFor(schema: string | null): string | null {
   if (schema === null || schema === SCHEMA) return null;
-  return `This file says it is ${schema}; this FlowSnap writes ${SCHEMA}. It is being read anyway — anything in it this version does not recognise is listed below.`;
+  return `This file says it is ${schema}; this DevFlow writes ${SCHEMA}. It is being read anyway — anything in it this version does not recognise is listed below.`;
 }
 
 /**
@@ -309,7 +309,7 @@ function schemaNoteFor(schema: string | null): string | null {
  * on nobody's machine and that neither of them can reproduce.
  *
  * The unknown half is the exception, and it is merged rather than replaced —
- * see `replaceOverrides`. A key from a newer FlowSnap that synced onto this
+ * see `replaceOverrides`. A key from a newer DevFlow that synced onto this
  * machine did not come from this file and must not be deleted by it.
  */
 export function planImport(current: Overrides, parsed: ParsedFile): ImportPlan {

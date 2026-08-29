@@ -17,7 +17,7 @@ import { err, ok, type Result } from '../../shared/result.js';
  *
  * Deleting in the extension used to clear `chrome.storage` and stop there, so a
  * recording the user deleted — perhaps *because* they saw it had captured a
- * session token in a response body — stayed in `~/.flowsnap/flows` and was
+ * session token in a response body — stayed in `~/.devflow/flows` and was
  * handed to Claude by the next `list_flows`. The row disappeared and the
  * extension reported success, which is the worst version of not deleting
  * something.
@@ -137,7 +137,7 @@ export async function pushMachineConfig(
     }
 
     return ok({
-      file: body?.file ?? '~/.flowsnap/config.json',
+      file: body?.file ?? '~/.devflow/config.json',
       applied: body?.applied ?? {},
       effective: body?.effective ?? {},
       ignored: body?.ignored ?? [],

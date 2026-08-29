@@ -9,14 +9,14 @@
 
 export function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const node = document.getElementById(id);
-  if (!node) throw new Error(`FlowSnap: missing #${id} in viewer.html`);
+  if (!node) throw new Error(`DevFlow: missing #${id} in viewer.html`);
   return node as T;
 }
 
 /** Find inside a subtree. Throws rather than returning null: the markup is ours. */
 export function find<T extends Element = HTMLElement>(root: ParentNode, selector: string): T {
   const node = root.querySelector<T>(selector);
-  if (!node) throw new Error(`FlowSnap: missing ${selector}`);
+  if (!node) throw new Error(`DevFlow: missing ${selector}`);
   return node;
 }
 
@@ -28,11 +28,11 @@ export function show(node: Element, visible: boolean): void {
 export function clone<T extends HTMLElement = HTMLElement>(id: string): T {
   const template = document.getElementById(id);
   if (!(template instanceof HTMLTemplateElement)) {
-    throw new Error(`FlowSnap: #${id} is not a <template>`);
+    throw new Error(`DevFlow: #${id} is not a <template>`);
   }
 
   const root = template.content.firstElementChild;
-  if (!root) throw new Error(`FlowSnap: <template>#${id} is empty`);
+  if (!root) throw new Error(`DevFlow: <template>#${id} is empty`);
 
   return root.cloneNode(true) as T;
 }

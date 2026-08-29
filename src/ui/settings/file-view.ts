@@ -131,7 +131,7 @@ export function importView(plan: ImportPlan, recording: boolean): ImportView {
         : {
             title: 'Not settings in this version',
             description:
-              'Kept exactly as they are and ignored. Dropping them would mean a file that has passed through an older FlowSnap comes back with the newer version’s settings silently deleted.',
+              'Kept exactly as they are and ignored. Dropping them would mean a file that has passed through an older DevFlow comes back with the newer version’s settings silently deleted.',
           },
     unknown: plan.unknown.map((entry) => ({
       name: entry.key,

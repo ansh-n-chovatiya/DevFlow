@@ -196,7 +196,7 @@ export async function annotateScreenshot(
     const out = await canvas.convertToBlob({ type: 'image/jpeg', quality: quality / 100 });
     return await blobToDataUrl(out);
   } catch (error) {
-    console.warn('FlowSnap: could not annotate the capture', error);
+    console.warn('DevFlow: could not annotate the capture', error);
     return dataUrl;
   }
 }

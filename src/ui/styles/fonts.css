@@ -8,7 +8,7 @@
  * public/ is copied to the build root verbatim, so /fonts/… resolves in both the
  * popup and the viewer regardless of how deep the page sits.
  *
- * `unicode-range` is not decoration. FlowSnap renders text it did not write —
+ * `unicode-range` is not decoration. DevFlow renders text it did not write —
  * page titles, element labels, typed values — and only the Latin subset is
  * vendored, so the descriptor is what makes a Cyrillic or CJK glyph fall through
  * to the next family in the stack instead of rendering as tofu.

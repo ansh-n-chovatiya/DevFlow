@@ -48,7 +48,7 @@ function line(field: Field, value: unknown): string {
  * In table order rather than object order, so two flows recorded under the same
  * overrides print the same header whatever order the user changed them in.
  *
- * A key this build has never heard of — a flow recorded by a newer FlowSnap and
+ * A key this build has never heard of — a flow recorded by a newer DevFlow and
  * read by an older server, which `npx` makes ordinary — is printed raw rather
  * than dropped. The reader cannot be told what it means, but "this recording
  * was made under a setting I cannot describe" is a far better thing to say than

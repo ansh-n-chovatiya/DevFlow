@@ -134,7 +134,7 @@ beforeEach(() => {
   let pending: Blob | null = null;
   URL.createObjectURL = (blob: Blob) => {
     pending = blob;
-    return 'blob:flowsnap-test';
+    return 'blob:devflow-test';
   };
   URL.revokeObjectURL = () => undefined;
   HTMLAnchorElement.prototype.click = function click(this: HTMLAnchorElement): void {
@@ -217,7 +217,7 @@ describe('the two-pane JSON view', () => {
   it('refuses to review a document that does not parse, and names the line', async () => {
     await openSettings();
     await openJson();
-    await typeJson('{\n  "$schema": "flowsnap/settings-1",\n  "mcpAutoSend": true\n  "editor": "vim"\n}\n');
+    await typeJson('{\n  "$schema": "devflow/settings-1",\n  "mcpAutoSend": true\n  "editor": "vim"\n}\n');
 
     expect(applyButton().disabled).toBe(true);
     const problem = document.querySelector('.json-view__notes .banner--danger')!;
@@ -367,10 +367,10 @@ describe('import', () => {
 
   it('reads a file whose $schema is from a newer version rather than refusing it', async () => {
     await openSettings();
-    await importFile('{"$schema": "flowsnap/settings-9", "mcpAutoSend": true}');
+    await importFile('{"$schema": "devflow/settings-9", "mcpAutoSend": true}');
 
     const open = dialog()!;
-    expect(open.querySelector('.banner--info')!.textContent).toContain('flowsnap/settings-9');
+    expect(open.querySelector('.banner--info')!.textContent).toContain('devflow/settings-9');
     expect(open.querySelector('.dialog__footer .btn--primary')!.textContent).toBe(
       'Apply 1 setting',
     );
@@ -399,7 +399,7 @@ async function importFile(text: string): Promise<void> {
   await menu('Import settings');
   const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
   Object.defineProperty(input, 'files', {
-    value: [new File([text], 'flowsnap-settings.json', { type: 'application/json' })],
+    value: [new File([text], 'devflow-settings.json', { type: 'application/json' })],
   });
   input.dispatchEvent(new Event('change'));
   await settle();

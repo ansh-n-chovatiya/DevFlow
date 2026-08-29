@@ -153,7 +153,7 @@ export const INDICATOR_ID = 'devflow-indicator';
  * as an open question because it is the same red as `ANNOTATION_STROKE`, which
  * *is* Tier 1. They have different jobs. The annotation stroke is a mark the
  * user makes on their own screenshot for their own reader; the badge is
- * FlowSnap telling the user it is recording right now, on the only surface that
+ * DevFlow telling the user it is recording right now, on the only surface that
  * is always visible. A colour somebody chose to match their theme is a colour
  * that can be missed, and a recording nobody noticed starting is the most
  * expensive thing this extension can do.
@@ -461,7 +461,7 @@ export const REMOTE_TIMEOUT_MS = 10_000;
 // drifts from the mirror below. That test is load-bearing — a silent drift here
 // would show the user one number while the server used another.
 
-/** Response budget for one MCP tool call, in tokens. `FLOWSNAP_MAX_TOKENS`. */
+/** Response budget for one MCP tool call, in tokens. `DEVFLOW_MAX_TOKENS`. */
 export const MCP_MAX_TOKENS = 20_000;
 
 /** Screenshots returned by a single MCP call. */
@@ -473,13 +473,13 @@ export const MCP_BODY_LIMIT = 4096;
 /** Whether MCP tool calls include the underlying step data unless asked. */
 export const MCP_RAW_DEFAULT = false;
 
-/** Flows kept in `~/.flowsnap/flows` before the oldest is evicted. */
+/** Flows kept in `~/.devflow/flows` before the oldest is evicted. */
 export const MCP_MAX_FLOWS = 200;
 
-/** Total bytes kept in `~/.flowsnap/flows` before the oldest is evicted. */
+/** Total bytes kept in `~/.devflow/flows` before the oldest is evicted. */
 export const MCP_MAX_FLOW_BYTES = 2 * 1024 * 1024 * 1024;
 
-/** The loopback port the server listens on. `FLOWSNAP_PORT`. */
+/** The loopback port the server listens on. `DEVFLOW_PORT`. */
 export const MCP_PORT = 7734;
 
 // ── Export and send defaults ─────────────────────────────────────────────────
@@ -549,7 +549,7 @@ export const CAPTURE_TRAILING_STEP = true;
 // From react-source-locator. Two of its four constants did not survive the
 // merge, and what happened to them is the merge in miniature:
 //
-//   - `FETCH_CONCURRENCY = 6` is gone. It was the same quantity FlowSnap had
+//   - `FETCH_CONCURRENCY = 6` is gone. It was the same quantity DevFlow had
 //     already made a Tier 2 setting at `react.resolveConcurrency`, and after the
 //     merge both `BundleProvider` implementations read the setting. Two numbers
 //     became one.

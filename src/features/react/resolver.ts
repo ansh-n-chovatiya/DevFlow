@@ -17,7 +17,7 @@
  *   - **Honest.** Every outcome that is not a resolved path carries a status and
  *     one sentence saying why. There is no silent omission anywhere in here.
  *   - **Invisible to the recording.** These fetches come from the worker, so the
- *     page's patched `fetch`/`XHR` never see them and FlowSnap cannot end up
+ *     page's patched `fetch`/`XHR` never see them and DevFlow cannot end up
  *     recording itself.
  *
  * ## Where the bytes come from (D4)

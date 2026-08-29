@@ -1,4 +1,4 @@
-# FlowSnap — project rules
+# DevFlow — project rules
 
 Kept separate from `.agent/rules/graphify.md` on purpose: that file is rewritten
 in full every time `graphify antigravity install` runs, so anything project
@@ -36,8 +36,8 @@ those recordings over MCP.
 - **Only `src/ui/styles/tokens.css` may name a colour** (`npm run lint:tokens`).
 - **`package.json` and `public/manifest.json` versions must agree**
   (`npm run sync-version`).
-- **Never commit a `.mcp.json`.** It shadows contributors' real FlowSnap
-  installation. Use `claude mcp add flowsnap -s local -- node ./mcp-server/server.js`.
+- **Never commit a `.mcp.json`.** It shadows contributors' real DevFlow
+  installation. Use `claude mcp add devflow -s local -- node ./mcp-server/server.js`.
 - `dist/`, `releases/`, `.render/`, `graphify-out/` and `mcp-server/core.js`
   are generated — never commit or hand-edit them.
 

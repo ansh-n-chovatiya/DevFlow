@@ -23,7 +23,7 @@ describe('normalizeSourcePath', () => {
   }
 
   it('keeps an absolute path absolute', () => {
-    // FlowSnap hands flows to an AI on the same machine, so an absolute path
+    // DevFlow hands flows to an AI on the same machine, so an absolute path
     // from a dev server is directly openable — better than a guessed relative one.
     expect(normalizeSourcePath('file:///Users/me/proj/src/App.tsx')).toBe(
       '/Users/me/proj/src/App.tsx',

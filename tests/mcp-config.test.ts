@@ -4,7 +4,7 @@
  * The MCP server has two channels. The per-flow one travels inside a
  * recording and is covered by `mcp-settings.test.ts`; this is the other, and it
  * is the only path the port and the two retention caps have. It is also the
- * first endpoint FlowSnap has that *writes a file* on the strength of an
+ * first endpoint DevFlow has that *writes a file* on the strength of an
  * unauthenticated request to a loopback port that any page the user visits can
  * reach — so half of what follows is about the bounds rather than the feature.
  *
@@ -37,11 +37,11 @@ const servers: McpSession[] = [];
  * A server with an optional starting `config.json`.
  *
  * `portFromConfig` is for the one test that needs the file to have decided the
- * port: everywhere else `FLOWSNAP_PORT` gives each server one of its own, and
+ * port: everywhere else `DEVFLOW_PORT` gives each server one of its own, and
  * being the top of the chain is exactly what that test cannot have.
  */
 async function server(config?: unknown, portFromConfig?: number): Promise<McpSession> {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsnap-config-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'devflow-config-'));
   fs.mkdirSync(path.join(home, 'flows'), { recursive: true });
   if (config !== undefined) {
     fs.writeFileSync(
@@ -152,7 +152,7 @@ describe('what it says about a value that will not be used', () => {
   it('reports a key the environment outranks, rather than reporting success', async () => {
     /*
      * The whole write succeeded and the file says what was asked for, and the
-     * value in force is still somebody else's — `FLOWSNAP_PORT` is set on a
+     * value in force is still somebody else's — `DEVFLOW_PORT` is set on a
      * process the user did not start, and env is the last word by design. This
      * is the exact "appears to work" failure the mechanism exists against, and
      * the extension can only say so if the server does.
@@ -161,12 +161,12 @@ describe('what it says about a value that will not be used', () => {
     const body = JSON.parse((await send(session, { 'mcp.port': 9100 })).body);
 
     expect(body.overridden).toEqual([
-      { key: 'mcp.port', by: 'FLOWSNAP_PORT', using: session.port },
+      { key: 'mcp.port', by: 'DEVFLOW_PORT', using: session.port },
     ]);
   });
 
   it('says the port waits for a restart, because a bound socket does not move', async () => {
-    // Started from the file rather than from `FLOWSNAP_PORT`, so nothing
+    // Started from the file rather than from `DEVFLOW_PORT`, so nothing
     // outranks the new value — it is simply not something a running process can
     // act on. Which is the whole reason the reply says so.
     const listening = await freePort();
@@ -240,7 +240,7 @@ describe('what bounds it', () => {
     expect(fs.existsSync(path.join(session.home, 'config.json'))).toBe(false);
   });
 
-  it('cannot be made to write anywhere but ~/.flowsnap/config.json', async () => {
+  it('cannot be made to write anywhere but ~/.devflow/config.json', async () => {
     /*
      * The `SCREENSHOT_FILE` regex is the path-traversal guard on this
      * port, and the lesson taken from it here is stronger than a guard: no part
@@ -253,12 +253,12 @@ describe('what bounds it', () => {
      */
     const session = await server();
     const before = fs.readdirSync(session.home).sort();
-    const outside = path.join(path.dirname(session.home), 'flowsnap-escaped');
+    const outside = path.join(path.dirname(session.home), 'devflow-escaped');
 
     const reply = await send(session, {
-      '../../../../tmp/flowsnap-escaped': 'no',
-      '/etc/flowsnap': 'no',
-      'mcp.maxFlows': '../../flowsnap-escaped',
+      '../../../../tmp/devflow-escaped': 'no',
+      '/etc/devflow': 'no',
+      'mcp.maxFlows': '../../devflow-escaped',
       file: outside,
       path: outside,
       __proto__: { polluted: true },
@@ -267,10 +267,10 @@ describe('what bounds it', () => {
     expect(reply.status).toBe(200);
     expect(fs.readdirSync(session.home).sort()).toEqual([...before, 'config.json'].sort());
     expect(fs.existsSync(outside)).toBe(false);
-    expect(fs.existsSync('/tmp/flowsnap-escaped')).toBe(false);
+    expect(fs.existsSync('/tmp/devflow-escaped')).toBe(false);
     // Nothing but the three keys survives, and `__proto__` is a key like any
     // other on the way in and dropped like any other on the way out.
-    expect(configOf(session)).toEqual({ 'mcp.maxFlows': '../../flowsnap-escaped' });
+    expect(configOf(session)).toEqual({ 'mcp.maxFlows': '../../devflow-escaped' });
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
@@ -299,11 +299,11 @@ describe('what bounds it', () => {
      * by hand rather than through the helper: in remote mode MCP is served over
      * SSE, so there is no stdio transport for the helper to speak to.
      */
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsnap-remote-'));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'devflow-remote-'));
     homes.push(home);
     const port = await freePort();
     const child = spawn('node', [fileURLToPath(new URL('../mcp-server/server.js', import.meta.url))], {
-      env: { ...process.env, MCP_MODE: 'remote', PORT: String(port), FLOWSNAP_DIR: home },
+      env: { ...process.env, MCP_MODE: 'remote', PORT: String(port), DEVFLOW_DIR: home },
       stdio: ['ignore', 'ignore', 'ignore'],
     });
 

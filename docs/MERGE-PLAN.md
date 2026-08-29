@@ -1,6 +1,6 @@
 # DevFlow — merge plan
 
-Merging **FlowSnap** (`Flow-Recorder`, 2.7.1) and **react-source-locator** (2.2.0) into one
+Merging **DevFlow** (`Flow-Recorder`, 2.7.1) and **react-source-locator** (2.2.0) into one
 Chrome extension, on one shared React/source-map engine instead of two copies of one.
 
 > **This is the execution plan, kept as the record of what was intended.** It is not
@@ -9,7 +9,7 @@ Chrome extension, on one shared React/source-map engine instead of two copies of
 > rules, `docs/CORE.md` the engine, and `docs/CONTRACTS.md` the Wave 0 freeze the
 > parallel sessions were built against.
 
-| | FlowSnap | react-source-locator | DevFlow |
+| | DevFlow | react-source-locator | DevFlow |
 | --- | --- | --- | --- |
 | Version | 2.7.1 | 2.2.0 | new |
 | Source | ~9k LOC | 3.8k LOC | — |
@@ -39,7 +39,7 @@ settings groups still read as a bundle.
 Concretely, that means these are requirements, not polish:
 
 **1. The flow review *is* a locate surface.** This is the biggest integration win and it is almost
-free. FlowSnap already captures a component needle on every click and resolves it to a source path
+free. DevFlow already captures a component needle on every click and resolves it to a source path
 in the background — `ComponentSource` is already on the step. So every recorded step in the viewer
 shows its component and file, and clicking it opens **the same result card** the DevTools panel
 shows, with the same "Open in Editor" action. Recording and locating stop being two things the user
@@ -48,7 +48,7 @@ does and become one thing they see. *(Package K.)*
 **2. The bridge runs both ways.** From a recorded step → locate its component. From a picked
 component → the steps that touched it, when a recording is live.
 
-**3. One icon system.** FlowSnap generates icons from `lucide-static` into `icons.generated.ts`;
+**3. One icon system.** DevFlow generates icons from `lucide-static` into `icons.generated.ts`;
 the locator hand-draws a bespoke SVG sprite in `panel.html` (`#i-react`, `#i-target`, `#i-mouse`…).
 Two icon vocabularies is the single most visible tell. The sprite is **replaced**, not ported.
 
@@ -64,7 +64,7 @@ no `rst:` storage prefix or `__RST_*` page global survives.
 "Locator" section. The groups are *React & source resolution* (which both halves use — the editor
 and project root already serve both today), *Recording*, *Export & MCP*, *Appearance*. *(Package J.)*
 
-**7. One history.** The locator's recent picks and FlowSnap's flow library share a surface and a
+**7. One history.** The locator's recent picks and DevFlow's flow library share a surface and a
 visual language rather than being two unrelated lists.
 
 **8. Either door works.** The popup offers both actions. DevTools is a power surface for locating,
@@ -110,7 +110,7 @@ shared package.
 
 ### D1 · Line base: 0-based vs 1-based
 
-The locator is 0-based end to end. FlowSnap converts to 1-based once, at the source-map edge
+The locator is 0-based end to end. DevFlow converts to 1-based once, at the source-map edge
 (`sourcemap.ts`, `(segment.originalLine ?? 0) + 1`), so everything downstream is already 1-based.
 Both are correct in their own repo. Consequently `buildEditorUrl` means **opposite things** by
 `{line1}` in the two copies. SHARED-CORE rejects a `base: 0 | 1` parameter because a call site
@@ -125,8 +125,8 @@ runtime flag could not give.
 ### D2 · `force` on the fiber walk
 
 The locator passes `force = true` when resolving a lazy component on a pick — the user asked for
-it. FlowSnap must never force: `_init` can start a dynamic `import()`, so a passive recorder that
-forced would change what the page loads and stop describing the session it claims to. FlowSnap's
+it. DevFlow must never force: `_init` can start a dynamic `import()`, so a passive recorder that
+forced would change what the page loads and stop describing the session it claims to. DevFlow's
 copy removed the flag entirely.
 
 **Fix — required parameter, no default.** `getComponentFn(fiber, { force })` with no default, so
@@ -135,7 +135,7 @@ recorder's capture path passes `force: false`.
 
 ### D3 · `sourcesContent` retention
 
-The locator keeps it and renders a source preview. FlowSnap drops it deliberately: a flow is sent
+The locator keeps it and renders a source preview. DevFlow drops it deliberately: a flow is sent
 to an AI, and inlined original source is both a token disaster and a way to leak code the user did
 not mean to send.
 
@@ -146,10 +146,10 @@ and this one passes.
 
 ### D4 · Fetching and caching inside the core
 
-The locator's `sourcemap.ts` owns a fetch callback and module-level caches. FlowSnap's is pure —
+The locator's `sourcemap.ts` owns a fetch callback and module-level caches. DevFlow's is pure —
 its worker's resolver owns every fetch, because that is also what owns the time and count budgets.
 
-**Fix — FlowSnap's purity wins; caching moves to the providers.** Not a preference: `src/core/` is
+**Fix — DevFlow's purity wins; caching moves to the providers.** Not a preference: `src/core/` is
 bundled into `mcp-server/core.js` for a Node process with no `chrome` object, so purity is
 **already CI-enforced** — a fetch or a `chrome.*` in core fails `npm run build:mcp`. Both caches
 move into the two `BundleProvider` implementations (W1·B).
@@ -157,7 +157,7 @@ move into the two `BundleProvider` implementations (W1·B).
 ### D5 · Panel-only code in `classify.ts`
 
 The locator's copy carries filter chips, their labels, `filterComponents` and `countByCategory`.
-FlowSnap classifies only to pick one owner out of a chain and drops all of it.
+DevFlow classifies only to pick one owner out of a chain and drops all of it.
 
 **Fix — one superset module, tree-shaken.** The recorder imports only `isDependencyPath`; Vite
 drops the rest. Guarded by the existing `build:mcp` bundle, which would grow visibly if UI strings
@@ -165,24 +165,24 @@ leaked into the worker path.
 
 ### D6 · `--gutter` means two different things — *undocumented*
 
-Found while diffing the two token files. FlowSnap's `--gutter` is a **32px page gutter**; the
+Found while diffing the two token files. DevFlow's `--gutter` is a **32px page gutter**; the
 locator's is a **12px panel gutter**. Same name, different scale. Merging the stylesheets naively
 rescales the entire panel.
 
-**Fix — rename at port time.** The locator's becomes `--pad-panel: 12px`; FlowSnap's `--gutter` is
+**Fix — rename at port time.** The locator's becomes `--pad-panel: 12px`; DevFlow's `--gutter` is
 untouched. Caught by `npm run lint:tokens`, which already forbids any file but `tokens.css` from
 naming a value, plus an explicit grep gate in W0.
 
 ### D7 · The managed-policy layer — *undocumented*
 
 The locator reads `chrome.storage.managed` so an IT admin can push `editor` / `projectRoot`
-org-wide, and `managedKeys()` disables those inputs in the UI. FlowSnap **deliberately dropped
+org-wide, and `managedKeys()` disables those inputs in the UI. DevFlow **deliberately dropped
 this** — `core/react/editor.ts` says so: *"a recorder has no such deployment story."*
 
 But the merged product *is* also a locator, and that story comes back with it. Dropping the layer
 silently breaks every enterprise deployment of react-source-locator.
 
-**Fix — keep it, as a third resolution layer.** FlowSnap's sparse-override model takes it cleanly:
+**Fix — keep it, as a third resolution layer.** DevFlow's sparse-override model takes it cleanly:
 `DEFAULTS ← user overrides ← managed overrides`, managed winning, exactly as the locator resolves
 today. `resolve()` stays pure by taking the managed overrides as an argument rather than reading
 storage itself. `managedKeys()` drives a disabled state in the Settings screen. Additive,
@@ -193,9 +193,9 @@ low-risk, and it preserves a feature the merge would otherwise quietly delete.
 | | Shape | Area |
 | --- | --- | --- |
 | Locator | one JSON blob under `rst:settings` | `sync` + `managed` |
-| FlowSnap | flat dotted keys, **sparse overrides only** | `sync` |
+| DevFlow | flat dotted keys, **sparse overrides only** | `sync` |
 
-FlowSnap's model is the one to keep — it is the one with the derivation guarantees, the generated
+DevFlow's model is the one to keep — it is the one with the derivation guarantees, the generated
 `settings.default.json`, and the validator the MCP server imports. But an existing
 react-source-locator user upgrading to DevFlow would find `rst:settings` unreadable and **silently
 lose their editor and project root.**
@@ -208,7 +208,7 @@ pattern in the same file. Needs a test with a realistic pre-merge blob.
 
 ### D9 · Two settings surfaces — *undocumented*
 
-The locator has a **drawer inside the panel**; FlowSnap has a **full options page**
+The locator has a **drawer inside the panel**; DevFlow has a **full options page**
 (`settings.html`, `open_in_tab`). Two stores would drift; deleting the drawer would turn
 "pick a component, then change your editor" into a page switch.
 
@@ -221,7 +221,7 @@ has to go through the same components or CI fails.
 
 ## Settings: the merged key map
 
-This is the part the first draft of this plan missed. FlowSnap's settings system is **6,887 lines**
+This is the part the first draft of this plan missed. DevFlow's settings system is **6,887 lines**
 and is not a config file — `fields.ts` (1,911 lines) is a single data table from which the
 `Settings` type, `DEFAULTS`, the `resolve()` clamp, the Settings screen inputs, the reset
 affordance, and `public/settings.default.json` are all *derived*. Its own header states the goal:
@@ -239,11 +239,11 @@ Three consequences for the merge:
 
 ### Keys that already align
 
-`settings.default.json` already ships these — FlowSnap does source resolution too, and
+`settings.default.json` already ships these — DevFlow does source resolution too, and
 `core/react/editor.ts` notes its `EDITORS` table is *"kept in step with the sibling extension's
 table, in the same order"*. **No work beyond confirming the tables still match.**
 
-| Key | FlowSnap | Locator |
+| Key | DevFlow | Locator |
 | --- | --- | --- |
 | `editor` | `"vscode"` | `"vscode"` |
 | `customEditorTemplate` | `""` | `""` |
@@ -251,20 +251,20 @@ table, in the same order"*. **No work beyond confirming the tables still match.*
 
 ### Keys that overlap semantically but are not the same
 
-| Locator | FlowSnap | Resolution |
+| Locator | DevFlow | Resolution |
 | --- | --- | --- |
 | `useSourceMaps` | `reactResolve`, `reactCapture` | **Not** the same scope. `useSourceMaps` gates one interactive locate; `reactResolve` gates the recorder's whole background pass. Keep both: add `react.useSourceMaps` for the locate path, leave `reactResolve` owning the recorder pass. |
-| DevTools theme (`chrome.devtools.panels.themeName`) | `theme: system \| light \| dark` | The panel currently follows DevTools' theme, which is chosen independently of the OS. FlowSnap's explicit setting must win when it is not `system`; DevTools' theme becomes the fallback the `system` value resolves against, in place of `prefers-color-scheme`, **for the panel only**. |
+| DevTools theme (`chrome.devtools.panels.themeName`) | `theme: system \| light \| dark` | The panel currently follows DevTools' theme, which is chosen independently of the OS. DevFlow's explicit setting must win when it is not `system`; DevTools' theme becomes the fallback the `system` value resolves against, in place of `prefers-color-scheme`, **for the panel only**. |
 
-### Keys the locator brings that FlowSnap has no equivalent for
+### Keys the locator brings that DevFlow has no equivalent for
 
 | Key | Notes |
 | --- | --- |
 | `locator.hidden.*` | One per `HIDEABLE_CATEGORY`, all `true` by default. Tied to D5 — these exist only because the panel keeps the classify UI. |
 
-### FlowSnap tunables the locator path must now respect
+### DevFlow tunables the locator path must now respect
 
-The locator hardcodes `FETCH_CONCURRENCY = 6`; FlowSnap makes the same number a Tier 2 setting at
+The locator hardcodes `FETCH_CONCURRENCY = 6`; DevFlow makes the same number a Tier 2 setting at
 `react.resolveConcurrency` (4). After the merge **both providers read the settings**, so these stop
 being two numbers:
 
@@ -281,7 +281,7 @@ This is W1·B's responsibility and is the main reason B is a separate package fr
 
 The locator's only hard dependency on being a DevTools panel is
 `chrome.devtools.inspectedWindow.getResources()` — the list of loaded scripts and their text out of
-the DevTools cache. FlowSnap has no DevTools page, so it already solved the same problem
+the DevTools cache. DevFlow has no DevTools page, so it already solved the same problem
 differently: `features/react/inventory.ts` collects script URLs from the page itself (a
 `PerformanceObserver` on resource entries plus `document.scripts`), keyed by origin, and the worker
 fetches them.
@@ -303,25 +303,25 @@ export interface BundleProvider {
 | Implementation | Ported from | Used by | Strength |
 | --- | --- | --- | --- |
 | `DevtoolsProvider` | locator `core/resources.ts` | DevTools panel | Reads the DevTools cache; sees scripts loaded before the extension was watching; no re-fetch |
-| `WorkerProvider` | FlowSnap `features/react/{inventory,resolver}.ts` | Recorder, popup locate | Works with DevTools closed; budgeted, idempotent across MV3 worker deaths |
+| `WorkerProvider` | DevFlow `features/react/{inventory,resolver}.ts` | Recorder, popup locate | Works with DevTools closed; budgeted, idempotent across MV3 worker deaths |
 
 ### Two simplifications fall out of this
 
 **The agent injection dance is deleted, not ported.** The locator injects its page agent on demand
 by reading the built file and `eval`-ing it into the page (`getAgentSource()` → `ensureAgent()` →
-`callAgent()`). FlowSnap already ships a MAIN-world agent injected at `document_start` on
+`callAgent()`). DevFlow already ships a MAIN-world agent injected at `document_start` on
 `<all_urls>` by the manifest. In DevFlow there is **one agent, already present**. The picker's
 listeners stay lazy — attached only on `startPick` — so it costs nothing when idle.
 
 **The runtime permission prompt goes too.** The locator asks for `<all_urls>` at runtime via
-`optional_host_permissions` and an `ensureHostPermission()` prompt. FlowSnap holds `<all_urls>` as
+`optional_host_permissions` and an `ensureHostPermission()` prompt. DevFlow holds `<all_urls>` as
 a static `host_permissions` grant, which is a superset.
 
 ---
 
 ## Target layout
 
-FlowSnap's structure is the frame — it is the stricter and better-guarded of the two (`core/`
+DevFlow's structure is the frame — it is the stricter and better-guarded of the two (`core/`
 purity enforced by the Node bundle, colours by `lint:tokens`, settings by `build:settings` +
 `lint:settings-ui`, versions by `sync-version`). The locator's code moves into it.
 
@@ -338,9 +338,9 @@ devflow/
 │  │  │  ├─ sourcemap.ts     pure base + keepSourcesContent      (D3, D4)
 │  │  │  ├─ fiber.ts         explicit force param                (D2)
 │  │  │  ├─ classify.ts      superset, tree-shaken               (D5)
-│  │  │  ├─ editor.ts        FlowSnap's validated builder, Pos1-typed
+│  │  │  ├─ editor.ts        DevFlow's validated builder, Pos1-typed
 │  │  │  └─ needle.ts search.ts owner.ts chains.ts attribution.ts id.ts table.ts
-│  │  └─ flow/ export/ redact/ schema/ selector/ describe/    FlowSnap, unchanged
+│  │  └─ flow/ export/ redact/ schema/ selector/ describe/    DevFlow, unchanged
 │  ├─ features/
 │  │  ├─ react/providers/{devtools,worker}.ts   ◆ the seam
 │  │  ├─ settings/           ◆ FIELDS gains the locator keys  (D7, D8, D9)
@@ -348,7 +348,7 @@ devflow/
 │  ├─ injected/agent.ts      ◆ ONE MAIN-world agent: recorder + picker
 │  ├─ injected/{picker,overlay,highlight}.ts    from the locator
 │  ├─ ui/
-│  │  ├─ styles/tokens.css   ◆ FlowSnap tokens + ~8 additions
+│  │  ├─ styles/tokens.css   ◆ DevFlow tokens + ~8 additions
 │  │  ├─ locator/            ◆ the panel, re-skinned
 │  │  ├─ settings/           ◆ options page + the panel's drawer view
 │  │  └─ popup/ viewer/
@@ -383,7 +383,7 @@ running session.
 | --- | --- | --- |
 | **W0** Repo scaffold + interface freeze | `package.json`, `vite.*.config.ts`, `tsconfig*`, `src/core/react/{positions,provider}.ts`, `src/shared/types.ts`, `src/ui/styles/tokens.css`, `src/ui/icons.ts`, `docs/CONTRACTS.md` | ~80k |
 
-`git init devflow`; copy FlowSnap's build spine (vite ×5, vitest, eslint, the three lint guards).
+`git init devflow`; copy DevFlow's build spine (vite ×5, vitest, eslint, the three lint guards).
 Write the type-only contracts as files that typecheck but throw `not implemented`.
 
 `CONTRACTS.md` carries five frozen things, because every parallel package consumes them:
@@ -393,7 +393,7 @@ Write the type-only contracts as files that typecheck but throw `not implemented
 3. **The settings key manifest** — every key, type, default, and owning package (B, G, H, J).
 4. **The glossary** — the exact user-facing word for every concept, since seven packages write
    strings and inconsistent vocabulary is what makes a merge read as a bundle.
-5. **The icon manifest** — which named icon each UI affordance uses, resolved to FlowSnap's
+5. **The icon manifest** — which named icon each UI affordance uses, resolved to DevFlow's
    `lucide-static` set, so D, E, G, H and K cannot reintroduce two icon vocabularies.
 
 ### Wave 1 — port and unify · 7 sessions, parallel
@@ -488,7 +488,7 @@ splitting work, not as promises. If a package runs long it splits cleanly:
 - [ ] Exactly one implementation of each of the six formerly-shared concerns. `core-drift.mjs` is
       gone because it has nothing left to compare.
 - [ ] `src/core/` still bundles clean into `mcp-server/core.js` for Node — the standing proof D4 held.
-- [ ] No colour literal outside `tokens.css`. The panel renders in FlowSnap's IBM Plex + teal
+- [ ] No colour literal outside `tokens.css`. The panel renders in DevFlow's IBM Plex + teal
       identity, in light, dark and system themes.
 - [ ] **Every setting from both extensions appears in `FIELDS`,** in the options page, and in the
       generated `settings.default.json`.

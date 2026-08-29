@@ -139,7 +139,7 @@ export async function save(patch: Partial<Settings>): Promise<Result<void>> {
 
   for (const [key, value] of Object.entries(patch)) {
     if (!isSettingKey(key)) {
-      return err(flowError('STORAGE_WRITE', `FlowSnap: no such setting: ${key}`));
+      return err(flowError('STORAGE_WRITE', `DevFlow: no such setting: ${key}`));
     }
     const field = fieldFor(key) as Field;
     const resolved = resolveField(field, value);
@@ -172,7 +172,7 @@ export async function save(patch: Partial<Settings>): Promise<Result<void>> {
  * empty area, so a later release's better default still reaches the user.
  *
  * **`keepUnknown` for an import, and not for an Undo.** A key this build does
- * not recognise may be a setting from a newer FlowSnap that synced onto this
+ * not recognise may be a setting from a newer DevFlow that synced onto this
  * machine, and an import from a colleague running an older build must not
  * delete it — that is the silent-deletion failure with the file and the store
  * swapped round. So an import merges the unknown half and replaces the known

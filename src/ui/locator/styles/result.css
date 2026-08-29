@@ -18,7 +18,7 @@
  * The 45 colour literals. The locator declared the whole five-category palette
  * here — fg/bg/border for each, three times over for the three theme states —
  * because this file was where the chips used them. tokens.css now owns them,
- * re-derived from FlowSnap's data ramp rather than ported, so this file
+ * re-derived from DevFlow's data ramp rather than ported, so this file
  * declares no colour at all and only names `var(--cat-*)`. The `--chip-*`
  * triple below stays: it aliases, it does not define.
  */

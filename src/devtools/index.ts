@@ -44,12 +44,11 @@ const DEVTOOLS_PORT = 'devflow-devtools';
 const tabId = chrome.devtools.inspectedWindow.tabId;
 
 /*
- * The panel's tab strip entry. Named for the product, not for the half of it
- * that happens to live here: this is DevFlow's DevTools surface, and a tab
- * reading "Locate" would be the merge's seam showing in the one place Chrome
- * puts it next to "Elements" and "Sources".
+ * The panel's tab strip entry. Named for the specific functionality it controls
+ * in DevTools (React component and source locating), allowing other DevFlow tools
+ * (e.g. Flow Recorder) to register their own dedicated DevTools panels cleanly.
  */
-chrome.devtools.panels.create('DevFlow', 'icons/icon48.png', 'panel.html');
+chrome.devtools.panels.create('React Locator', 'icons/icon48.png', 'panel.html');
 
 /**
  * Opens the port, and re-opens it if the worker underneath it dies.

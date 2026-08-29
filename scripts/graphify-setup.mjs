@@ -80,7 +80,7 @@ if (!bin) {
     say('It is a Python tool (3.10+) and installs on its own:\n');
     say('    uv tool install graphifyy      # or: pipx install graphifyy\n');
     say('Then run `npm run graphify:setup` to finish wiring up this clone.');
-    say('Everything else in FlowSnap works without it — the graph only makes');
+    say('Everything else in DevFlow works without it — the graph only makes');
     say('Claude Code and Antigravity better at navigating this codebase.');
   }
   process.exit(0);

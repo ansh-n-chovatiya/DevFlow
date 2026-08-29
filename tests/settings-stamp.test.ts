@@ -17,7 +17,7 @@
  *     normal — and knowing it is the whole difference between "made small
  *     deliberately" and "something is wrong with this".
  *   - **Honest across versions.** A key this build cannot name is printed raw
- *     rather than dropped, because `npx -y flowsnap-mcp` makes "an older server
+ *     rather than dropped, because `npx -y devflow-mcp-server` makes "an older server
  *     reading a newer flow" ordinary rather than exotic.
  *   - **Present wherever the flow is.** The payload, the walkthrough header,
  *     `flow.json`, and the ZIP.
@@ -79,10 +79,10 @@ describe('what a stamp says', () => {
     expect(one[0]).toContain('Screenshot quality');
   });
 
-  it('prints a key from a newer FlowSnap rather than dropping it', () => {
+  it('prints a key from a newer DevFlow rather than dropping it', () => {
     /*
      * The situation this exists for: the extension updates, the MCP server does
-     * not — `npx -y flowsnap-mcp` resolves to whatever npm has cached. Dropping
+     * not — `npx -y devflow-mcp-server` resolves to whatever npm has cached. Dropping
      * the key would render a flow made under an unusual setting as one made at
      * the defaults, which is the exact wrong answer this whole mechanism is for.
      */
@@ -215,14 +215,14 @@ describe('a step with no picture says which kind of no picture it is', () => {
       [
         step({
           screenshot: null,
-          screenshotOmitted: 'Screenshots are switched off in FlowSnap settings for this recording.',
+          screenshotOmitted: 'Screenshots are switched off in DevFlow settings for this recording.',
         }),
       ],
       { title: 'Checkout' },
     );
 
     expect(md).toContain('🚫 no screenshot');
-    expect(md).toContain('switched off in FlowSnap settings');
+    expect(md).toContain('switched off in DevFlow settings');
   });
 
   it('says nothing for a step whose image was simply left out of this export', () => {

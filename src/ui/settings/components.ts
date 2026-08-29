@@ -1772,13 +1772,13 @@ function renderStorage(props: PageProps, handlers: PageHandlers): HTMLElement {
     groupHeader({
       title: 'Storage',
       description:
-        'FlowSnap keeps flows on this machine and nowhere else. There is no size limit — the only ceiling is your disk.',
+        'DevFlow keeps flows on this machine and nowhere else. There is no size limit — the only ceiling is your disk.',
     }),
   );
 
   const figures = make('div', 'storage__figures');
   figures.append(make('span', 'storage__used', props.storage.used));
-  figures.append(make('span', 'meta', 'held by FlowSnap'));
+  figures.append(make('span', 'meta', 'held by DevFlow'));
   section.append(figures);
 
   const detail = make('p', 'label', props.storage.detail);

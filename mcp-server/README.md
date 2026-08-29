@@ -1,4 +1,4 @@
-# flowsnap-mcp
+# devflow-mcp-server
 
 Gives Claude Code the browser flow you just recorded — the clicks, the console
 errors, the failed requests and their bodies, and a screenshot of every step —
@@ -7,41 +7,43 @@ so it can fix the bug in your project instead of being told about it.
 Pairs with the DevFlow Chrome extension, which is what records the flows and
 posts them here.
 
-**On the name.** The package, its binary, the server's MCP name and the
-`~/.flowsnap` directory keep the names they were published under. A rename would
-leave every project that has already run `install` pointing at a package that no
-longer exists, and every recording anyone has kept in a directory nothing reads —
-and nothing would say so. The extension is DevFlow; this is the server it talks
-to.
+**On the name.** The binary, the server's MCP name (`devflow`) and the
+`~/.devflow` directory keep the names they were published under, because a
+rename there would leave every recording anyone has kept in a directory nothing
+reads — and nothing would say so.
 
-## Install
+The npm package is the one exception, and not by choice: `devflow-mcp` was
+already taken on npm by an unrelated package, so this publishes as
+`devflow-mcp-server`. If you registered the 2.7.1 server, its registration still
+points at the old package and will never see another release — it does not
+break, it just stops moving. `npx -y devflow-mcp-server install --force`
+replaces it. The extension is DevFlow; this is the server it talks to.
+
+## Install (Global Setup)
+
+Register once globally on your machine — all your projects and workspaces can use it immediately without any per-project setup:
 
 ```sh
-npx flowsnap-mcp install
+npx devflow-mcp-server install
 ```
 
-Once, for every project you open — the Claude Code CLI and the VS Code extension
+Once, globally, for every project you open — the Claude Code CLI and the VS Code extension
 alike. Nothing to clone, nothing to build, and safe to run again.
 
-It runs `claude mcp add flowsnap --scope user -- npx -y flowsnap-mcp` for you.
-That flag is the whole reason this command exists: `claude mcp add` defaults to
-`local` scope, which is *the current directory*, so the same line typed without
-it gives you a server that works in one folder and is silently missing from
-every other project. This never takes a scope — there is one right answer and it
-is compiled in.
+It runs `claude mcp add devflow --scope user -- npx -y devflow-mcp-server` for you.
+Setting up at user scope (`--scope user`) ensures DevFlow is available globally across all your repositories. You do not need to run this per project or add `.mcp.json` to individual folders.
 
 | | |
 | --- | --- |
-| `npx flowsnap-mcp install` | Register for every project |
-| `npx flowsnap-mcp install --force` | Replace a user-scope registration pointing elsewhere |
-| `npx flowsnap-mcp uninstall` | Remove the user-scope registration |
-| `npx flowsnap-mcp` | Run the server — what Claude Code does |
+| `npx devflow-mcp-server install` | Register globally for every project |
+| `npx devflow-mcp-server install --force` | Replace a user-scope registration pointing elsewhere |
+| `npx devflow-mcp-server uninstall` | Remove the user-scope registration |
+| `npx devflow-mcp-server` | Run the server — what Claude Code does |
 
-If a project has its own `.mcp.json` naming `flowsnap`, that wins inside that
-directory. `install` says so and gives you the line that removes it.
+If a project has its own `.mcp.json` naming `devflow`, that local entry takes precedence inside that directory. `install` detects this and gives you the line to remove it if you want to use the global registration instead.
 
-Then record a flow in the extension and press **Send to Claude**. It lands in
-`~/.flowsnap/flows` and Claude can read it immediately.
+Then record a flow in DevFlow and press **Send to Claude**. It lands in
+`~/.devflow/flows` and Claude can read it immediately.
 
 ## Tools
 
@@ -59,17 +61,17 @@ nothing until a specific image is opened.
 
 ## Where flows live
 
-`~/.flowsnap/flows`, one directory per flow:
+`~/.devflow/flows`, one directory per flow:
 
 ```
-~/.flowsnap/flows/flow-1755000000000/
+~/.devflow/flows/flow-1755000000000/
   flow.json          steps, network calls, console output
   flow.md            readable walkthrough
   meta.json          index entry
   screenshots/       step-01.jpg, step-02.jpg, …
 ```
 
-Set `FLOWSNAP_DIR` to put them somewhere else.
+Set `DEVFLOW_DIR` to put them somewhere else.
 
 Not inside the npm package: under `npx` that directory is a cache which gets
 cleared without warning, and it would take every recording with it.
@@ -85,8 +87,8 @@ the POST response rather than disappearing quietly.
 | `mcp.maxFlows` | `200` | Recordings kept |
 | `mcp.maxFlowBytes` | `2147483648` | Bytes kept, screenshots included |
 
-Set either in DevFlow's Settings, in `~/.flowsnap/config.json`, or as
-`FLOWSNAP_MAX_FLOWS` / `FLOWSNAP_MAX_BYTES` — see [Settings](#settings).
+Set either in DevFlow's Settings, in `~/.devflow/config.json`, or as
+`DEVFLOW_MAX_FLOWS` / `DEVFLOW_MAX_BYTES` — see [Settings](#settings).
 
 Two ceilings because they fail differently: a handful of enormous flows blows the
 disk budget while the count still looks fine, and a great many tiny ones blow the
@@ -107,7 +109,7 @@ writes it into `flow.json`, and this server renders that flow under it.
 
 Three settings cannot travel that way, because they are true of this machine
 whichever flow is being read: the port, and the two retention ceilings. Those
-live in `~/.flowsnap/config.json`, which is the same flat-dotted-key settings
+live in `~/.devflow/config.json`, which is the same flat-dotted-key settings
 file the extension exports:
 
 ```json
@@ -128,15 +130,15 @@ steered by whatever a browser once synced into a flow it happens to be reading.
 
 | Variable | Setting |
 | --- | --- |
-| `FLOWSNAP_PORT` | `mcp.port` |
-| `FLOWSNAP_MAX_FLOWS` | `mcp.maxFlows` |
-| `FLOWSNAP_MAX_BYTES` | `mcp.maxFlowBytes` |
-| `FLOWSNAP_MAX_TOKENS` | `mcp.maxTokens` |
-| `FLOWSNAP_RAW` | `mcp.raw` |
-| `FLOWSNAP_MAX_IMAGES` | `mcp.maxImages` |
-| `FLOWSNAP_BODY_LIMIT` | `mcp.bodyLimit` |
-| `FLOWSNAP_MAX_RESPONSE_BODY` | `mcp.maxResponseBody` |
-| `FLOWSNAP_MAX_CONSOLE_ENTRIES` | `mcp.maxConsoleEntries` |
+| `DEVFLOW_PORT` | `mcp.port` |
+| `DEVFLOW_MAX_FLOWS` | `mcp.maxFlows` |
+| `DEVFLOW_MAX_BYTES` | `mcp.maxFlowBytes` |
+| `DEVFLOW_MAX_TOKENS` | `mcp.maxTokens` |
+| `DEVFLOW_RAW` | `mcp.raw` |
+| `DEVFLOW_MAX_IMAGES` | `mcp.maxImages` |
+| `DEVFLOW_BODY_LIMIT` | `mcp.bodyLimit` |
+| `DEVFLOW_MAX_RESPONSE_BODY` | `mcp.maxResponseBody` |
+| `DEVFLOW_MAX_CONSOLE_ENTRIES` | `mcp.maxConsoleEntries` |
 
 Every value is range-checked by the same rules the Settings screen enforces, and
 a value that had to be clamped, ignored or outranked is named on stderr rather
@@ -182,7 +184,7 @@ belong to whoever launched it, so they come from the environment.
 ## Remote mode
 
 ```sh
-MCP_MODE=remote PORT=8080 npx flowsnap-mcp
+MCP_MODE=remote PORT=8080 npx devflow-mcp-server
 ```
 
 Serves MCP over SSE at `/mcp` and accepts flows at `/flows`, for use as a custom

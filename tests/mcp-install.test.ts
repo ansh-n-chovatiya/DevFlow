@@ -1,11 +1,11 @@
 /**
- * `flowsnap-mcp install` — the scope, taken out of the user's hands.
+ * `devflow-mcp-server install` — the scope, taken out of the user's hands.
  *
  * The setup command was always documented correctly and was always one flag
  * away from being wrong: `claude mcp add` defaults to `local` scope, which is
  * *this directory*, so a command copied without `--scope user` produces a
- * FlowSnap that works in one folder and is silently absent everywhere else.
- * Nothing reports that — other projects just have no flowsnap tools, which
+ * DevFlow that works in one folder and is silently absent everywhere else.
+ * Nothing reports that — other projects just have no devflow tools, which
  * reads as the extension being broken.
  *
  * So the claim under test is narrow and worth pinning exactly: **whatever else
@@ -42,7 +42,7 @@ const homes: string[] = [];
  * between cases — where to record the argv, and whether `mcp add` should fail —
  * is two strings, and two strings travel fine in `env`.
  */
-const shared = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsnap-install-bin-'));
+const shared = fs.mkdtempSync(path.join(os.tmpdir(), 'devflow-install-bin-'));
 const BIN = path.join(shared, 'bin');
 fs.mkdirSync(BIN);
 fs.writeFileSync(
@@ -88,7 +88,7 @@ function machine(options: {
   withClaude?: boolean;
   addFails?: string;
 }): Machine {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsnap-install-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'devflow-install-'));
   homes.push(home);
 
   const cwd = path.join(home, 'project');
@@ -157,7 +157,7 @@ function run(where: Machine, args: string[]): Run {
 
 /** A user-scope registration pointing at the published package. */
 const REGISTERED = {
-  mcpServers: { flowsnap: { type: 'stdio', command: 'npx', args: ['-y', 'flowsnap-mcp'] } },
+  mcpServers: { devflow: { type: 'stdio', command: 'npx', args: ['-y', 'devflow-mcp-server'] } },
 };
 
 describe('installing registers for every project, not for one directory', () => {
@@ -173,9 +173,9 @@ describe('installing registers for every project, not for one directory', () => 
      */
     expect(result.calls).toEqual([
       '--version',
-      'mcp add flowsnap --scope user -- npx -y flowsnap-mcp',
+      'mcp add devflow --scope user -- npx -y devflow-mcp-server',
     ]);
-    expect(result.out).toContain('registered flowsnap at user scope');
+    expect(result.out).toContain('registered devflow at user scope');
   });
 
   it('takes no scope from the caller, at any spelling', () => {
@@ -204,7 +204,7 @@ describe('installing registers for every project, not for one directory', () => 
 
   it('refuses to overwrite a registration pointing somewhere else, until forced', () => {
     const pinned = {
-      mcpServers: { flowsnap: { type: 'stdio', command: 'node', args: ['/old/clone/server.js'] } },
+      mcpServers: { devflow: { type: 'stdio', command: 'node', args: ['/old/clone/server.js'] } },
     };
 
     const first = run(machine({ claudeJson: pinned }), ['install']);
@@ -219,8 +219,8 @@ describe('installing registers for every project, not for one directory', () => 
     // name that is already there.
     expect(forced.calls).toEqual([
       '--version',
-      'mcp remove flowsnap --scope user',
-      'mcp add flowsnap --scope user -- npx -y flowsnap-mcp',
+      'mcp remove devflow --scope user',
+      'mcp add devflow --scope user -- npx -y devflow-mcp-server',
     ]);
   });
 
@@ -233,14 +233,14 @@ describe('installing registers for every project, not for one directory', () => 
      */
     const where = machine({
       claudeJson: REGISTERED,
-      mcpJson: { mcpServers: { flowsnap: { command: 'node', args: ['./mcp-server/server.js'] } } },
+      mcpJson: { mcpServers: { devflow: { command: 'node', args: ['./mcp-server/server.js'] } } },
     });
     const result = run(where, ['install']);
 
     expect(result.code).toBe(0);
-    expect(result.out).toContain('a project-scope flowsnap is also registered here');
+    expect(result.out).toContain('a project-scope devflow is also registered here');
     expect(result.out).toContain('node ./mcp-server/server.js');
-    expect(result.out).toContain('claude mcp remove flowsnap -s project');
+    expect(result.out).toContain('claude mcp remove devflow -s project');
   });
 
   it('says the CLI is missing rather than reporting success into the void', () => {
@@ -251,13 +251,13 @@ describe('installing registers for every project, not for one directory', () => 
     expect(result.out).toContain('not on your PATH');
     // The manual command, so somebody with `claude` under another name is not
     // left with nothing.
-    expect(result.out).toContain('claude mcp add flowsnap --scope user -- npx -y flowsnap-mcp');
+    expect(result.out).toContain('claude mcp add devflow --scope user -- npx -y devflow-mcp-server');
   });
 
   it('treats the CLI saying it already exists as the finished state', () => {
     // Reached when this command's own read of the config came back empty but
     // the entry was there. The CLI is the authority on its own file.
-    const where = machine({ addFails: 'MCP server flowsnap already exists in user config' });
+    const where = machine({ addFails: 'MCP server devflow already exists in user config' });
     const result = run(where, ['install']);
 
     expect(result.code).toBe(0);
@@ -269,7 +269,7 @@ describe('installing registers for every project, not for one directory', () => 
     const result = run(where, ['install']);
 
     expect(result.code).toBe(1);
-    expect(result.out).toContain('could not register flowsnap');
+    expect(result.out).toContain('could not register devflow');
     expect(result.out).toContain('EACCES');
   });
 });
@@ -278,15 +278,15 @@ describe('the rest of the command surface', () => {
   it('removes the user-scope registration, and only that one', () => {
     const where = machine({
       claudeJson: REGISTERED,
-      mcpJson: { mcpServers: { flowsnap: { command: 'node', args: ['./mcp-server/server.js'] } } },
+      mcpJson: { mcpServers: { devflow: { command: 'node', args: ['./mcp-server/server.js'] } } },
     });
     const result = run(where, ['uninstall']);
 
     expect(result.code).toBe(0);
-    expect(result.calls).toEqual(['--version', 'mcp remove flowsnap --scope user']);
+    expect(result.calls).toEqual(['--version', 'mcp remove devflow --scope user']);
     // Somebody else's committed file. Named, never deleted.
     expect(fs.existsSync(path.join(where.cwd, '.mcp.json'))).toBe(true);
-    expect(result.out).toContain('claude mcp remove flowsnap -s project');
+    expect(result.out).toContain('claude mcp remove devflow -s project');
   });
 
   it('does not report removing what was never there', () => {
@@ -299,14 +299,14 @@ describe('the rest of the command surface', () => {
 
   it('answers a typo with the usage rather than a server nobody is speaking to', () => {
     /*
-     * The failure this prevents: `flowsnap-mcp instal` falls through to server
+     * The failure this prevents: `devflow-mcp-server instal` falls through to server
      * mode, binds the port, sits on a stdio transport with no client, and looks
      * to the person who typed it like a command that hung.
      */
     const result = run(machine({}), ['instal']);
 
     expect(result.code).toBe(2);
-    expect(result.out).toContain('npx flowsnap-mcp install');
+    expect(result.out).toContain('npx devflow-mcp-server install');
     expect(result.calls).toEqual([]);
   });
 
@@ -314,6 +314,6 @@ describe('the rest of the command surface', () => {
     const result = run(machine({}), ['--help']);
 
     expect(result.code).toBe(0);
-    expect(result.out).toContain('register for every project you open');
+    expect(result.out).toContain('register globally for every project you open');
   });
 });

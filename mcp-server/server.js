@@ -1,22 +1,22 @@
 #!/usr/bin/env node
 /**
- * FlowSnap MCP server — recorded browser flows, as tools Claude can call.
+ * DevFlow MCP server — recorded browser flows, as tools Claude can call.
  *
  * LOCAL (default): stdio MCP, plus an HTTP receiver on 127.0.0.1:7734 that the
  * Chrome extension POSTs recordings to.
  *
- *   npx flowsnap-mcp install
+ *   npx devflow-mcp-server install
  *
- * which is `claude mcp add flowsnap --scope user -- npx -y flowsnap-mcp` with
+ * which is `claude mcp add devflow --scope user -- npx -y devflow-mcp-server` with
  * the scope no longer something a person can leave off. See `install.js`.
  *
  * REMOTE: SSE MCP and the receiver on $PORT, for a hosted deployment.
  *
  *   MCP_MODE=remote node server.js
  *
- * Flows are written to ~/.flowsnap/flows, not next to this file: under npx the
+ * Flows are written to ~/.devflow/flows, not next to this file: under npx the
  * package lives in a cache directory that gets cleared without warning, which
- * would take every recording with it. FLOWSNAP_DIR overrides the location.
+ * would take every recording with it. DEVFLOW_DIR overrides the location.
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -54,7 +54,7 @@ import {
  *
  * Everything below makes a directory, reads a config file and binds a port, all
  * at the top level, because that is what a server started by an MCP client
- * should do the moment it is started. `npx flowsnap-mcp install` should do none
+ * should do the moment it is started. `npx devflow-mcp-server install` should do none
  * of it: it is a person at a terminal registering the server, not Claude Code
  * launching it, and a setup command that leaves a listener behind is a setup
  * command with a side effect nobody asked for.
@@ -71,9 +71,9 @@ if (process.argv.length > 2) {
 
 const { version: VERSION } = createRequire(import.meta.url)('./package.json');
 const REMOTE = process.env.MCP_MODE === 'remote';
-const HOME = process.env.FLOWSNAP_DIR
-  ? path.resolve(process.env.FLOWSNAP_DIR)
-  : path.join(os.homedir(), '.flowsnap');
+const HOME = process.env.DEVFLOW_DIR
+  ? path.resolve(process.env.DEVFLOW_DIR)
+  : path.join(os.homedir(), '.devflow');
 const FLOWS_DIR = path.join(HOME, 'flows');
 // The port is `mcp.port`, and it is settled below, once the settings layer that
 // decides it exists — see `HTTP_PORT`.
@@ -146,7 +146,7 @@ const ORPHAN_GRACE_MS = 60 * 60 * 1000;
  *     installation* and cannot sensibly be carried by one recording: a flow
  *     arriving from another browser profile, or read a month after it was made,
  *     has no business saying how much disk this machine keeps. That is
- *     `~/.flowsnap/config.json`, which `POST /config` writes and this file
+ *     `~/.devflow/config.json`, which `POST /config` writes and this file
  *     re-reads. The three keys are `machine: true` in the extension's field
  *     table, and that flag is the endpoint's whole allow-list.
  *
@@ -180,7 +180,7 @@ const CONFIG_FILE = path.join(HOME, 'config.json');
  *
  * A table rather than a derivation from the key, so renaming a setting cannot
  * silently move an environment variable somebody's launcher already sets.
- * `FLOWSNAP_MAX_TOKENS` predates the mechanism and keeps its name.
+ * `DEVFLOW_MAX_TOKENS` predates the mechanism and keeps its name.
  *
  * The last three are the machine-wide keys. They used to be read straight from
  * `process.env` further up this file, which is why `config.json` naming one had
@@ -190,15 +190,15 @@ const CONFIG_FILE = path.join(HOME, 'config.json');
  * itself is served and no settings layer may move it.
  */
 const ENV_SETTINGS = {
-  FLOWSNAP_MAX_TOKENS: 'mcp.maxTokens',
-  FLOWSNAP_RAW: 'mcp.raw',
-  FLOWSNAP_MAX_IMAGES: 'mcp.maxImages',
-  FLOWSNAP_BODY_LIMIT: 'mcp.bodyLimit',
-  FLOWSNAP_MAX_RESPONSE_BODY: 'mcp.maxResponseBody',
-  FLOWSNAP_MAX_CONSOLE_ENTRIES: 'mcp.maxConsoleEntries',
-  FLOWSNAP_PORT: 'mcp.port',
-  FLOWSNAP_MAX_FLOWS: 'mcp.maxFlows',
-  FLOWSNAP_MAX_BYTES: 'mcp.maxFlowBytes',
+  DEVFLOW_MAX_TOKENS: 'mcp.maxTokens',
+  DEVFLOW_RAW: 'mcp.raw',
+  DEVFLOW_MAX_IMAGES: 'mcp.maxImages',
+  DEVFLOW_BODY_LIMIT: 'mcp.bodyLimit',
+  DEVFLOW_MAX_RESPONSE_BODY: 'mcp.maxResponseBody',
+  DEVFLOW_MAX_CONSOLE_ENTRIES: 'mcp.maxConsoleEntries',
+  DEVFLOW_PORT: 'mcp.port',
+  DEVFLOW_MAX_FLOWS: 'mcp.maxFlows',
+  DEVFLOW_MAX_BYTES: 'mcp.maxFlowBytes',
 };
 
 /**
@@ -230,7 +230,7 @@ function coerceEnv(field, raw) {
  * The environment layer.
  *
  * A variable that cannot be read is logged and dropped, never silently ignored:
- * `FLOWSNAP_RAW=maybe` producing the default while looking set is exactly the
+ * `DEVFLOW_RAW=maybe` producing the default while looking set is exactly the
  * "appears to work and quietly uses the compiled-in value" failure the whole
  * mechanism is built against, and stderr is the only surface this process has.
  * An out-of-range *number* is not dropped — `resolve` clamps it, and is logged
@@ -316,7 +316,7 @@ let MACHINE_RENDERING = flowRendering(MACHINE_RESOLVED);
  * A clamp is announced for the same reason an unreadable environment variable
  * is: a number that quietly became a different number is what this is written
  * against. Only for keys this build knows — an unknown key belongs to a newer
- * FlowSnap and is not this server's to complain about.
+ * DevFlow and is not this server's to complain about.
  */
 function applyMachineSettings(config) {
   MACHINE_SETTINGS = { ...config, ...envOverrides() };
@@ -441,7 +441,7 @@ const bodyLimitFor = (render, full) => (full ? render.bodyLimit * 4 : render.bod
 await fs.mkdir(FLOWS_DIR, { recursive: true });
 
 function log(message) {
-  process.stderr.write(`FlowSnap: ${message}\n`);
+  process.stderr.write(`DevFlow: ${message}\n`);
 }
 
 // ── Flow shape ─────────────────────────────────────────────────────────────
@@ -551,7 +551,7 @@ function withheld(flow) {
   const names = missing.map((section) => (section === 'network' ? 'network calls' : 'console logs'));
   return (
     `"${flow.name}" was sent without its ${names.join(' or ')}, so this tool cannot tell whether anything failed — ` +
-    'it is not reporting a clean run. Re-send the flow from the FlowSnap extension with those switches on.'
+    'it is not reporting a clean run. Re-send the flow from the DevFlow extension with those switches on.'
   );
 }
 
@@ -935,8 +935,8 @@ async function saveFlow(flow) {
      *
      * Kept verbatim, and not validated against anything here: it is a sparse
      * set of the *sender's* overrides, and a server that dropped a key it did
-     * not recognise would silently unlabel a flow recorded by a newer FlowSnap
-     * than itself, which `npx -y flowsnap-mcp` makes an ordinary situation
+     * not recognise would silently unlabel a flow recorded by a newer DevFlow
+     * than itself, which `npx -y devflow-mcp-server` makes an ordinary situation
      * rather than a corner case. `describeStamp` prints what it can name and
      * prints the rest raw.
      *
@@ -1020,18 +1020,18 @@ async function readFlow(id) {
    *
    * The receiver refuses a POST it is too old to understand, which covers the
    * flow arriving — and covers nothing about the flow already on disk. The
-   * directory outlives any one server: `npx -y flowsnap-mcp` resolves to
+   * directory outlives any one server: `npx -y devflow-mcp-server` resolves to
    * whatever npm has cached, a second checkout can run an older build against
-   * the same `~/.flowsnap`, and a downgrade is one `npm install` away. In every
+   * the same `~/.devflow`, and a downgrade is one `npm install` away. In every
    * one of those an older server reads a newer flow, finds the fields it knows,
    * and answers questions about it with confidence — which is the one failure
    * this file spends the rest of its length refusing.
    */
   if (Number(json.schemaVersion ?? 1) > SUPPORTED_SCHEMA) {
     throw new UnsupportedFlow(
-      `"${json.name ?? id}" was recorded in format v${json.schemaVersion}, and flowsnap-mcp ` +
+      `"${json.name ?? id}" was recorded in format v${json.schemaVersion}, and devflow-mcp-server ` +
         `${VERSION} understands up to v${SUPPORTED_SCHEMA}. Reading it would mean guessing at ` +
-        `fields this build does not know. Update the server: npx -y flowsnap-mcp@latest`,
+        `fields this build does not know. Update the server: npx -y devflow-mcp-server@latest`,
     );
   }
 
@@ -1159,7 +1159,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(
       JSON.stringify({
         ok: true,
-        service: 'flowsnap-mcp',
+        service: 'devflow-mcp',
         version: VERSION,
         mode: REMOTE ? 'remote' : 'local',
         flowsDir: FLOWS_DIR,
@@ -1193,7 +1193,7 @@ const httpServer = http.createServer(async (req, res) => {
    *
    * `deleteFlow` cleared `chrome.storage` and never contacted the server, so a
    * recording the user deleted — perhaps *because* they noticed it captured a
-   * session token in a response body — stayed in `~/.flowsnap/flows` and was
+   * session token in a response body — stayed in `~/.devflow/flows` and was
    * still handed to Claude by the very next `list_flows`. The row vanished and
    * the extension reported success, which is the worst version of not deleting
    * something.
@@ -1201,7 +1201,7 @@ const httpServer = http.createServer(async (req, res) => {
   if (req.method === 'DELETE' && req.url?.startsWith('/flows/')) {
     if (!extensionOrigin(req)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Flows may only be deleted by the FlowSnap extension.' }));
+      res.end(JSON.stringify({ error: 'Flows may only be deleted by the DevFlow extension.' }));
       return;
     }
 
@@ -1294,7 +1294,7 @@ const httpServer = http.createServer(async (req, res) => {
         JSON.stringify({
           error:
             'This server is running in remote mode. Machine-wide settings there come from ' +
-            'the environment it was launched with (FLOWSNAP_PORT, FLOWSNAP_MAX_FLOWS, FLOWSNAP_MAX_BYTES).',
+            'the environment it was launched with (DEVFLOW_PORT, DEVFLOW_MAX_FLOWS, DEVFLOW_MAX_BYTES).',
         }),
       );
       return;
@@ -1302,7 +1302,7 @@ const httpServer = http.createServer(async (req, res) => {
 
     if (!extensionOrigin(req)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Settings may only be posted by the FlowSnap extension.' }));
+      res.end(JSON.stringify({ error: 'Settings may only be posted by the DevFlow extension.' }));
       return;
     }
 
@@ -1430,7 +1430,7 @@ const httpServer = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/flows') {
     if (!extensionOrigin(req)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Flows may only be posted by the FlowSnap extension.' }));
+      res.end(JSON.stringify({ error: 'Flows may only be posted by the DevFlow extension.' }));
       return;
     }
 
@@ -1467,8 +1467,8 @@ const httpServer = http.createServer(async (req, res) => {
         res.end(
           JSON.stringify({
             error:
-              `This flow uses format v${flow.schemaVersion}, and flowsnap-mcp ${VERSION} understands ` +
-              `up to v${SUPPORTED_SCHEMA}. Update the server: npx -y flowsnap-mcp@latest`,
+              `This flow uses format v${flow.schemaVersion}, and devflow-mcp-server ${VERSION} understands ` +
+              `up to v${SUPPORTED_SCHEMA}. Update the server: npx -y devflow-mcp-server@latest`,
           }),
         );
         return;
@@ -1530,7 +1530,7 @@ httpServer.listen(HTTP_PORT, REMOTE ? '0.0.0.0' : '127.0.0.1', () => {
 
 // ── MCP server (server → Claude) ───────────────────────────────────────────
 
-const mcpServer = new Server({ name: 'flowsnap', version: VERSION }, { capabilities: { tools: {} } });
+const mcpServer = new Server({ name: 'devflow', version: VERSION }, { capabilities: { tools: {} } });
 
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -2066,7 +2066,7 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       const flows = await listAllFlows();
       if (!flows.length) {
         return text(
-          `No flows recorded yet (looking in ${FLOWS_DIR}). Record one in the FlowSnap Chrome extension and press Send — it will appear here.`,
+          `No flows recorded yet (looking in ${FLOWS_DIR}). Record one in the DevFlow Chrome extension and press Send — it will appear here.`,
         );
       }
 

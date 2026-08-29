@@ -1,11 +1,11 @@
 {
-  "name": "flowsnap-mcp",
+  "name": "devflow-mcp-server",
   "version": "3.0.0",
-  "description": "MCP server exposing browser flows recorded by the FlowSnap Chrome extension — steps, console errors, network calls and screenshots — to Claude Code.",
+  "description": "MCP server exposing browser flows recorded by the DevFlow Chrome extension — steps, console errors, network calls and screenshots — to Claude Code.",
   "type": "module",
   "main": "server.js",
   "bin": {
-    "flowsnap-mcp": "server.js"
+    "devflow-mcp": "server.js"
   },
   "files": [
     "server.js",
@@ -21,17 +21,17 @@
     "claude",
     "claude-code",
     "browser-automation",
-    "flow-recorder",
+    "devflow",
     "debugging"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ansh-n-chovatiya/Flow-Recorder.git",
+    "url": "git+https://github.com/ansh-n-chovatiya/DevFlow.git",
     "directory": "mcp-server"
   },
-  "homepage": "https://github.com/ansh-n-chovatiya/Flow-Recorder#readme",
+  "homepage": "https://github.com/ansh-n-chovatiya/DevFlow#readme",
   "bugs": {
-    "url": "https://github.com/ansh-n-chovatiya/Flow-Recorder/issues"
+    "url": "https://github.com/ansh-n-chovatiya/DevFlow/issues"
   },
   "engines": {
     "node": ">=20.11"

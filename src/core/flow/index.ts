@@ -24,13 +24,13 @@ export function sanitizeFilename(name: string): string {
     name
       .replace(/[/\\:*?"<>|]/g, '')
       .trim()
-      .replace(/^\.+|\.+$/g, '') || 'flowsnap-flow'
+      .replace(/^\.+|\.+$/g, '') || 'devflow-flow'
   );
 }
 
-/** Default export filename: `flowsnap-flow-2026-08-15`. */
+/** Default export filename: `devflow-flow-2026-08-15`. */
 export function defaultFilename(now = new Date()): string {
-  return `flowsnap-flow-${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  return `devflow-flow-${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
 }
 
 /** Millisecond delta as `+1.2s` or `+1m 3s`. Empty string for negative deltas. */

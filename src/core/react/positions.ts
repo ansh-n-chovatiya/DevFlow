@@ -5,7 +5,7 @@
  *
  * The two extensions DevFlow merges disagreed about what a line number is.
  * react-source-locator was 0-based end to end — source maps are 0-based, and it
- * never converted. FlowSnap converts once, at the source-map edge
+ * never converted. DevFlow converts once, at the source-map edge
  * (`lookupOriginal`), so everything downstream of that edge is 1-based, which is
  * what an editor, a stack trace and a human all expect.
  *

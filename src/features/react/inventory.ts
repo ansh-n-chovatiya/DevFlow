@@ -2,7 +2,7 @@
  * Which scripts a page loaded, so the resolver knows what to search.
  *
  * react-source-locator got this for free from
- * `chrome.devtools.inspectedWindow.getResources()`. FlowSnap has no DevTools
+ * `chrome.devtools.inspectedWindow.getResources()`. DevFlow has no DevTools
  * page, so the page itself reports what it loaded — a `PerformanceObserver` on
  * `resource` entries plus `document.scripts` — and this module folds those
  * deltas into something the worker can keep.

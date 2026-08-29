@@ -22,7 +22,7 @@ export default defineConfig({
     lib: {
       entry: resolve(import.meta.dirname, 'src/content/index.ts'),
       formats: ['iife'],
-      name: 'FlowSnapContent',
+      name: 'DevFlowContent',
       fileName: () => 'content.js',
     },
   },

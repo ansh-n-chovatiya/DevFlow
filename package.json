@@ -11,9 +11,10 @@
     "devtools",
     "react",
     "source-map",
-    "flow-recorder",
+    "devflow",
     "mcp",
-    "ai-context"
+    "ai-context",
+    "debugging"
   ],
   "engines": {
     "node": ">=20.11"

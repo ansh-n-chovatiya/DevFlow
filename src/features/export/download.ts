@@ -235,9 +235,9 @@ export async function exportFlow(input: ExportRequest): Promise<Result<string>> 
   }
 }
 
-/** The default filename's flow-specific half: `flowsnap-github-com-2026-08-15`. */
+/** The default filename's flow-specific half: `devflow-github-com-2026-08-15`. */
 export function suggestFilename(steps: Step[], date = new Date()): string {
   const host = flowHost(steps).replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
   const day = `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-  return host ? `flowsnap-${host}-${day}` : `flowsnap-flow-${day}`;
+  return host ? `devflow-${host}-${day}` : `devflow-flow-${day}`;
 }

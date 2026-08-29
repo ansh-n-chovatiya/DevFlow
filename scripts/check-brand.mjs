@@ -17,7 +17,7 @@
  *
  * §4.5 bans former product names *in strings a person reads* — titles, labels,
  * error sentences, settings copy, console prefixes — and explicitly keeps
- * provenance: "Ported from FlowSnap's `table.ts`" is the record of where this
+ * provenance: "Ported from DevFlow's `table.ts`" is the record of where this
  * code came from and is worth having. A grep cannot tell those apart. A scanner
  * that removes comments and then greps can: what is left is string literals,
  * HTML text and markup, which is very nearly the definition of "a string a
@@ -37,13 +37,13 @@
  *     none of them can be found this way.
  *   - **Anything outside `src/` and `public/`** — `mcp-server/`, the vite
  *     configs, the workflows, this repo's docs. Deliberate (see above), and the
- *     reason `mcp-server/` keeps `flowsnap-mcp`: that is a published npm
+ *     reason `mcp-server/` keeps `devflow-mcp-server`: that is a published npm
  *     package name, not a word on a screen.
- *   - **Lowercase `flowsnap`.** `~/.flowsnap`, `flowsnap-mcp` and
- *     `flowsnap/settings-1` are identifiers a shipped, installed thing already
+ *   - **Lowercase `devflow`.** `~/.devflow`, `devflow-mcp-server` and
+ *     `devflow/settings-1` are identifiers a shipped, installed thing already
  *     answers to; renaming them would break every existing install for a word
- *     no user reads as a brand. The `FlowSnap` rule is case-sensitive on
- *     purpose, and that is a real hole: `Flowsnap` in a sentence would pass.
+ *     no user reads as a brand. The `DevFlow` rule is case-sensitive on
+ *     purpose, and that is a real hole: `Devflow` in a sentence would pass.
  *   - **An image, an icon or a screenshot** that has the old name drawn in it.
  *
  * So a green run means "no banned string is written literally in shipped text".
@@ -82,43 +82,35 @@ const BANNED = [
  * `projectRoot` policy silently stop applying the day it upgraded. So the
  * migration reads the legacy key forever, and the gate says so by name.
  */
-const EXEMPT = new Map([['rst:settings', ['src/features/settings/migrate.ts']]]);
+const EXEMPT = new Map([
+  ['rst:settings', ['src/features/settings/migrate.ts']],
+]);
 
 /** The former product name, banned in text a person reads. Case-sensitive. */
 const FORMER = 'FlowSnap';
 
 /**
- * Files still shipping `FlowSnap` in a string, owned by the serial pass that
+ * Files still shipping `DevFlow` in a string, owned by the serial pass that
  * closes Wave 3.
  *
- * Every entry is a `console.warn('FlowSnap: …')`-shaped developer string or a
+ * Every entry is a `console.warn('DevFlow: …')`-shaped developer string or a
  * settings sentence, in a file two other Wave 3 packages are rewriting right
  * now — sweeping them from here would have collided with work in flight and
  * cost a sibling session its branch.
  *
- * **This list only ever shrinks, and it exempts only the `FlowSnap` rule.** The
+ * **This list only ever shrinks, and it exempts only the `DevFlow` rule.** The
  * five patterns above have no exemption but the one above. A file on this list
  * is not unguarded: it is guarded against everything except the one string it
  * is already known to carry, and the run prints the count so an empty list is
  * the visible goal rather than a forgotten one.
  */
-const PENDING = [
-  'src/background/annotator.ts',
-  'src/background/index.ts',
-  'src/features/settings/fields.ts',
-  'src/features/settings/file.ts',
-  'src/features/settings/index.ts',
-  'src/ui/settings/components.ts',
-  'src/ui/settings/file-view.ts',
-  'src/ui/settings/view.ts',
-  'src/ui/viewer/dom.ts',
-];
+const PENDING = [];
 
 /**
  * The file with comments blanked out, newlines and offsets preserved.
  *
  * Character-wise rather than regex, because the regex version has a false
- * *negative*: `'https://x/FlowSnap'` is a string containing `//`, and stripping
+ * *negative*: `'https://x/DevFlow'` is a string containing `//`, and stripping
  * from the first `//` to end of line would delete the violation instead of
  * reporting it. Comment characters become spaces so the line numbers this
  * prints are the line numbers in the editor.
@@ -192,7 +184,8 @@ function hits(text, needle) {
   const found = [];
 
   text.split('\n').forEach((line, index) => {
-    if (line.includes(needle)) found.push({ line: index + 1, source: line.trim() });
+    if (line.includes(needle))
+      found.push({ line: index + 1, source: line.trim() });
   });
 
   return found;
@@ -232,7 +225,7 @@ for (const file of files) {
   for (const hit of speech) {
     console.error(
       `${file}:${hit.line}  ${FORMER} in text a person reads — ` +
-        'use the product\'s own vocabulary (CONTRACTS §4). A comment recording ' +
+        "use the product's own vocabulary (CONTRACTS §4). A comment recording " +
         'where this code came from is provenance and is allowed; this is not one.',
     );
     console.error(`    ${hit.source}`);

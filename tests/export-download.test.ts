@@ -71,7 +71,7 @@ describe('the object URL outlives the click', () => {
       title: 'Checkout',
       format: 'json',
       options: OPTIONS,
-      filename: 'flowsnap-test',
+      filename: 'devflow-test',
     });
 
     expect(written.ok).toBe(true);
@@ -92,7 +92,7 @@ describe('flow.json carries the flow name', () => {
       title: 'Checkout · attempt 2',
       format: 'json',
       options: OPTIONS,
-      filename: 'flowsnap-test',
+      filename: 'devflow-test',
     });
 
     const json = JSON.parse(await created[0].text()) as { name?: string };

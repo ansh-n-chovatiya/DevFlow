@@ -106,7 +106,7 @@ describe('the four concepts', () => {
       const title = concept.title.toLowerCase();
       expect(title, concept.id).not.toContain('locator');
       expect(title, concept.id).not.toContain('recorder');
-      expect(title, concept.id).not.toContain('flowsnap');
+      expect(title, concept.id).not.toContain('devflow');
     }
   });
 });

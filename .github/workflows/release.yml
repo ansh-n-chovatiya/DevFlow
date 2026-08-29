@@ -79,13 +79,13 @@ jobs:
             ### Connect it to Claude Code
 
             ```sh
-            claude mcp add flowsnap --scope user -- npx -y flowsnap-mcp
+            claude mcp add devflow --scope user -- npx -y devflow-mcp-server
             ```
 
             One command, every project, CLI and VS Code alike. Record a flow,
             press **Send**, and ask Claude about it.
 
-            See the [changelog](https://github.com/ansh-n-chovatiya/Flow-Recorder/blob/main/CHANGELOG.md) for what changed.
+            See the [changelog](https://github.com/ansh-n-chovatiya/DevFlow/blob/main/CHANGELOG.md) for what changed.
 
       # Still useful on a manual dispatch, where no release is created.
       - uses: actions/upload-artifact@v4
@@ -98,7 +98,7 @@ jobs:
       #
       # The version is guaranteed to equal the tag by the check at the top of
       # this job, so pushing a tag is the only thing needed to publish.
-      - name: Publish flowsnap-mcp to npm
+      - name: Publish devflow-mcp-server to npm
         if: startsWith(github.ref, 'refs/tags/v')
         working-directory: mcp-server
         run: |
@@ -119,9 +119,9 @@ jobs:
           # a red pipeline for a release that is already correct. Empty output
           # covers both an unpublished version and a package that does not
           # exist yet, which exit codes alone do not distinguish.
-          PUBLISHED=$(npm view "flowsnap-mcp@$VERSION" version 2>/dev/null || true)
+          PUBLISHED=$(npm view "devflow-mcp-server@$VERSION" version 2>/dev/null || true)
           if [ -n "$PUBLISHED" ]; then
-            echo "::notice::flowsnap-mcp@$VERSION is already on npm — nothing to publish."
+            echo "::notice::devflow-mcp-server@$VERSION is already on npm — nothing to publish."
             exit 0
           fi
 
@@ -130,7 +130,7 @@ jobs:
           # A token is how the package gets published the first time — trusted
           # publishing is configured *on* a package, so it cannot bootstrap one.
           if [ -n "$NODE_AUTH_TOKEN" ]; then
-            echo "Publishing flowsnap-mcp@$VERSION with NPM_TOKEN."
+            echo "Publishing devflow-mcp-server@$VERSION with NPM_TOKEN."
             npm publish --access public --provenance
           else
             echo "No NPM_TOKEN — authenticating with trusted publishing (OIDC)."

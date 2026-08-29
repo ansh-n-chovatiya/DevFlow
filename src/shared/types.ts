@@ -198,7 +198,7 @@ export type StepType = 'click' | 'input' | 'navigate' | 'note';
  * separate process that has no settings table of its own.
  *
  * `unknown`, not a union of the value types, on purpose: a key from a newer
- * FlowSnap can hold anything at all, and `resolve()` is the only thing allowed
+ * DevFlow can hold anything at all, and `resolve()` is the only thing allowed
  * to decide what it means.
  */
 export type Overrides = Readonly<Record<string, unknown>>;
@@ -381,7 +381,7 @@ export interface FlowPayload {
   /**
    * The settings the flow was made under, sparse and flat-dotted.
    *
-   * This is the single most important part of making FlowSnap configurable: a
+   * This is the single most important part of making DevFlow configurable: a
    * flow recorded at quality 20 with bodies off is indistinguishable from a
    * flow where capture failed, and a reader with no way to tell concludes the
    * latter. With it, the walkthrough opens by saying what was in force.
@@ -628,7 +628,7 @@ export interface SyncStorageShape {
    * `HideableCategory` (`core/react/classify.ts`).
    *
    * Flat dotted keys in storage — `locator.hidden.routing` and friends — because
-   * DevFlow keeps FlowSnap's sparse-override model, where a nested object would
+   * DevFlow keeps DevFlow's sparse-override model, where a nested object would
    * be one value that cannot be partially overridden. This nested shape is the
    * *resolved* view; `features/settings/` owns the flattening. All default true:
    * an ancestor chain is mostly routers and providers, and hiding them is what

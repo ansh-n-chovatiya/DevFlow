@@ -103,28 +103,22 @@ module), and `src/core/` bundled into the MCP server package as plain Node ESM.
 
 ## Giving a flow to Claude Code
 
-The MCP server is a separate npm package. Register it once, for every project:
+The MCP server (`devflow-mcp-server`) lets Claude Code inspect flows recorded by DevFlow. You only need to set it up **once globally** on your machine — no need to run setup commands in individual projects:
 
 ```sh
-npx flowsnap-mcp install
+npx devflow-mcp-server install
 ```
 
-That runs `claude mcp add flowsnap --scope user -- npx -y flowsnap-mcp`. The
-scope flag is the whole reason the command exists: `claude mcp add` defaults to
-*this directory*, so the same line typed without it gives you a server that works
-in one folder and is silently absent everywhere else. `install` never takes a
-scope.
+That runs `claude mcp add devflow --scope user -- npx -y devflow-mcp-server`. The
+user-scope flag registers the server globally, making it immediately available across all your repositories and workspaces without any per-project setup.
 
-Then record a flow and press **Send to Claude**. It lands in `~/.flowsnap/flows`
+Then record a flow in DevFlow and press **Send to Claude**. It lands in `~/.devflow/flows`
 and Claude can read it immediately — `get_flow_errors` for just what broke,
-`get_latest_flow` for what you just did, `compare_flows` for a working run beside
+`get_latest_flow` for what you just did, and `compare_flows` for a working run beside
 a broken one. Screenshots are written to disk and referenced by absolute path, so
 a 500-step recording costs nothing in context until a specific image is opened.
 
-The package is not named after the extension, and keeps the name it publishes
-under: renaming it would leave every project that has already registered it
-pointing at a package that no longer exists, and nothing would say so. See
-[`mcp-server/README.md`](mcp-server/README.md) for its tools, its retention
+See [`mcp-server/README.md`](mcp-server/README.md) for its tools, its retention
 ceilings and how it is configured.
 
 ---
@@ -161,7 +155,7 @@ response budget, how many screenshots a call returns, how much of a body is
 quoted — is a property of the *recording*, so it is stamped into the flow and the
 server renders that flow under it. Three settings cannot travel that way because
 they are true of the machine rather than of any flow: the port and the two
-retention ceilings. Those live in `~/.flowsnap/config.json`, which the extension
+retention ceilings. Those live in `~/.devflow/config.json`, which the extension
 writes for you.
 
 ---

@@ -611,7 +611,7 @@ function captureNavigationStep(): void {
  *
  * A single-page app moves between routes by `pushState`, which loads no
  * document, starts no content script and fires no `popstate` — so a React flow,
- * which is most of what FlowSnap records, came out as a run of clicks with
+ * which is most of what DevFlow records, came out as a run of clicks with
  * nothing to say the page had changed underneath them. This is what notices.
  */
 let lastUrl = window.location.href;
@@ -919,7 +919,7 @@ function requestScreenshotAndSave(step: DraftStep, eventTime?: number, el?: Elem
 // ── On-page indicator ────────────────────────────────────────────────────────
 
 /**
- * Depth of nested capture requests. The indicator is FlowSnap's own UI, and
+ * Depth of nested capture requests. The indicator is DevFlow's own UI, and
  * `captureVisibleTab` photographs whatever is on screen — so without hiding it,
  * every screenshot the tool has ever taken contains its own badge, which then
  * ships to an AI as if it were part of the recorded page.

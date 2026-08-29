@@ -111,7 +111,7 @@ describe('what is sent, and where', () => {
 describe('what the row says afterwards', () => {
   const port = fieldFor('mcp.port') as Field;
   const reply = {
-    file: '/home/u/.flowsnap/config.json',
+    file: '/home/u/.devflow/config.json',
     effective: { 'mcp.port': 9000 },
     overridden: [],
     restart: null,
@@ -120,7 +120,7 @@ describe('what the row says afterwards', () => {
   it('names the file when there is nothing else to say', () => {
     const note = machineNote(port, 9000, 'http://127.0.0.1:7734/flows', reply);
     expect(note.tone).toBe('success');
-    expect(note.text).toContain('/home/u/.flowsnap/config.json');
+    expect(note.text).toContain('/home/u/.devflow/config.json');
   });
 
   it('says the file was not written when nothing answered', () => {
@@ -143,11 +143,11 @@ describe('what the row says afterwards', () => {
     const note = machineNote(port, 9000, 'http://127.0.0.1:7734/flows', {
       ...reply,
       effective: { 'mcp.port': 7734 },
-      overridden: [{ key: 'mcp.port', by: 'FLOWSNAP_PORT', using: 7734 }],
+      overridden: [{ key: 'mcp.port', by: 'DEVFLOW_PORT', using: 7734 }],
     });
 
     expect(note.tone).toBe('danger');
-    expect(note.text).toContain('FLOWSNAP_PORT');
+    expect(note.text).toContain('DEVFLOW_PORT');
     expect(note.text).toContain('7734');
   });
 
@@ -237,7 +237,7 @@ beforeEach(() => {
     ok: true,
     body: {
       ok: true,
-      file: '/home/u/.flowsnap/config.json',
+      file: '/home/u/.devflow/config.json',
       applied: {},
       effective: {},
       ignored: [],
@@ -302,7 +302,7 @@ describe('changing the port, on the screen', () => {
     await commit('mcp.port', '9000');
 
     expect(noteOf('mcpServerUrl')).toContain('7734');
-    expect(noteOf('mcp.port')).toContain('/home/u/.flowsnap/config.json');
+    expect(noteOf('mcp.port')).toContain('/home/u/.devflow/config.json');
   });
 
   it('leaves a remote address alone, and says so rather than moving it', async () => {

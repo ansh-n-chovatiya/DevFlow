@@ -1,5 +1,5 @@
 /**
- * Generates extension PNG icons from the FlowSnap mark geometry.
+ * Generates extension PNG icons from the DevFlow mark geometry.
  */
 
 import { deflateSync } from 'node:zlib';

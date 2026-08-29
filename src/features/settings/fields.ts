@@ -1,5 +1,5 @@
 /**
- * Every setting FlowSnap has, as data.
+ * Every setting DevFlow has, as data.
  *
  * One entry per Tier 1 and Tier 2 setting. The table is the single description
  * of a setting: it drives the `Settings`
@@ -363,7 +363,7 @@ export const FIELDS = [
     default: "system",
     title: "Theme",
     description:
-      "Whether FlowSnap follows the operating system or is pinned to light or dark. In the DevTools panel, “System” means the theme DevTools itself is set to, which DevTools lets you choose independently of the OS; a light or dark choice here wins on every surface.",
+      "Whether DevFlow follows the operating system or is pinned to light or dark. In the DevTools panel, “System” means the theme DevTools itself is set to, which DevTools lets you choose independently of the OS; a light or dark choice here wins on every surface.",
     consumers: ["content", "ui"],
     wired: true,
   },
@@ -1220,7 +1220,7 @@ export const FIELDS = [
     title: "Bundles fetched at once",
     description: "Bundles fetched at once while resolving.",
     consequence:
-      "These fetches share the page’s connections. Above about eight, the app’s own requests queue behind FlowSnap’s while the user is still recording.",
+      "These fetches share the page’s connections. Above about eight, the app’s own requests queue behind DevFlow’s while the user is still recording.",
     consequenceWhen: { above: 8 },
     consumers: ["worker"],
     wired: true,
@@ -1489,9 +1489,9 @@ export const FIELDS = [
     unit: "flows",
     title: "Keep at most N flows",
     description:
-      "A runaway guard on this machine’s ~/.flowsnap, not a retention policy — the shipped ceiling sits far above any plausible working set, because losing a recording somebody still wanted is the worse failure.",
+      "A runaway guard on this machine’s ~/.devflow, not a retention policy — the shipped ceiling sits far above any plausible working set, because losing a recording somebody still wanted is the worse failure.",
     consequence:
-      "Lowering it deletes: the sweep after the next send removes the oldest recordings from ~/.flowsnap until this many are left, and a recording that has been swept is gone from the disk the MCP server reads.",
+      "Lowering it deletes: the sweep after the next send removes the oldest recordings from ~/.devflow until this many are left, and a recording that has been swept is gone from the disk the MCP server reads.",
     consequenceWhen: { below: MCP_MAX_FLOWS },
     consumers: ["mcp"],
     machine: true,
@@ -1817,7 +1817,7 @@ export function conceptInfo(concept: Concept): ConceptInfo {
   const found = BY_CONCEPT.get(concept);
   // Unreachable while `CONCEPTS` satisfies the union — the same guarantee, and
   // the same reason, as `groupInfo` below.
-  if (!found) throw new Error(`FlowSnap: no such settings concept: ${concept}`);
+  if (!found) throw new Error(`DevFlow: no such settings concept: ${concept}`);
   return found;
 }
 
@@ -1861,7 +1861,7 @@ export const GROUPS = [
     concept: "recording",
     title: "Screenshots",
     description:
-      "Every step carries a picture. These decide how good it is and how long FlowSnap waits for the page to settle before taking it.",
+      "Every step carries a picture. These decide how good it is and how long DevFlow waits for the page to settle before taking it.",
   },
   {
     id: "network",
@@ -1933,7 +1933,7 @@ export function groupInfo(group: Group): GroupInfo {
   const found = BY_GROUP.get(group);
   // Unreachable while `GROUPS` satisfies the union — the cast in the map's key
   // type is what makes that a compile error rather than a blank heading.
-  if (!found) throw new Error(`FlowSnap: no such settings group: ${group}`);
+  if (!found) throw new Error(`DevFlow: no such settings group: ${group}`);
   return found;
 }
 
@@ -2039,7 +2039,7 @@ export function isRenderedKey(key: string): key is RenderedKey {
 /** The keys that reach the server through `POST /config` — see `Common.machine`. */
 export type MachineKey = Extract<Entry, { machine: true }>["key"];
 
-/** What `~/.flowsnap/config.json` is allowed to decide. */
+/** What `~/.devflow/config.json` is allowed to decide. */
 export type MachineSettings = Pick<Settings, MachineKey>;
 
 /**

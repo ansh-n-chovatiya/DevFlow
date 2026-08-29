@@ -167,12 +167,12 @@ export function leanCalls(step: Step, bodies?: BodyLimits): Step {
  * tokens, which is the difference the Screenshots switch makes to what Claude
  * reads, and the difference a user is entitled to see move when they touch it.
  *
- * The real path is `<home>/.flowsnap/flows/<id>/screenshots/step-NN.jpg` and the
+ * The real path is `<home>/.devflow/flows/<id>/screenshots/step-NN.jpg` and the
  * home directory is the server's, not something the browser can know. This is
  * that shape at a representative length, which is what an estimate prefixed
  * with `~` is allowed to be.
  */
-const SCREENSHOT_DIR = '/Users/you/.flowsnap/flows/flow-1700000000000/screenshots';
+const SCREENSHOT_DIR = '/Users/you/.devflow/flows/flow-1700000000000/screenshots';
 
 const screenshotPath = (index: number): string =>
   `${SCREENSHOT_DIR}/step-${String(index + 1).padStart(2, '0')}.jpg`;
@@ -315,7 +315,7 @@ export function bodyLimits(settings: Overrides): RenderLimits {
 /** What to paste into Claude. Pure, so the wording is one place. */
 export function buildPrompt(id: string, steps: Step[], first: string | undefined): string {
   return (
-    `Call get_flow("${id}") now (flowsnap MCP) — ${steps.length}-step recording` +
+    `Call get_flow("${id}") now (devflow MCP) — ${steps.length}-step recording` +
     `${first ? ` @ ${first}` : ''}. Read the steps, identify what the user did or what broke, then help.`
   );
 }

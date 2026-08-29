@@ -1,16 +1,16 @@
 /**
- * `flowsnap-mcp install` — register this server once, for every project.
+ * `devflow-mcp-server install` — register this server once, for every project.
  *
  * The setup was always one line and the line was always right:
  *
- *   claude mcp add flowsnap --scope user -- npx -y flowsnap-mcp
+ *   claude mcp add devflow --scope user -- npx -y devflow-mcp-server
  *
  * `--scope user` is the whole of it, and it is also the whole of the problem:
  * `claude mcp add` defaults to `local` scope, which means *this directory*. Drop
  * the flag — copy the command without it, retype it from memory, follow a blog
- * post that omits it — and FlowSnap works in the folder you set it up in and
+ * post that omits it — and DevFlow works in the folder you set it up in and
  * nowhere else. Nothing announces that. Every other project just reports no
- * flowsnap tools, which reads as the extension being broken rather than the
+ * devflow tools, which reads as the extension being broken rather than the
  * registration being narrow.
  *
  * A flag that must be right and cannot be checked is not a good place to keep a
@@ -32,7 +32,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 /** The server's name in every scope, and what the extension's docs all say. */
-const NAME = 'flowsnap';
+const NAME = 'devflow';
 
 /**
  * What gets registered, always: the published package, run through npx.
@@ -40,9 +40,9 @@ const NAME = 'flowsnap';
  * Not the path to this file. A registration pointing into an `npx` cache is a
  * registration that stops working the day the cache is cleared, and one
  * pointing into a clone stops working the day the clone moves — which is the
- * single most common way a FlowSnap setup breaks, and it breaks silently.
+ * single most common way a DevFlow setup breaks, and it breaks silently.
  */
-const ARGS = ['npx', '-y', 'flowsnap-mcp'];
+const ARGS = ['npx', '-y', 'devflow-mcp-server'];
 
 /* Windows resolves a bare command name through the shell; POSIX does not, and
  * running the shell there would mean quoting every argument. */
@@ -92,7 +92,7 @@ function isOurs(entry) {
 }
 
 /**
- * Every flowsnap registration on this machine, and the scope each sits in.
+ * Every devflow registration on this machine, and the scope each sits in.
  *
  * The three scopes are three different places, and knowing which one answered
  * is the entire diagnosis when a session cannot see the server:
@@ -198,7 +198,7 @@ export function install({ force = false } = {}) {
       warn(`${NAME} is already registered at user scope, pointing somewhere else`);
       detail(describe(user.entry));
       detail('leave it, or replace it with the published package:');
-      detail('  npx flowsnap-mcp install --force');
+      detail('  npx devflow-mcp-server install --force');
       reportShadows(found);
       blank();
       return 1;
@@ -265,15 +265,15 @@ export function uninstall() {
 }
 
 export function usage() {
-  out(`flowsnap-mcp — recorded browser flows, as tools Claude can call.
+  out(`devflow-mcp-server — recorded browser flows, as tools Claude can call.
 
-  npx flowsnap-mcp install      register for every project you open
-  npx flowsnap-mcp install --force
+  npx devflow-mcp-server install      register globally for every project you open
+  npx devflow-mcp-server install --force
                                 replace a user-scope registration that points elsewhere
-  npx flowsnap-mcp uninstall    remove the user-scope registration
-  npx flowsnap-mcp              run the server (what Claude Code does)
+  npx devflow-mcp-server uninstall    remove the user-scope registration
+  npx devflow-mcp-server              run the server (what Claude Code does)
 
-Flows are read from ~/.flowsnap/flows. FLOWSNAP_DIR moves them.`);
+Flows are read from ~/.devflow/flows. DEVFLOW_DIR moves them.`);
 }
 
 /** Dispatch for the verbs `server.js` hands over. Returns the exit code. */

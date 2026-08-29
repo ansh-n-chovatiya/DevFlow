@@ -19,7 +19,7 @@ export default defineConfig({
     lib: {
       entry: resolve(import.meta.dirname, 'src/injected/agent.ts'),
       formats: ['iife'],
-      name: 'FlowSnapAgent',
+      name: 'DevFlowAgent',
       fileName: () => 'agent.js',
     },
   },

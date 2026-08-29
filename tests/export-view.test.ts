@@ -34,7 +34,7 @@ function input(over: Partial<ExportInput> = {}): ExportInput {
     steps: [step({ screenshot: IMAGE, networkCalls: [call()] })],
     format: 'zip',
     options: { images: true, network: true, logs: true, react: true },
-    filename: 'flowsnap-example-com-2026-08-15',
+    filename: 'devflow-example-com-2026-08-15',
     busy: false,
     progress: null,
     ...over,
@@ -151,8 +151,8 @@ describe('the filename', () => {
   });
 
   it('falls back rather than producing a file called ".zip"', () => {
-    expect(deriveExportView(input({ filename: '   ' })).filename).toMatch(/^flowsnap-flow-/);
-    expect(deriveExportView(input({ filename: '///' })).filename).toBe('flowsnap-flow');
+    expect(deriveExportView(input({ filename: '   ' })).filename).toMatch(/^devflow-flow-/);
+    expect(deriveExportView(input({ filename: '///' })).filename).toBe('devflow-flow');
   });
 
   it('carries the extension the format requires', () => {

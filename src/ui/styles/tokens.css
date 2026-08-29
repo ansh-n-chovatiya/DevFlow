@@ -1,7 +1,7 @@
 /*
  * DevFlow design tokens.
  *
- * FlowSnap's table, extended in Wave 0 with what the locator panel needs. The
+ * DevFlow's table, extended in Wave 0 with what the locator panel needs. The
  * additions are grouped and labelled below; nothing from the locator's own
  * design-system file (navy surfaces, electric blue, Inter/JetBrains Mono) came
  * across, because a panel that keeps its own palette is a panel that still reads
@@ -9,13 +9,13 @@
  *
  * Two collisions were resolved here rather than left to the port:
  *
- *   - **`--gutter` meant two different things** (D6). FlowSnap's is a 32px page
+ *   - **`--gutter` meant two different things** (D6). DevFlow's is a 32px page
  *     gutter; the locator's was a 12px panel gutter. Same name, three-fold
  *     difference in scale, and merging the stylesheets naively rescales the
- *     entire panel. FlowSnap's is untouched; the panel's is `--pad-panel`.
+ *     entire panel. DevFlow's is untouched; the panel's is `--pad-panel`.
  *   - **The category palette was 45 raw colour literals** in the locator's
  *     `result.css`, declared there because that file was where they were used.
- *     `lint:tokens` forbids that, so they live here, re-derived from FlowSnap's
+ *     `lint:tokens` forbids that, so they live here, re-derived from DevFlow's
  *     data-colour ramp rather than ported. Categories are data, not decoration —
  *     the same rule that keeps HTTP methods and console levels off the accent.
  *

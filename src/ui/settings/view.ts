@@ -202,7 +202,7 @@ const DEPENDENCIES: readonly Dependency[] = [
     /*
      * Depends on two, one of them the switch directly above it.
      *
-     * Summarising a body it does not have is not a thing FlowSnap can do, so a
+     * Summarising a body it does not have is not a thing DevFlow can do, so a
      * threshold that stayed live while bodies were switched off would be a
      * number with no effect and no explanation — the same shape as the custom
      * editor template below, and the same answer.
@@ -402,7 +402,7 @@ function survives(entry: RowModel, query: Query): boolean {
  * Tier 1 goes to its group; tier 2 goes to Advanced regardless of its group,
  * because Advanced is a place on the screen rather than a property of a
  * row — the point of the disclosure is that a bad value in there looks like
- * FlowSnap being broken, and that is true of all of them at once.
+ * DevFlow being broken, and that is true of all of them at once.
  */
 export function settingsModel({
   settings,
@@ -536,7 +536,7 @@ export const RECORDING_NOTE =
 
 /** The Advanced disclosure, collapsed. */
 export const ADVANCED_NOTE =
-  'These change how recording behaves, and a bad value looks like FlowSnap being broken.';
+  'These change how recording behaves, and a bad value looks like DevFlow being broken.';
 
 /** The persistent banner over the group once it is open. */
 export const ADVANCED_WARNING =
@@ -631,7 +631,7 @@ export interface MachineReply {
 }
 
 /** Named before the server has answered, when there is no `reply.file` to quote. */
-const CONFIG_FILE_NAME = '~/.flowsnap/config.json';
+const CONFIG_FILE_NAME = '~/.devflow/config.json';
 
 /**
  * What changing the port did to the address — the other side of the same

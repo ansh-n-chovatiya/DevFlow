@@ -2,7 +2,7 @@
  * The bundle provider that works with DevTools closed.
  *
  * One of the two implementations of `BundleProvider` (`core/react/provider.ts`,
- * frozen in Wave 0). This is FlowSnap's strategy, lifted out of
+ * frozen in Wave 0). This is DevFlow's strategy, lifted out of
  * `features/react/resolver.ts` where it used to be four module-level variables:
  * the page reports which scripts it loaded (`inventory.ts`), and the worker
  * fetches them itself.

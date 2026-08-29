@@ -103,7 +103,7 @@ function put(home: string, id: string, settings: Record<string, unknown> | null)
 
 /** A directory holding both flows and their screenshots. */
 function makeHome(config?: unknown): string {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsnap-settings-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'devflow-settings-'));
 
   put(home, 'plain', null);
   put(home, 'stamped', STAMP);
@@ -170,9 +170,9 @@ beforeAll(async () => {
         'mcp.maxResponseBody': 300,
       },
       env: {
-        FLOWSNAP_RAW: 'true',
-        FLOWSNAP_MAX_IMAGES: '2',
-        FLOWSNAP_MAX_CONSOLE_ENTRIES: '2',
+        DEVFLOW_RAW: 'true',
+        DEVFLOW_MAX_IMAGES: '2',
+        DEVFLOW_MAX_CONSOLE_ENTRIES: '2',
       },
     }),
   ]);
@@ -263,7 +263,7 @@ describe('the environment beats config.json', () => {
   });
 
   it('leaves the layers below it in force for a key it does not carry', async () => {
-    // `FLOWSNAP_MAX_RESPONSE_BODY` is unset, so config.json's 300 still applies
+    // `DEVFLOW_MAX_RESPONSE_BODY` is unset, so config.json's 300 still applies
     // — the chain is per key, not per layer. A layer that replaced the whole
     // object would silently reset the three settings it said nothing about.
     const page = await overridden.call('get_flow', { id: 'stamped' });
@@ -297,10 +297,10 @@ describe('what a bad value does', () => {
   it('refuses an environment boolean that is neither, rather than guessing', async () => {
     // Every truthiness test in JavaScript reads `'maybe'` as `true`. Guessing
     // here would turn every response on this machine into a raw one, silently.
-    const loud = await server({ env: { FLOWSNAP_RAW: 'maybe' } });
+    const loud = await server({ env: { DEVFLOW_RAW: 'maybe' } });
     const page = await loud.call('get_flow', { id: 'plain' });
 
-    expect(loud.stderr()).toContain('ignoring FLOWSNAP_RAW=maybe');
+    expect(loud.stderr()).toContain('ignoring DEVFLOW_RAW=maybe');
     expect(page).not.toContain('```json');
   });
 
@@ -310,8 +310,8 @@ describe('what a bad value does', () => {
     ['off', false],
     ['1', true],
     ['yes', true],
-  ])('reads FLOWSNAP_RAW=%s as a boolean', async (value, expected) => {
-    const session = await server({ env: { FLOWSNAP_RAW: value } });
+  ])('reads DEVFLOW_RAW=%s as a boolean', async (value, expected) => {
+    const session = await server({ env: { DEVFLOW_RAW: value } });
     const page = await session.call('get_flow', { id: 'plain' });
 
     expect(page.includes('```json')).toBe(expected);
@@ -375,7 +375,7 @@ describe('the machine-wide half of the chain', () => {
    */
 
   it('binds the port config.json names', async () => {
-    // Started with no FLOWSNAP_PORT at all, so the file is the only thing that
+    // Started with no DEVFLOW_PORT at all, so the file is the only thing that
     // can have decided this. `/health` answering there is the whole assertion:
     // an extension that cannot reach the port sees exactly nothing.
     const port = await freePort();
@@ -385,7 +385,7 @@ describe('the machine-wide half of the chain', () => {
     servers.push(session);
 
     const health = await fetch(`http://127.0.0.1:${port}/health`).then((res) => res.json());
-    expect(health).toMatchObject({ service: 'flowsnap-mcp', mode: 'local' });
+    expect(health).toMatchObject({ service: 'devflow-mcp', mode: 'local' });
     expect(session.stderr()).toContain(`listening on ${port}`);
   });
 
@@ -402,7 +402,7 @@ describe('the machine-wide half of the chain', () => {
 
   it('evicts by the cap in the file rather than the shipped one', async () => {
     /*
-     * `MAX_FLOWS` was `Number(process.env.FLOWSNAP_MAX_FLOWS) || 200` and
+     * `MAX_FLOWS` was `Number(process.env.DEVFLOW_MAX_FLOWS) || 200` and
      * nothing else, which the plan calls effectively unreachable: setting it
      * meant editing the launcher of a process the user never starts by hand.
      *

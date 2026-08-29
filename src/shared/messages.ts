@@ -442,7 +442,7 @@ export interface AgentReactMessage {
 /**
  * Script URLs seen in the page, as a delta.
  *
- * react-source-locator asks DevTools for the page's resources. FlowSnap has no
+ * react-source-locator asks DevTools for the page's resources. DevFlow has no
  * DevTools page, so the page reports them itself — a `PerformanceObserver` with
  * `buffered: true`, which replays what loaded before recording started, plus
  * `document.scripts` for the tags the observer's buffer may have dropped.

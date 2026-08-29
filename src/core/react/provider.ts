@@ -8,7 +8,7 @@
  * The locator's only hard dependency on being a DevTools panel was
  * `chrome.devtools.inspectedWindow.getResources()` — the list of scripts the
  * inspected page loaded, and their text, straight out of the DevTools cache.
- * FlowSnap has no DevTools page at all, so it had already solved the same
+ * DevFlow has no DevTools page at all, so it had already solved the same
  * problem the other way: `features/react/inventory.ts` collects script URLs from
  * the page itself (a `PerformanceObserver` over resource entries, plus
  * `document.scripts`), keyed by origin, and the worker fetches them.
@@ -25,7 +25,7 @@
  *   is bundled into `mcp-server/core.js` for a Node process with no `chrome`
  *   object, so a `fetch` or a `chrome.*` in here fails `npm run build:mcp` — the
  *   purity rule is CI-enforced, not a convention. The locator's two module-level
- *   caches and FlowSnap's budgeted resolver cache both move behind this
+ *   caches and DevFlow's budgeted resolver cache both move behind this
  *   interface, where each can keep the eviction policy its surface needs.
  * - **Every method resolves, never rejects.** A bundle that cannot be read is
  *   `null`, which is an ordinary outcome: a cross-origin script with no CORS
@@ -60,7 +60,7 @@ export interface BundleProvider {
  *
  * Named here rather than in each implementation because the point of the merge
  * is that these stopped being two numbers: the locator hardcoded
- * `FETCH_CONCURRENCY = 6` while FlowSnap made the same quantity a Tier 2 setting
+ * `FETCH_CONCURRENCY = 6` while DevFlow made the same quantity a Tier 2 setting
  * at `react.resolveConcurrency`. A provider is constructed with this, so there is
  * one place a wrong value can come from and one place to look when it does.
  */

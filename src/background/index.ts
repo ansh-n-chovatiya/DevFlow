@@ -1016,7 +1016,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
      * and with nobody on that screen, has no other path.
      *
      * Only when the file actually named one. A push for an import that touched
-     * none of the three would overwrite a hand-edited `~/.flowsnap/config.json`
+     * none of the three would overwrite a hand-edited `~/.devflow/config.json`
      * for nothing.
      */
     if (applied.value === null) return;

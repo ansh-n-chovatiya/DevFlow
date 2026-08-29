@@ -1,4 +1,4 @@
-app = "flowsnap-mcp"
+app = "devflow-mcp"
 primary_region = "sin"
 
 [build]

@@ -150,7 +150,7 @@ export function resolve(
 /**
  * The overrides `resolve` did not recognise, kept verbatim.
  *
- * A settings file written by a newer FlowSnap imports, is ignored by `resolve`,
+ * A settings file written by a newer DevFlow imports, is ignored by `resolve`,
  * and is still there when the same profile is exported again. This is the
  * function that makes the second half of that true.
  */
