@@ -1,26 +1,42 @@
 /**
- * React fiber walking, for the MAIN-world agent.
+ * React fiber walking: from a DOM node to the component that rendered it.
  *
- * Ported from react-source-locator `src/injected/fiber.ts` @ 6eb7a30.
+ * The one fiber walk. It existed twice, and the difference between its two
+ * callers — a passive recorder listening on `document`, and a picker resolving
+ * whatever the user just clicked — is the whole of D2.
  *
- * Deliberate divergences from upstream, all because this runs inside a *passive
- * recorder* rather than behind an explicit "pick this element" action:
+ *   **D2 · `force` is required and has no default.** Resolving a `React.lazy`
+ *   type that has not settled means calling `_init`, which can start a dynamic
+ *   `import()`. On a pick that is exactly right: the user asked for this
+ *   component, and fetching its chunk is what they asked for. On the capture
+ *   path it is a bug with no symptom — the act of recording changes what the
+ *   page loads, and the flow stops describing the session it claims to. One copy
+ *   passed `true` on every pick; the other removed the flag so that nothing
+ *   could. Neither behaviour is portable to the other caller, so `getComponentFn`
+ *   takes `{ force }` with no default: every call site says which of the two it
+ *   is, or does not compile. `collectChain`, which is the capture path, passes
+ *   `false`, and `tests/react-fiber.test.ts` asserts that `_init` is never
+ *   reached through it.
  *
- *   1. **Lazy components are never forced.** Upstream passes `force = true` on a
- *      pick, which calls `_init()` and can start a dynamic `import()`. Here that
- *      would mean the act of recording changes what the page loads, so the flow
- *      no longer describes the session it claims to. An unresolved lazy
- *      component is reported by name and nothing more.
- *   2. **No DOM-node collection.** Upstream needs every host node a component
- *      renders in order to draw hover highlights. Nothing here highlights.
- *   3. **Shadow roots are crossed, in both directions.** `climb` hops from the
- *      top of a shadow root to its host, and `interactionTarget` reads the
- *      composed path rather than the retargeted `event.target`. Upstream picks
- *      an element the user pointed at, so it never meets either problem; a
- *      passive listener on `document` meets both. Worth back-porting.
+ * Two things the recorder's copy had learned that the picker's had not, both
+ * kept here:
  *
- * DOM-facing but free of `chrome.*` and module state, like `core/selector` and
- * `core/describe` — which is what lets it be tested in jsdom.
+ *   - **Shadow roots are crossed, in both directions.** `climb` hops from the
+ *     top of a shadow root to its host, and `interactionTarget` reads the
+ *     composed path rather than the retargeted `event.target`. A picker takes
+ *     the element the user pointed at, so it meets neither problem; a passive
+ *     listener on `document` meets both.
+ *   - **Host fibers are never chain entries.** See `collectChain` — the bug that
+ *     rule exists for is written out there, because it is the worst this feature
+ *     has had.
+ *
+ * And one the picker's had that the recorder had no use for, kept because the
+ * merged product highlights again: `getFirstDOMNode` and `getAllDOMNodes`, which
+ * are what a hover highlight is sized from.
+ *
+ * DOM-facing but free of `chrome.*` and of module state, like `core/selector`
+ * and `core/describe` — which is what lets it be tested in jsdom, and what keeps
+ * it inside `core/`.
  */
 
 import { MAX_COMPONENT_CHAIN, MAX_FIBER_WALK } from '../../shared/constants.js';
@@ -55,9 +71,28 @@ interface LazyPayload {
 
 export interface WrapperType {
   _payload?: LazyPayload;
+  /** `React.lazy`'s initialiser. Calling it can start a dynamic import — see D2. */
+  _init?: (payload: LazyPayload) => unknown;
   displayName?: string;
   render?: ComponentFn;
   type?: ComponentFn;
+}
+
+/**
+ * Whether an unsettled `React.lazy` payload may be initialised.
+ *
+ * There is no default, and that is the mechanism rather than an oversight: the
+ * two callers of this module want opposite answers and both are right, so the
+ * only safe shape is one that does not compile until a call site has said which
+ * it is. See D2 in the header.
+ */
+export interface LazyOptions {
+  /**
+   * True only when a person asked for this component and is waiting on it — the
+   * picker. False everywhere the walk is a side effect of something else the
+   * page was already doing.
+   */
+  force: boolean;
 }
 
 /** Keys React stamps on a host node, and on a root container. */
@@ -76,30 +111,46 @@ export function getFiber(el: Element): Fiber | null {
 }
 
 /**
- * Resolves an already-settled `React.lazy` type, and only that.
+ * Resolves a `React.lazy` type to the component behind it.
  *
- * Upstream takes a `force` flag; this deliberately has none, so there is no call
- * site that can start an import by accident. `_status === 1` means the payload
- * resolved on its own, which is the only case we read.
+ * `_status === 1` means the payload settled on its own, and reading it costs
+ * nothing. Anything else needs `_init`, which is the call D2 is about — so it
+ * happens only where a caller has asked for it in so many words.
+ *
+ * An `_init` that throws is a payload still pending or already rejected, and
+ * comes back as "no function" rather than propagating: the walk describes what
+ * is on the page, and a chunk that has not arrived is a fact about the page
+ * rather than a failure of the walk.
  */
-export function unwrapSettledLazy(type: WrapperType): ComponentFn | null {
+export function unwrapLazy(type: WrapperType, { force }: LazyOptions): ComponentFn | null {
   const payload = type._payload;
-  if (!payload || payload._status !== 1) return null;
+  if (!payload) return null;
 
-  const resolved: unknown = payload._result;
+  let resolved: unknown = null;
+  if (payload._status === 1) {
+    resolved = payload._result;
+  } else if (force && typeof type._init === 'function') {
+    try {
+      resolved = type._init(payload);
+    } catch {
+      return null;
+    }
+  }
+
+  if (!resolved) return null;
   if (typeof resolved === 'function') return resolved as ComponentFn;
 
-  const asModule = resolved as { default?: unknown } | null;
-  if (asModule && typeof asModule.default === 'function') return asModule.default as ComponentFn;
+  const asModule = resolved as { default?: unknown };
+  if (typeof asModule.default === 'function') return asModule.default as ComponentFn;
   return null;
 }
 
-export function getComponentFn(fiber: Fiber): ComponentFn | null {
+export function getComponentFn(fiber: Fiber, options: LazyOptions): ComponentFn | null {
   const type = fiber.type as WrapperType | ComponentFn | null;
   if (!type) return null;
 
   if (typeof type === 'function') return type;
-  if (type._payload) return unwrapSettledLazy(type);
+  if (type._payload) return unwrapLazy(type, options);
 
   if (typeof type.render === 'function') return type.render; // forwardRef
   if (typeof type.type === 'function') return type.type; // memo
@@ -113,7 +164,10 @@ export function getDisplayName(fiber: Fiber): string {
   if (typeof type === 'function') return type.displayName || type.name || ANONYMOUS_NAME;
 
   if (type._payload) {
-    const inner = unwrapSettledLazy(type);
+    // Never forces, whatever the caller of `getComponentFn` decided. Putting a
+    // name on a screen is not a reason to make the page fetch a chunk, and if a
+    // pick already forced it the payload has settled by the time this reads it.
+    const inner = unwrapLazy(type, { force: false });
     return inner ? inner.displayName || inner.name || ANONYMOUS_NAME : UNSETTLED_LAZY_NAME;
   }
 
@@ -201,21 +255,42 @@ export function interactionTarget(event: Event): Element | null {
 /**
  * Walks up from a DOM element to the nearest fiber backed by a component.
  *
+ * Never forces a lazy payload, on either caller's behalf. This is the search for
+ * *which* fiber to ask about rather than the answer, and a component nobody has
+ * chosen yet is no reason to fetch a chunk. A picker forces afterwards, on the
+ * one fiber it settled on.
+ *
  * `walkLimit` is `react.maxFiberWalk`, defaulted to the compiled-in constant so
- * that every caller that has no settings in hand — the tests, and the fiber
- * walk's own recursion — still gets the shipped answer. The agent passes its
- * pushed config; see `chainFor` in `injected/agent.ts`.
+ * that every caller with no settings in hand — the tests, and the walk's own
+ * recursion — still gets the shipped answer. The agent passes its pushed config;
+ * see `chainFor` in `injected/agent.ts`.
+ *
+ * `cache` belongs to the caller, not to this module: `core/` holds no module
+ * state, and a hover highlight re-runs this on every animation frame over the
+ * same handful of nodes. It is keyed by element alone, so a caller that changes
+ * `walkLimit` between calls must not carry one across the change.
  */
-export function findNearestComponentFiber(el: Element, walkLimit = MAX_FIBER_WALK): Fiber | null {
+export function findNearestComponentFiber(
+  el: Element,
+  walkLimit = MAX_FIBER_WALK,
+  cache?: WeakMap<Element, Fiber | null>,
+): Fiber | null {
+  const cached = cache?.get(el);
+  if (cached !== undefined) return cached;
+
+  let result: Fiber | null = null;
   let node: Element | null = el;
 
-  while (node && node !== node.ownerDocument.documentElement) {
+  outer: while (node && node !== node.ownerDocument.documentElement) {
     const fiber = getFiber(node);
     if (fiber) {
       let f: Fiber | null = fiber;
       let walked = 0;
       while (f && walked < walkLimit) {
-        if (getComponentFn(f)) return f;
+        if (getComponentFn(f, { force: false })) {
+          result = f;
+          break outer;
+        }
         f = f.return;
         walked++;
       }
@@ -223,7 +298,64 @@ export function findNearestComponentFiber(el: Element, walkLimit = MAX_FIBER_WAL
     node = climb(node);
   }
 
+  cache?.set(el, result);
+  return result;
+}
+
+/**
+ * The first host DOM node a component fiber renders, used to size a highlight.
+ *
+ * Breadth-first from the fiber's children, because the nearest host node down
+ * any branch is the one whose box covers what the component drew. A depth-first
+ * walk would return a deeply nested leaf of the first child instead, and outline
+ * a word where the reader expected a card.
+ */
+export function getFirstDOMNode(fiber: Fiber, walkLimit = MAX_FIBER_WALK): Element | null {
+  if (isElement(fiber.stateNode)) return fiber.stateNode;
+
+  const queue: (Fiber | null)[] = [fiber.child];
+  let visited = 0;
+
+  while (queue.length > 0 && visited < walkLimit) {
+    const f = queue.shift();
+    visited++;
+    if (!f) continue;
+    if (isElement(f.stateNode)) return f.stateNode;
+    queue.push(f.child, f.sibling);
+  }
   return null;
+}
+
+/**
+ * Every host node a component renders, so a highlight can cover a component that
+ * returns a fragment of siblings rather than one wrapper element.
+ *
+ * `limit` bounds the drawing rather than the walk: a component that renders a
+ * thousand rows does not need a thousand outlines to be recognisable, and the
+ * highlight has to stay cheap enough to redraw as the pointer moves.
+ */
+export function getAllDOMNodes(fiber: Fiber, limit = 64, walkLimit = MAX_FIBER_WALK): Element[] {
+  if (isElement(fiber.stateNode)) return [fiber.stateNode];
+
+  const found: Element[] = [];
+  const queue: (Fiber | null)[] = [fiber.child];
+  let visited = 0;
+
+  while (queue.length > 0 && visited < walkLimit && found.length < limit) {
+    const f = queue.shift();
+    visited++;
+    if (!f) continue;
+
+    if (isElement(f.stateNode)) {
+      // Descendants are inside this node already; only follow siblings.
+      found.push(f.stateNode);
+      queue.push(f.sibling);
+      continue;
+    }
+    queue.push(f.child, f.sibling);
+  }
+
+  return found;
 }
 
 export interface ChainEntry {
@@ -274,7 +406,10 @@ export function collectChain(
   let truncated = false;
 
   while (f && walked < walkLimit) {
-    const fn = getComponentFn(f);
+    // The capture path, and the reason `force` has no default: a passive
+    // recorder that initialised a lazy payload would make the act of recording
+    // change what the page loads.
+    const fn = getComponentFn(f, { force: false });
     // A lazy fiber and the fiber it resolved to share one function; keep one.
     const duplicate = fn !== null && entries.length > 0 && entries[entries.length - 1].fn === fn;
 

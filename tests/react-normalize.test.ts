@@ -42,6 +42,21 @@ describe('normalizeSourcePath', () => {
     );
   });
 
+  it('keeps a route group, which is a directory that exists on disk', () => {
+    // Only the layer markers in front of the compilation root are the
+    // bundler's; `(marketing)` deeper in the path is a Next.js route group and
+    // a real folder, so dropping it would produce a path that opens nothing.
+    expect(
+      normalizeSourcePath('webpack-internal:///(app-pages-browser)/./app/(marketing)/page.tsx'),
+    ).toBe('app/(marketing)/page.tsx');
+  });
+
+  it('drops a leading layer marker even with no root segment to cut at', () => {
+    expect(normalizeSourcePath('webpack-internal:///(app-pages-browser)/src/App.tsx')).toBe(
+      'src/App.tsx',
+    );
+  });
+
   it('collapses . and .. inside a path', () => {
     expect(normalizeSourcePath('src/components/../hooks/./useCart.ts')).toBe(
       'src/hooks/useCart.ts',

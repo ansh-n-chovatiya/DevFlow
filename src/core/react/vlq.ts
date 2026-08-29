@@ -1,26 +1,33 @@
 /**
  * Base64-VLQ decoding for source maps.
  *
- * Ported from react-source-locator `src/core/vlq.ts` @ 314488d.
+ * The one decoder. Both extensions DevFlow merges shipped this file and the two
+ * copies were code-identical apart from `findSegment`, which only the panel
+ * used; only the comments had drifted. Both sets of comments are here, because
+ * each half had learned something the other had not written down.
  *
- * One deliberate divergence, and it is the reason this file exists rather than
- * being copied verbatim: **decoding is streaming**. Upstream materialises every
- * segment of the whole map as an object graph, which a DevTools panel survives
- * and an MV3 service worker does not — a 30 MB map becomes hundreds of megabytes
- * of JS objects and the worker is killed mid-flow.
+ * **Decoding is streaming, and that is the whole design.** `decodeMappings`
+ * materialises every segment of a map as an object graph. On a real 9.3 MB map
+ * (Excalidraw: 896 sources, 2,671 generated lines, 413,460 segments) that costs
+ * **+54 MB of heap and 44 ms**. A DevTools panel survives that; an MV3 service
+ * worker is killed mid-flow by it. Either way it is 54 MB and 44 ms spent to
+ * answer one lookup.
  *
  * We only ever want one position. The VLQ fields are *cumulative deltas* across
- * the entire map, so earlier lines cannot be skipped — but their segments need
+ * the whole map, so earlier lines cannot be skipped — but their segments need
  * not be kept. `decodeLine` walks forward carrying only the running counters and
  * retains segments for the target line alone, then stops. Memory is O(one line)
- * instead of O(map), and on a minified bundle — everything on generated line 0 —
- * it is also dramatically faster, because it stops after the first line.
+ * instead of O(map); streaming the single largest line of that same map (54,964
+ * segments) costs 15 ms with no net heap growth. On a minified bundle —
+ * everything on generated line 0 — it also stops after the first line.
  *
- * `decodeMappings` is kept as the reference implementation: it is what the
- * streaming path is tested against, and it is small.
+ * `decodeMappings` and `findSegment` are kept: they are the reference the
+ * streaming path is tested against, and they are small. Nothing on either
+ * resolution path calls them.
  *
  * Source map `mappings` are semicolon-separated lines, comma-separated segments,
- * each segment 1, 4 or 5 base64-VLQ numbers. See https://tc39.es/ecma426/.
+ * each segment 1, 4 or 5 base64-VLQ numbers that are *deltas* from the previous
+ * segment. See https://tc39.es/ecma426/ §Mappings.
  *
  * Pure — no DOM, no Chrome.
  */
@@ -43,9 +50,9 @@ const COMMA = 44; // ','
 const SEMICOLON = 59; // ';'
 
 /**
- * A decoded mapping segment. All fields are 0-based, as the format defines them;
- * the conversion to the 1-based numbers humans read happens once, in
- * `sourcemap.ts`.
+ * A decoded mapping segment. All fields are 0-based, as the format defines them,
+ * and they stay that way: `lookupOriginal` hands back `Pos0` and the conversion
+ * to the numbers humans read happens at the surface that shows them (D1).
  *
  * `sourceIndex`/`originalLine`/`originalColumn` are absent for 1-field segments,
  * which mark generated code with no original counterpart.
@@ -280,4 +287,19 @@ export function findSegmentInLine(
   }
 
   return found === -1 ? null : segments[found];
+}
+
+/**
+ * The mapping covering `column` on `line` of a fully decoded map.
+ *
+ * Only the reference path and its tests reach this. Every lookup that answers a
+ * user's question goes through `decodeLine` + `findSegmentInLine` instead, for
+ * the reason in the header.
+ */
+export function findSegment(
+  decoded: DecodedMappings,
+  line: number,
+  column: number,
+): MappingSegment | null {
+  return findSegmentInLine(decoded[line] ?? null, column);
 }

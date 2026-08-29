@@ -6,6 +6,7 @@ import { resolve as resolveSettings } from '../src/features/settings/resolve.js'
 import { flowError } from '../src/shared/errors.js';
 import type { ComponentNeedle, ComponentSource } from '../src/shared/types.js';
 import { sourceMapJson } from './helpers/sourcemap-fixture.js';
+import { pos1 } from '../src/core/react/positions.js';
 
 /**
  * The shipped budget, derived from the field table rather than retyped.
