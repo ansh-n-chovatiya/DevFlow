@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -33,6 +35,14 @@ jobs:
       # deliberately has no extra step, so CI fails the day that hook stops
       # firing rather than papering over it.
       - run: npm ci
+
+      # A change to what ships has to be written down under ## Unreleased before
+      # it can be released.
+      - name: Changelog is documented
+        run: npm run lint:changelog
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
 
       - name: Typecheck
         run: npm run typecheck

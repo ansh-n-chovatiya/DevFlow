@@ -188,8 +188,12 @@ npm run verify   # typecheck · eslint · tokens · settings UI · graph config 
 ```
 
 `verify` is the gate; the pieces run on their own too (`npm run typecheck`,
-`npm test`, `npm run lint:tokens`, …). CI runs the same thing and additionally
+`npm test`, `npm run lint:tokens`, …). CI runs the same thing, enforces that changes to `src/` or `public/` are documented in `CHANGELOG.md` (`npm run lint:changelog`), and additionally
 loads the built `dist/` far enough to prove Chrome would accept it.
+
+Releases are cut on demand:
+- **GitHub Actions:** Run the **Release** workflow with your chosen bump (`patch`, `minor`, `major`).
+- **Locally:** Run `npm run release <patch|minor|major>` and push tags with `git push origin main --tags`.
 
 The layout, the invariants a change has to hold to and the gate behind each of
 them are in [`CLAUDE.md`](CLAUDE.md); the engine everything above shares is in

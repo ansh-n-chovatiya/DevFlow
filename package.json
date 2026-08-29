@@ -43,6 +43,8 @@
     "test:watch": "vitest",
     "graphify:setup": "node scripts/graphify-setup.mjs",
     "graphify:update": "graphify update .",
+    "lint:changelog": "node scripts/check-changelog.mjs",
+    "release": "node scripts/cut-release.mjs",
     "render": "node scripts/render.mjs",
     "sync-version": "node scripts/sync-version.mjs",
     "version": "npm run sync-version && git add public/manifest.json mcp-server/package.json mcp-server/package-lock.json",

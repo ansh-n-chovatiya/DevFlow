@@ -1,12 +1,30 @@
 name: Release
 
-# Tag a commit `v1.1.0` and push it — this verifies, builds, zips dist/, and
-# attaches the zip to a GitHub Release. That zip is what a non-developer
-# downloads: unzip it and load the folder unpacked, no toolchain needed.
+# Triggered either by pushing a tag (v1.1.0) or by manual trigger (workflow_dispatch)
+# with a bump type (patch, minor, major).
+#
+# Manual trigger:
+# - Renames ## Unreleased in CHANGELOG.md to the new version with today's date
+# - Bumps version in package.json, manifest, mcp-server & lockfiles
+# - Commits, tags, and pushes back to main
+# - Verifies, builds, zips dist/, attaches zip to GitHub Release, and publishes to npm
+#
+# Tag push:
+# - Verifies, builds, zips dist/, attaches zip to GitHub Release, and publishes to npm
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -18,6 +36,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -38,6 +59,21 @@ jobs:
       # has to be on disk before the tests run. The root `postinstall` installs
       # it, which is what keeps a fresh clone working for humans too.
       - run: npm ci
+
+      - name: Cut release and push tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/cut-release.mjs ${{ inputs.bump }}
+          git push origin HEAD:main --tags
+          VERSION=$(node -p "require('./package.json').version")
+          echo "TAG_NAME=v$VERSION" >> "$GITHUB_ENV"
+
+      - name: Set tag name for push event
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          echo "TAG_NAME=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
 
       # A release whose zip reports a different version than its tag is worse
       # than no release — Chrome shows the manifest version, not the tag. The
@@ -64,8 +100,9 @@ jobs:
         run: node scripts/package.mjs
 
       - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.TAG_NAME != ''
         with:
+          tag_name: ${{ env.TAG_NAME }}
           files: releases/*.zip
           generate_release_notes: true
           body: |
@@ -87,7 +124,7 @@ jobs:
 
             See the [changelog](https://github.com/ansh-n-chovatiya/DevFlow/blob/main/CHANGELOG.md) for what changed.
 
-      # Still useful on a manual dispatch, where no release is created.
+      # Still useful on a manual dispatch or artifact inspection.
       - uses: actions/upload-artifact@v4
         with:
           name: devflow
@@ -99,7 +136,7 @@ jobs:
       # The version is guaranteed to equal the tag by the check at the top of
       # this job, so pushing a tag is the only thing needed to publish.
       - name: Publish devflow-mcp-server to npm
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.TAG_NAME != ''
         working-directory: mcp-server
         run: |
           # `core.js` is `src/core/` bundled in by `npm run build:mcp`, which the
