@@ -3,8 +3,11 @@
 Merging **FlowSnap** (`Flow-Recorder`, 2.7.1) and **react-source-locator** (2.2.0) into one
 Chrome extension, on one shared React/source-map engine instead of two copies of one.
 
-> This file is the execution plan. When Wave 0 scaffolds the repo it becomes the product
-> README and this moves to `docs/MERGE-PLAN.md`.
+> **This is the execution plan, kept as the record of what was intended.** It is not
+> documentation of the product: the repo describes what shipped, and where the two
+> disagree the repo is right. `README.md` is the front door, `CLAUDE.md` the working
+> rules, `docs/CORE.md` the engine, and `docs/CONTRACTS.md` the Wave 0 freeze the
+> parallel sessions were built against.
 
 | | FlowSnap | react-source-locator | DevFlow |
 | --- | --- | --- | --- |

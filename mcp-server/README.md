@@ -4,7 +4,15 @@ Gives Claude Code the browser flow you just recorded — the clicks, the console
 errors, the failed requests and their bodies, and a screenshot of every step —
 so it can fix the bug in your project instead of being told about it.
 
-Pairs with the [FlowSnap Chrome extension](https://github.com/ansh-n-chovatiya/Flow-Recorder).
+Pairs with the DevFlow Chrome extension, which is what records the flows and
+posts them here.
+
+**On the name.** The package, its binary, the server's MCP name and the
+`~/.flowsnap` directory keep the names they were published under. A rename would
+leave every project that has already run `install` pointing at a package that no
+longer exists, and every recording anyone has kept in a directory nothing reads —
+and nothing would say so. The extension is DevFlow; this is the server it talks
+to.
 
 ## Install
 
@@ -18,7 +26,7 @@ alike. Nothing to clone, nothing to build, and safe to run again.
 It runs `claude mcp add flowsnap --scope user -- npx -y flowsnap-mcp` for you.
 That flag is the whole reason this command exists: `claude mcp add` defaults to
 `local` scope, which is *the current directory*, so the same line typed without
-it gives you a FlowSnap that works in one folder and is silently missing from
+it gives you a server that works in one folder and is silently missing from
 every other project. This never takes a scope — there is one right answer and it
 is compiled in.
 
@@ -32,7 +40,7 @@ is compiled in.
 If a project has its own `.mcp.json` naming `flowsnap`, that wins inside that
 directory. `install` says so and gives you the line that removes it.
 
-Then record a flow in the extension and press **Send**. It lands in
+Then record a flow in the extension and press **Send to Claude**. It lands in
 `~/.flowsnap/flows` and Claude can read it immediately.
 
 ## Tools
@@ -77,7 +85,7 @@ the POST response rather than disappearing quietly.
 | `mcp.maxFlows` | `200` | Recordings kept |
 | `mcp.maxFlowBytes` | `2147483648` | Bytes kept, screenshots included |
 
-Set either in FlowSnap's Settings, in `~/.flowsnap/config.json`, or as
+Set either in DevFlow's Settings, in `~/.flowsnap/config.json`, or as
 `FLOWSNAP_MAX_FLOWS` / `FLOWSNAP_MAX_BYTES` — see [Settings](#settings).
 
 Two ceilings because they fail differently: a handful of enormous flows blows the
@@ -112,7 +120,7 @@ file the extension exports:
 
 The extension writes it for you — changing one of the three in Settings posts it
 here — and you can edit it by hand. Keys it does not recognise are left alone,
-so a file written by a newer FlowSnap still works.
+so a file written by a newer DevFlow still works.
 
 **Precedence: environment variable > `config.json` > the flow's own stamp >
 default.** The environment is the last word so a CI or headless run is not
@@ -148,7 +156,7 @@ the rest log a line and serve from the same directory. Flows arrive once and
 every session sees them.
 
 If no session is open, nothing is listening and the send fails — the recording
-is still in the extension's library, so pressing Send again later works.
+is still in the extension's library, so sending it again later works.
 
 ## Privacy
 
