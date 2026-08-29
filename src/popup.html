@@ -2,7 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>FlowSnap</title>
+    <title>DevFlow</title>
+    <!-- One sheet: popup.css pulls in the shared shell and the result card. -->
     <link rel="stylesheet" href="./ui/popup/popup.css" />
   </head>
   <body>
@@ -17,7 +18,7 @@
           <rect class="brand__mark-plate" width="20" height="20" rx="6" />
           <path class="brand__mark-bolt" d="M11.4 3.4 5.9 11h3.2l-.5 5.6L14.1 9h-3.2z" />
         </svg>
-        <h1 class="brand__name">FlowSnap</h1>
+        <h1 class="brand__name">DevFlow</h1>
         <span id="brand-dot" class="rec-dot hidden"></span>
       </div>
       <button
@@ -41,7 +42,7 @@
 
       <!-- The tab a recording would target. -->
       <section id="s-target" class="target hidden">
-        <p class="label">Recording target</p>
+        <p id="target-label" class="label">Recording target</p>
         <div class="target__row">
           <img id="target-favicon" class="target__favicon hidden" alt="" />
           <span id="target-host" class="target__host truncate"></span>
@@ -114,6 +115,16 @@
         </div>
       </section>
 
+      <!--
+        The other half of what this extension does, offered as a peer of Start
+        rather than as a second product hidden behind DevTools. Pressing it
+        hands the gesture to a window of this same page — see main.ts.
+      -->
+      <button id="btn-locate" class="btn btn--secondary btn--lg hidden" type="button">
+        <span data-icon="crosshair"></span>
+        <span id="btn-locate-label">Locate component</span>
+      </button>
+
       <!-- A finished flow waiting to be opened. -->
       <section id="s-flow" class="card flow hidden">
         <p class="label">Current flow</p>
@@ -147,6 +158,56 @@
         <p class="empty__body">
           Press Start recording, then use the page as you normally would.
         </p>
+      </section>
+
+      <!--
+        The last component located, kept across popups.
+
+        A popup is dismissed by the click that does the picking, so the window
+        that asked is never the window that could have shown the answer. This is
+        the other half of that: the answer is written down, and the next time
+        this popup opens it is still here.
+      -->
+      <section id="s-recent" class="stack hidden">
+        <div class="section-head">
+          <p class="label">Recent</p>
+          <span id="recent-when" class="meta"></span>
+        </div>
+        <div id="recent-card"></div>
+      </section>
+
+      <!--
+        The locate window: this same document, opened in a window of its own so
+        it outlives the click that picks. Hidden in the toolbar popup, which is
+        the only body it never shares the page with.
+      -->
+      <section id="s-locate" class="stack hidden">
+        <div class="section-head">
+          <p class="label">Locate component</p>
+          <span id="locate-spinner" class="spinner hidden" aria-hidden="true"></span>
+        </div>
+
+        <p id="locate-status" class="meta" role="status"></p>
+
+        <div id="locate-notice" class="banner banner--warn hidden" role="status">
+          <span data-icon="triangle-alert" class="banner__icon"></span>
+          <div class="banner__body">
+            <p id="locate-notice-title" class="banner__title"></p>
+            <p id="locate-notice-body"></p>
+          </div>
+        </div>
+
+        <div id="locate-card"></div>
+
+        <button id="btn-pick" class="btn btn--primary btn--lg hidden" type="button">
+          <span data-icon="crosshair"></span>
+          <span id="btn-pick-label">Pick component</span>
+        </button>
+
+        <button id="btn-cancel-pick" class="btn btn--secondary btn--lg hidden" type="button">
+          <span>Cancel</span>
+          <kbd class="locate__kbd">Esc</kbd>
+        </button>
       </section>
     </main>
 
