@@ -247,6 +247,23 @@ a:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /*
+   * The spinner is the one exception, and it has to be stated before the
+   * blanket rule below or the cascade eats it.
+   *
+   * A spinner is not decoration: it is the product saying work is still
+   * happening. Collapsed to 0.01ms and one iteration it stops dead on its first
+   * frame while the work carries on, which reads as *hung* — the opposite of
+   * what it is there to say, and a worse answer for the reader than the motion
+   * was. react-source-locator had already found this and slowed its spinner
+   * rather than freezing it; 2.4s is unmistakably a rotation and far below the
+   * rate that provokes anything.
+   */
+  .spinner {
+    animation-duration: 2.4s !important;
+    animation-iteration-count: infinite !important;
+  }
+
   *,
   *::before,
   *::after {

@@ -55,3 +55,7 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 
+
+# Agent worktrees. Real git worktrees, not content — tracking them would
+# stage seven embedded repositories into this one.
+.claude/worktrees/
