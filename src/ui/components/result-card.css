@@ -1,0 +1,252 @@
+/*
+ * The shared result card.
+ *
+ * Pairs with `result-card.ts` the way `settings/components.css` pairs with
+ * `settings/components.ts`: every class below is written by exactly one function
+ * in that module, and nothing else declares one.
+ *
+ * It imports the shared sheet rather than assuming a host has already done so.
+ * The card renders in three places — the DevTools panel, the popup and the flow
+ * review — and one of them forgetting to link the tokens would give a card with
+ * no colours at all. Two other surfaces already `@import '../styles/index.css'`
+ * for the same reason; the bundler resolves the repeat to one copy.
+ *
+ * ### Why the block is `source-card` and not `result-card`
+ *
+ * The module is `result-card.ts` because that is what CONTRACTS and the merge
+ * plan call it and what G, H and K import. The CSS block is `source-card`
+ * because `.result-card` is already the panel's own name, in the `result.css`
+ * that Package E owns, for the *view* this card sits inside — and because two of
+ * the three surfaces that render this do not call it "a result" at all. The
+ * review calls it a step's source; the popup calls it what it located. The card
+ * renders one `ComponentSource`, and that is the name that survives on all three.
+ */
+
+@import '../styles/index.css';
+
+/*
+ * A card, in the shared sense — `.card` in components.css is the same surface,
+ * border and radius. It is not reused directly because this one owns its own
+ * internal rhythm: a stack with a tighter gap than a page card, since every row
+ * in it is one line about the row above it.
+ */
+.source-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--pad-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+
+  /*
+   * The card is dropped into containers of every width — a 300px DevTools dock,
+   * a 360px popup, a 1440px review column — and every child of it truncates or
+   * wraps. Without this the longest bundle URL becomes the container's minimum
+   * width and the whole surface scrolls sideways.
+   */
+  min-width: 0;
+}
+
+/* ── Head ───────────────────────────────────────────────────────────────── */
+
+.source-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/*
+ * The component mark. Muted rather than accented: it labels every card
+ * identically, so it carries no information and should not compete with the
+ * name beside it for attention.
+ */
+.source-card__mark {
+  color: var(--fg-faint);
+}
+
+.source-card__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-step-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+/*
+ * `dev build` / `source map` / `compiled`.
+ *
+ * Deliberately not a `.chip`: a chip is a categorical value from the model —
+ * a step type, an HTTP method — and carries a data colour. This is provenance,
+ * which is the same kind of fact for every card and so gets the same neutral
+ * treatment on all three of its values. Colouring `compiled` as a warning would
+ * be the card editorialising about an outcome the detail sentence already
+ * explains in words.
+ */
+.source-card__via {
+  margin-left: auto;
+  flex: none;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunk);
+  font-size: var(--text-label);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/*
+ * `node_modules`. A literal directory name, so it is set as machine text, and
+ * amber because it is a caution and not a failure: the path is correct, it is
+ * just not a file to go and edit.
+ */
+.source-card__dep {
+  flex: none;
+  padding: 1px var(--space-1);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-xs);
+  background: var(--warn-soft);
+  font-size: var(--text-label);
+  color: var(--warn);
+  white-space: nowrap;
+}
+
+/* Sized down from the shared 16px: it sits in a text row, not beside a heading. */
+.source-card__spinner {
+  margin-left: auto;
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+/* ── Path ───────────────────────────────────────────────────────────────── */
+
+/*
+ * The answer, and the copy affordance, in one control.
+ *
+ * A full-width well rather than a button beside the text: the path is the thing
+ * on the card most likely to be wanted somewhere else, and a target the width of
+ * the card is a target that does not have to be aimed at in a 300px dock.
+ */
+.source-card__path {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunk);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--transition),
+    background-color var(--transition);
+}
+
+.source-card__path:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+}
+
+/* No handler, no control: same well, no pointer, no hover, text selectable. */
+.source-card__path--static {
+  cursor: auto;
+}
+
+.source-card__path--static:hover {
+  border-color: var(--border);
+  background: var(--surface-sunk);
+}
+
+/*
+ * Truncated from the right, which is the wrong end for a path and the right one
+ * here. The card's paths are repo-relative or a bundle's own filename, so the
+ * distinguishing part is the file at the end — but the `line:column` is pinned
+ * to it, and losing "which line" to keep "which directory" is the worse trade in
+ * a control whose whole purpose is to be copied whole.
+ */
+.source-card__path-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-code);
+  color: var(--fg);
+}
+
+.source-card__path-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-faint);
+}
+
+.source-card__path:hover .source-card__path-icon {
+  color: var(--accent);
+}
+
+/*
+ * The bundle the component was found in. Muted, machine text, and truncated —
+ * it is provenance rather than an instruction, and a 200-character hashed chunk
+ * URL is normal here.
+ */
+.source-card__origin {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-meta);
+  color: var(--fg-faint);
+}
+
+/*
+ * The sentence that explains a non-`resolved` outcome.
+ *
+ * Full prose measure and full body leading, because it is the one part of the
+ * card that is read rather than scanned — and on eight of nine statuses it is
+ * the part that says what to do next. It gets --fg-muted rather than --fg-faint:
+ * faint is for provenance nobody has to read.
+ */
+.source-card__detail {
+  font-size: var(--text-meta);
+  line-height: var(--leading-body);
+  color: var(--fg-muted);
+  text-wrap: pretty;
+}
+
+/* ── Warning and actions ────────────────────────────────────────────────── */
+
+/*
+ * `.banner.banner--warn` supplies everything but the placement. Amber and not
+ * red on purpose: an ambiguous match is a path that is probably right and cannot
+ * be relied on, which is a caveat, not a failure — the file very likely opens.
+ */
+.source-card__ambiguity {
+  margin-top: var(--space-1);
+}
+
+.source-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/*
+ * Below this the two actions stack rather than shrink.
+ *
+ * `Open in Editor` and `Open in Sources` are 130px and 145px of label at the
+ * compact size, which will not sit side by side in a narrow DevTools dock. Two
+ * full-width buttons read as a list of choices; two clipped ones read as a bug.
+ */
+@media (max-width: 340px) {
+  .source-card__actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
