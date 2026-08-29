@@ -1,6 +1,6 @@
 {
   "name": "devflow",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "private": true,
   "description": "Chrome extension that records browser flows and locates any React component's original source — one engine, two surfaces.",
   "license": "MIT",
@@ -45,7 +45,7 @@
     "graphify:update": "graphify update .",
     "render": "node scripts/render.mjs",
     "sync-version": "node scripts/sync-version.mjs",
-    "version": "npm run sync-version && git add public/manifest.json mcp-server/package.json",
+    "version": "npm run sync-version && git add public/manifest.json mcp-server/package.json mcp-server/package-lock.json",
     "package": "npm run verify && node scripts/package.mjs",
     "verify": "npm run typecheck && npm run lint && npm run lint:tokens && npm run lint:settings-ui && npm run lint:graphify && npm run lint:brand && npm run test && npm run build"
   },
