@@ -1,0 +1,19 @@
+# What the knowledge graph should not index. .gitignore syntax, and everything
+# git already ignores is skipped without being listed here — this file is only
+# for the things that survive that filter and still do not belong in the graph.
+
+# `npm run build:mcp` bundles src/core/ into here. It is generated, and it is
+# git-ignored, but graphify still picks it up — and because it is a copy of code
+# that is already indexed, every symbol in src/core/ lands in the graph twice.
+# The duplicates are what make it worth listing: they split the edges for a
+# function between two nodes and make `graphify explain` ambiguous.
+mcp-server/core.js
+
+# Binary media. Indexing these needs the optional image/video extras and buys
+# nothing for navigating the codebase — the demo GIFs are README illustrations
+# and the icons are build artefacts of scripts/build-icons.mjs.
+*.gif
+*.png
+*.jpg
+*.ico
+public/fonts/

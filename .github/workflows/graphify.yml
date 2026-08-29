@@ -1,0 +1,71 @@
+name: Knowledge graph
+
+# Rebuilds the graphify graph on every push and attaches it to the run.
+#
+# It deliberately does not commit anything back. graphify's community detection
+# is not deterministic — two runs over byte-identical source disagree on cluster
+# membership and produce thousands of lines of diff — so a bot that committed
+# graph.json would add that churn to every push while telling nobody anything.
+# The graph is a derived artefact that rebuilds in about a second, so this job
+# rebuilds it, proves it still builds, and leaves the result downloadable.
+#
+# Contributors get their own copy from the git hooks `npm run graphify:setup`
+# installs, which is what actually keeps a working tree's graph current.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  graph:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Pinned rather than floating. graphify is pre-1.0 and this job's only
+      # failure mode that matters is "this repo stopped parsing"; an upstream
+      # release changing its output should not turn CI red on an unrelated PR.
+      # Bump deliberately, and re-read GRAPH_REPORT.md when you do.
+      - name: Install graphify
+        run: pip install graphifyy==0.4.13
+
+      # AST only — no API key, no network, nothing to configure. The semantic
+      # pass over docs and images is the part that costs money, and it is opt-in
+      # from inside an assistant via `/graphify .`.
+      - name: Build the graph
+        run: graphify update .
+
+      # graphify-out/ is git-ignored. If it ever shows up as tracked, someone
+      # force-added it, and every future push will carry that churn — catch it
+      # here rather than in the review where it looks like an innocent file.
+      - name: The graph is not committed
+        run: |
+          if git ls-files --error-unmatch graphify-out >/dev/null 2>&1; then
+            echo "::error::graphify-out/ is tracked in git — it is generated output, remove it with 'git rm -r --cached graphify-out'"
+            exit 1
+          fi
+          echo "graphify-out/ is untracked, as intended"
+
+      - name: Summarise
+        run: |
+          {
+            echo '## Knowledge graph'
+            echo
+            sed -n '1,40p' graphify-out/GRAPH_REPORT.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # graph.html is a self-contained interactive view of this exact commit.
+      # Download it from the run and open it — no install needed to look around.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graphify-${{ github.sha }}
+          path: |
+            graphify-out/GRAPH_REPORT.md
+            graphify-out/graph.html
+            graphify-out/graph.json
+          if-no-files-found: error

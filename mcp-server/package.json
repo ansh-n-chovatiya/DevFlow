@@ -1,0 +1,45 @@
+{
+  "name": "flowsnap-mcp",
+  "version": "2.7.1",
+  "description": "MCP server exposing browser flows recorded by the FlowSnap Chrome extension — steps, console errors, network calls and screenshots — to Claude Code.",
+  "type": "module",
+  "main": "server.js",
+  "bin": {
+    "flowsnap-mcp": "server.js"
+  },
+  "files": [
+    "server.js",
+    "install.js",
+    "core.js",
+    "README.md"
+  ],
+  "license": "MIT",
+  "author": "Ansh Chovatiya",
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "claude",
+    "claude-code",
+    "browser-automation",
+    "flow-recorder",
+    "debugging"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ansh-n-chovatiya/Flow-Recorder.git",
+    "directory": "mcp-server"
+  },
+  "homepage": "https://github.com/ansh-n-chovatiya/Flow-Recorder#readme",
+  "bugs": {
+    "url": "https://github.com/ansh-n-chovatiya/Flow-Recorder/issues"
+  },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  }
+}

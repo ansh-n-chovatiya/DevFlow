@@ -1,0 +1,63 @@
+{
+  "name": "devflow",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Chrome extension that records browser flows and locates any React component's original source — one engine, two surfaces.",
+  "license": "MIT",
+  "author": "Ansh Chovatiya",
+  "type": "module",
+  "keywords": [
+    "chrome-extension",
+    "devtools",
+    "react",
+    "source-map",
+    "flow-recorder",
+    "mcp",
+    "ai-context"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "postinstall": "npm --prefix mcp-server ci && node scripts/graphify-setup.mjs --quiet",
+    "build": "npm run build:settings && npm run build:main && npm run build:content && npm run build:agent && npm run build:mcp",
+    "build:main": "vite build",
+    "build:content": "vite build --config vite.content.config.ts",
+    "build:agent": "vite build --config vite.agent.config.ts",
+    "build:mcp": "vite build --config vite.mcp.config.ts",
+    "build:settings": "node scripts/build-settings.mjs",
+    "build:icons": "node scripts/build-icons.mjs",
+    "build:mark": "node scripts/build-mark.mjs",
+    "dev": "npm run build -- --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "lint:tokens": "node scripts/check-tokens.mjs",
+    "lint:settings-ui": "node scripts/check-settings-ui.mjs",
+    "lint:graphify": "node scripts/check-graphify.mjs",
+    "test": "vitest run",
+    "pretest": "npm run build:mcp && npm run build:settings",
+    "pretest:watch": "npm run build:mcp && npm run build:settings",
+    "test:watch": "vitest",
+    "graphify:setup": "node scripts/graphify-setup.mjs",
+    "graphify:update": "graphify update .",
+    "render": "node scripts/render.mjs",
+    "sync-version": "node scripts/sync-version.mjs",
+    "version": "npm run sync-version && git add public/manifest.json mcp-server/package.json",
+    "package": "npm run verify && node scripts/package.mjs",
+    "verify": "npm run typecheck && npm run lint && npm run lint:tokens && npm run lint:settings-ui && npm run lint:graphify && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^26.2.0",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "jsdom": "^29.1.1",
+    "lucide-static": "^1.31.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10"
+  }
+}

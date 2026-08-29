@@ -1,0 +1,143 @@
+name: Release
+
+# Tag a commit `v1.1.0` and push it — this verifies, builds, zips dist/, and
+# attaches the zip to a GitHub Release. That zip is what a non-developer
+# downloads: unzip it and load the folder unpacked, no toolchain needed.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  # npm provenance — signs the published package against this workflow run.
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          # Two packages, two lockfiles — both are installed below, so both
+          # belong in the cache key.
+          cache-dependency-path: |
+            package-lock.json
+            mcp-server/package-lock.json
+          # Writes the .npmrc that the publish step's NODE_AUTH_TOKEN slots into.
+          registry-url: https://registry.npmjs.org
+
+      # The MCP server is its own npm package, with its own lockfile and its own
+      # dependencies, and a plain root install does not reach it — there are no
+      # workspaces, deliberately, because it is published to npm on its own.
+      # tests/mcp-pagination spawns it for real, so `@modelcontextprotocol/sdk`
+      # has to be on disk before the tests run. The root `postinstall` installs
+      # it, which is what keeps a fresh clone working for humans too.
+      - run: npm ci
+
+      # A release whose zip reports a different version than its tag is worse
+      # than no release — Chrome shows the manifest version, not the tag. The
+      # MCP server is in here too: it ships to npm from this same tag, and a
+      # server that disagrees with the extension it was published beside makes
+      # "which one do I have" unanswerable.
+      - name: Tag matches every version file
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          MANIFEST=$(node -p "require('./public/manifest.json').version")
+          MCP=$(node -p "require('./mcp-server/package.json').version")
+          echo "tag=$TAG package.json=$PKG manifest.json=$MANIFEST mcp-server=$MCP"
+          if [ "$TAG" != "$PKG" ] || [ "$TAG" != "$MANIFEST" ] || [ "$TAG" != "$MCP" ]; then
+            echo "::error::Version mismatch — bump package.json and run npm run sync-version before tagging."
+            exit 1
+          fi
+
+      - name: Verify and build
+        run: npm run verify
+
+      - name: Package
+        run: node scripts/package.mjs
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: releases/*.zip
+          generate_release_notes: true
+          body: |
+            ### Install the extension
+
+            1. Download the `.zip` below and unzip it.
+            2. Open `chrome://extensions`, enable **Developer mode**.
+            3. **Load unpacked** → select the unzipped folder.
+            4. Pin FlowSnap to the toolbar and press **Start Recording**.
+
+            ### Connect it to Claude Code
+
+            ```sh
+            claude mcp add flowsnap --scope user -- npx -y flowsnap-mcp
+            ```
+
+            One command, every project, CLI and VS Code alike. Record a flow,
+            press **Send**, and ask Claude about it.
+
+            See the [changelog](https://github.com/ansh-n-chovatiya/Flow-Recorder/blob/main/CHANGELOG.md) for what changed.
+
+      # Still useful on a manual dispatch, where no release is created.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flowsnap
+          path: releases/*.zip
+
+      # Last, so a registry problem cannot cost us the extension release — that
+      # zip is the artifact people cannot get any other way.
+      #
+      # The version is guaranteed to equal the tag by the check at the top of
+      # this job, so pushing a tag is the only thing needed to publish.
+      - name: Publish flowsnap-mcp to npm
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: mcp-server
+        run: |
+          # `core.js` is `src/core/` bundled in by `npm run build:mcp`, which the
+          # verify step above runs. It is listed in `files`, and npm does not
+          # complain about a listed file that is missing — so without this check
+          # a publish that skipped the build ships a server that throws
+          # ERR_MODULE_NOT_FOUND on its first tool call, and only for users.
+          if [ ! -f core.js ]; then
+            echo "::error::mcp-server/core.js is missing — run npm run build:mcp before publishing."
+            exit 1
+          fi
+
+          VERSION=$(node -p "require('./package.json').version")
+
+          # A re-run, a re-pushed tag or a manual dispatch would otherwise fail
+          # the job on "cannot publish over previously published versions" —
+          # a red pipeline for a release that is already correct. Empty output
+          # covers both an unpublished version and a package that does not
+          # exist yet, which exit codes alone do not distinguish.
+          PUBLISHED=$(npm view "flowsnap-mcp@$VERSION" version 2>/dev/null || true)
+          if [ -n "$PUBLISHED" ]; then
+            echo "::notice::flowsnap-mcp@$VERSION is already on npm — nothing to publish."
+            exit 0
+          fi
+
+          # Both ways of authenticating are supported, so moving from one to the
+          # other is a change on npmjs.com rather than a change to this file.
+          # A token is how the package gets published the first time — trusted
+          # publishing is configured *on* a package, so it cannot bootstrap one.
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            echo "Publishing flowsnap-mcp@$VERSION with NPM_TOKEN."
+            npm publish --access public --provenance
+          else
+            echo "No NPM_TOKEN — authenticating with trusted publishing (OIDC)."
+            # OIDC needs npm >= 11.5.1 and Node 22 ships npm 10. Only on this
+            # path, so the token path does not pay for the upgrade.
+            npm install -g npm@latest
+            npm publish --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

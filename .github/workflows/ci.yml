@@ -1,0 +1,111 @@
+name: CI
+
+# Every push and PR builds a loadable extension and attaches the zip. That zip
+# is what "a fresh build on every commit" means here: downloadable from the run,
+# without minting a Release for a commit nobody asked to publish.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          # Two packages, two lockfiles — both are installed below, so both
+          # belong in the cache key.
+          cache-dependency-path: |
+            package-lock.json
+            mcp-server/package-lock.json
+
+      # The MCP server is its own npm package, with its own lockfile and its own
+      # dependencies, and a plain root install does not reach it — there are no
+      # workspaces, deliberately, because it is published to npm on its own.
+      # tests/mcp-pagination spawns it for real, so `@modelcontextprotocol/sdk`
+      # has to be on disk before the tests run. The root `postinstall` installs
+      # it, which is what keeps a fresh clone working for humans too; this job
+      # deliberately has no extra step, so CI fails the day that hook stops
+      # firing rather than papering over it.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # A design system is only a system while nothing bypasses it.
+      - name: No colour outside the tokens
+        run: npm run lint:tokens
+
+      # The graph config works on the machine that made it whether or not it is
+      # committed, so local runs prove nothing. This is the step that notices a
+      # clone would come up without CLAUDE.md or the PreToolUse hook.
+      - name: Graph config is committed
+        run: npm run lint:graphify
+
+      # `pretest` builds `mcp-server/core.js` first. It is generated rather than
+      # committed, and two suites need it on disk — one spawns the real server,
+      # which imports it, and one reads it. Hooked onto `test` rather than added
+      # as a step here: this job is not the only caller, and a clean checkout
+      # failing where every machine with a previous build passes is a failure
+      # that only ever shows up in CI.
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The version lives in two files. Catch drift here rather than at tag
+      # time, where the release workflow would refuse to publish.
+      - name: Versions agree
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          MANIFEST=$(node -p "require('./public/manifest.json').version")
+          test "$PKG" = "$MANIFEST" || {
+            echo "::error::package.json is $PKG but public/manifest.json is $MANIFEST — run npm run sync-version"
+            exit 1
+          }
+
+      # A dist/ that Chrome would reject is worth catching before a human tries
+      # to load it.
+      - name: Extension loads as an unpacked directory
+        run: |
+          for f in manifest.json background.js content.js popup.html viewer.html settings.html injected/agent.js; do
+            test -f "dist/$f" || { echo "::error::dist/$f is missing"; exit 1; }
+          done
+          node -e "
+            const m = require('./dist/manifest.json');
+            const fs = require('node:fs');
+            const refs = [
+              m.background.service_worker,
+              m.action.default_popup,
+              m.options_ui?.page,
+              ...m.content_scripts.flatMap(c => [...(c.js ?? []), ...(c.css ?? [])]),
+              ...Object.values(m.icons),
+              // Web-accessible paths are easy to leave behind when an asset is
+              // renamed, and Chrome reports the failure only at runtime.
+              ...(m.web_accessible_resources ?? []).flatMap(r => r.resources ?? []),
+            ].filter(Boolean);
+            const missing = refs.filter(r => !fs.existsSync('dist/' + r));
+            if (missing.length) {
+              console.error('::error::manifest references missing files: ' + missing.join(', '));
+              process.exit(1);
+            }
+            console.log('manifest references ' + refs.length + ' files, all present');
+          "
+
+      - name: Package
+        run: node scripts/package.mjs --sha ${{ github.sha }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flowsnap-${{ github.sha }}
+          path: releases/*.zip
+          if-no-files-found: error

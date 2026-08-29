@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // `chrome` as well as `node`: the tests cover pure functions that live
+    // alongside Chrome API calls, so the files they import reference the types
+    // even where the tested function does not.
+    "types": ["node", "chrome"]
+  },
+  "include": [
+    "vite.config.ts",
+    "vite.content.config.ts",
+    "vite.agent.config.ts",
+    "vite.mcp.config.ts",
+    "vitest.config.ts",
+    "scripts",
+    "tests"
+  ]
+}

@@ -1,0 +1,57 @@
+# Build output
+node_modules/
+dist/
+releases/
+*.zip
+
+# Recorded flow exports (generated output, may contain PII)
+flowsnap-flow-*/
+
+# MCP server recorded flows (generated output, may contain PII)
+mcp-server/flows/
+
+# `src/core/` bundled into the server package by `npm run build:mcp`. Generated,
+# but published — `npm run verify` builds it before the tests that spawn the
+# server, and the release workflow checks it exists before it publishes.
+mcp-server/core.js
+
+# The marketing take. Not part of the product, and not published: it drives a
+# real browser, spawns servers and records the screen, none of which belongs in
+# a repository people install an extension from. Everything it produces that the
+# README does need — docs/demo.gif — is committed on its own.
+demo/
+
+# `npm run render` — screenshots of the built pages, for a human to look at.
+# A development aid, not an artefact: nothing reads them, there is no golden
+# image to compare against, and committing them would mean regenerating a
+# picture of the whole product on every copy change.
+.render/
+
+# The graphify knowledge graph. Generated, and deliberately not committed: a
+# rebuild takes about a second and needs no API key, but community detection is
+# not deterministic, so two runs over identical source still differ by thousands
+# of lines. Committing it would mean that churn in every diff, and a merge
+# conflict on every branch, in exchange for a file that is useless without the
+# graphify CLI anyway. `npm run graphify:setup` builds it; the git hooks that
+# same command installs keep it current.
+graphify-out/
+
+# Claude Code's per-developer overrides. `.claude/settings.json` is committed —
+# it carries the graphify PreToolUse hook every contributor should have — but
+# this file is personal (enabled MCP servers, local permissions) and following
+# it into git would hand your machine's setup to everyone else.
+.claude/settings.local.json
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+._*
+*.swp
+*~
+*.orig
+*.rej
+*.bak
+.idea/
+.vscode/*
+!.vscode/extensions.json
+

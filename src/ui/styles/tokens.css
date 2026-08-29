@@ -1,0 +1,434 @@
+/*
+ * DevFlow design tokens.
+ *
+ * FlowSnap's table, extended in Wave 0 with what the locator panel needs. The
+ * additions are grouped and labelled below; nothing from the locator's own
+ * DevPrecision file (navy surfaces, electric blue, Inter/JetBrains Mono) came
+ * across, because a panel that keeps its own palette is a panel that still reads
+ * as the other extension.
+ *
+ * Two collisions were resolved here rather than left to the port:
+ *
+ *   - **`--gutter` meant two different things** (D6). FlowSnap's is a 32px page
+ *     gutter; the locator's was a 12px panel gutter. Same name, three-fold
+ *     difference in scale, and merging the stylesheets naively rescales the
+ *     entire panel. FlowSnap's is untouched; the panel's is `--pad-panel`.
+ *   - **The category palette was 45 raw colour literals** in the locator's
+ *     `result.css`, declared there because that file was where they were used.
+ *     `lint:tokens` forbids that, so they live here, re-derived from FlowSnap's
+ *     data-colour ramp rather than ported. Categories are data, not decoration —
+ *     the same rule that keeps HTTP methods and console levels off the accent.
+ *
+ * Authored from docs/DESIGN-BRIEF.md §3 — deliberately NOT from the Stitch
+ * export, which substituted its own Material 3 palette. See docs/design/README.md
+ * for what drifted and why this file is the authority.
+ *
+ * Theming has three states, not two. An explicit choice stamps
+ * `data-theme="light"` or `data-theme="dark"` on the root; the default "system"
+ * setting stamps nothing, and only `prefers-color-scheme` separates the two.
+ * So: `:root` carries the complete light palette, the media query redefines the
+ * tokens for a dark OS (guarded so an explicit light choice still wins), and
+ * `[data-theme='dark']` redefines them again so the setting wins in both
+ * directions. Never declare a colour anywhere but these three blocks.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ── Surfaces ─────────────────────────────────────────────────────────── */
+  --bg: #f4f7f6;
+  --surface: #ffffff;
+  --surface-raised: #edf2f1;
+  --surface-sunk: #e4ebe9;
+  --border: #dce4e2;
+  --border-strong: #b4c1be;
+
+  /* ── Content ──────────────────────────────────────────────────────────── */
+  --fg: #0e1213;
+  --fg-muted: #4e5c59;
+  --fg-faint: #75837f;
+
+  /* ── Accent — every primary action, link and focus ring ───────────────── */
+  --accent: #0e7c70;
+  --accent-hover: #0b655c;
+  --accent-soft: #dff1ee;
+  --on-accent: #ffffff;
+
+  /*
+   * Recording, and nothing else. The whole point of separating this from
+   * --danger and --error is that the shipped build used one red for "record",
+   * "delete" and "failed" at once, so nothing about a red thing told you which
+   * it was.
+   */
+  --record: #d02b31;
+  --record-soft: #fce9e9;
+  --on-record: #ffffff;
+
+  /* ── Status ───────────────────────────────────────────────────────────── */
+  --danger: #b23b3b;
+  --danger-soft: #fbeaea;
+  --on-danger: #ffffff;
+  --warn: #8a6212;
+  --warn-soft: #fdf4e3;
+  --warn-border: #e3c886;
+  --success: #12784f;
+  --success-soft: #e3f4ec;
+
+  /* ── Data colours ─────────────────────────────────────────────────────────
+   * HTTP methods, console levels and step types are data, not decoration —
+   * they never borrow the accent, and they keep their meaning in both themes.
+   */
+  --method-get: #4a5a6a;
+  --method-post: #12784f;
+  --method-put: #8a6212;
+  --method-patch: #6c4bb6;
+  --method-delete: #b23b3b;
+
+  --status-2xx: #12784f;
+  --status-3xx: #2b62c4;
+  --status-4xx: #8a6212;
+  --status-5xx: #b23b3b;
+
+  --log-error: #b23b3b;
+  --log-warn: #8a6212;
+  --log-info: #2b62c4;
+  --log-log: #4a5a6a;
+
+  --step-navigate: #2b62c4;
+  --step-click: #0e7c70;
+  --step-input: #6c4bb6;
+  --step-note: #4a5a6a;
+
+  /* ── Type ─────────────────────────────────────────────────────────────────
+   * IBM Plex is vendored in public/fonts and declared in fonts.css; an extension
+   * cannot fetch a font CDN under its own CSP, and an unavailable family fails
+   * silently to the system UI font. The fallbacks below are not decoration —
+   * only the Latin subset ships, so any other script lands on them.
+   */
+  --font-ui: 'IBM Plex Sans', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /*
+   * The brief specified weight 550 for the step title and buttons. Static IBM
+   * Plex Sans ships 450/500/600 and has no 550, so that would have silently
+   * rounded — 500 is the real value.
+   */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  --text-page-title: 20px;
+  --text-popup-title: 15px;
+  --text-step-title: 15px;
+  --text-heading: 13px;
+  --text-body: 13px;
+  --text-meta: 12px;
+  --text-code: 12px;
+  --text-label: 10px;
+
+  --leading-body: 1.55;
+  --leading-tight: 1.3;
+  --tracking-title: -0.015em;
+  --tracking-label: 0.09em;
+
+  /* ── Space — 4px base ─────────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 40px;
+
+  --pad-card: 16px;
+  --pad-popup: 14px;
+  --gap-card: 10px;
+
+  /* ── Shape ────────────────────────────────────────────────────────────── */
+  --radius-control: 6px;
+  --radius-card: 10px;
+  --radius-pill: 999px;
+
+  /* ── Elevation — overlays only; depth is tonal everywhere else ────────── */
+  --shadow-overlay: 0 12px 32px rgb(16 18 19 / 18%);
+  --scrim: rgb(16 18 19 / 45%);
+
+  /* The one exception: a selected segment needs to sit above its own track. */
+  --shadow-raised: 0 1px 2px rgb(16 18 19 / 12%);
+
+  /* ── Sizing ───────────────────────────────────────────────────────────── */
+  --control-height: 32px;
+  --control-height-compact: 28px;
+  --control-height-primary: 40px;
+  --popup-width: 360px;
+  --popup-max-height: 600px;
+  /*
+   * 280 rather than 208: at the narrower width every row read `Clicked "Sea…"`
+   * — the truncation landed inside the quoted label, which is the one part of
+   * the row that says which step it is, and the filter chips wrapped to three
+   * lines. The step column loses nothing that matters; a screenshot at 1100px
+   * is not read differently from one at 1170.
+   */
+  --rail-width: 280px;
+
+  /*
+   * One frame for every full-tab surface — library, review, settings — so the
+   * app bar's contents line up with the page's, and moving between pages does
+   * not move the product's own left edge.
+   *
+   * 1440 rather than the brief's 1100: on the displays this is used on, an 1100
+   * column left a third of the window empty on either side, and the content is
+   * a tool being scanned rather than prose being read. The gutter is the only
+   * thing that shrinks below that.
+   */
+  --frame-max: 1440px;
+  --gutter: 32px;
+
+
+  /* ── Panel ────────────────────────────────────────────────────────────────
+   * The DevTools panel is a 300-400px column, not a page, so it does not use
+   * --gutter. Kept distinct by name and not by context: see D6 in the header.
+   */
+  --pad-panel: 12px;
+
+  /* The picker's armed state and the focus glow behind a primary action. */
+  --accent-glow: rgb(14 124 112 / 16%);
+
+  /* Pairs with --danger-soft, for a banner that needs an outline as well. */
+  --danger-border: #e0a5a5;
+
+  /*
+   * The dotted ground behind the panel's idle and picking views. Two tokens
+   * because the dot is drawn as a radial-gradient colour and faded separately —
+   * one rgb() with baked-in alpha could not be re-tinted per theme.
+   */
+  --dot: rgb(14 18 19 / 55%);
+  --dot-opacity: 0.12;
+
+  /* Two tighter radii the panel's chips and inline code need. */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+
+  /* ── Component categories ─────────────────────────────────────────────────
+   * One triple per HIDEABLE_CATEGORY in core/react/classify.ts. Drawn from the
+   * data ramp above — navigate blue, success green, patch purple, warn amber,
+   * get slate — so a category chip and a step type of the same colour mean
+   * related things rather than coincidentally matching.
+   */
+  --cat-routing-fg: #2b62c4;
+  --cat-routing-bg: #e8eefb;
+  --cat-routing-border: #bcd0f0;
+
+  --cat-providers-fg: #12784f;
+  --cat-providers-bg: #e3f4ec;
+  --cat-providers-border: #a9dcc4;
+
+  --cat-react-fg: #6c4bb6;
+  --cat-react-bg: #efe9fb;
+  --cat-react-border: #cfc0ee;
+
+  --cat-styling-fg: #8a6212;
+  --cat-styling-bg: #fdf4e3;
+  --cat-styling-border: #e3c886;
+
+  --cat-dependency-fg: #4a5a6a;
+  --cat-dependency-bg: #eaeeed;
+  --cat-dependency-border: #d3dbd9;
+
+  /* ── Motion ───────────────────────────────────────────────────────────── */
+  --transition: 120ms ease-out;
+  --pulse-duration: 2s;
+
+  /* ── Focus — one ring, on everything interactive ──────────────────────── */
+  --focus-ring: 2px solid var(--accent);
+  --focus-offset: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --bg: #0e1213;
+    --surface: #161b1d;
+    --surface-raised: #1d2426;
+    --surface-sunk: #0a0e0f;
+    --border: #28312f;
+    --border-strong: #3a4644;
+
+    --fg: #e4ebe9;
+    --fg-muted: #9aa8a5;
+    --fg-faint: #6b7a77;
+
+    --accent: #2bb3a3;
+    --accent-hover: #38c9b8;
+    --accent-soft: #0f2b29;
+    --on-accent: #04211e;
+
+    --record: #e5484d;
+    --record-soft: #2a1113;
+    --on-record: #ffffff;
+
+    --danger: #c24a4a;
+    --danger-soft: #2a1414;
+    --on-danger: #ffffff;
+    --warn: #d9a441;
+    --warn-soft: #2a2213;
+    --warn-border: #6b5420;
+    --success: #3fb984;
+    --success-soft: #0f2a1f;
+
+    --method-get: #94a5b3;
+    --method-post: #3fb984;
+    --method-put: #d9a441;
+    --method-patch: #a68cf0;
+    --method-delete: #e88b8b;
+
+    --status-2xx: #3fb984;
+    --status-3xx: #6ea8ff;
+    --status-4xx: #d9a441;
+    --status-5xx: #e88b8b;
+
+    --log-error: #e88b8b;
+    --log-warn: #d9a441;
+    --log-info: #6ea8ff;
+    --log-log: #94a5b3;
+
+    --step-navigate: #6ea8ff;
+    --step-click: #2bb3a3;
+    --step-input: #a68cf0;
+    --step-note: #94a5b3;
+
+    --shadow-overlay: 0 12px 32px rgb(0 0 0 / 45%);
+    --scrim: rgb(0 0 0 / 60%);
+    --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%);
+
+    --accent-glow: rgb(43 179 163 / 22%);
+    --danger-border: #6b2a2a;
+
+    --dot: #e4ebe9;
+    --dot-opacity: 0.05;
+
+    --cat-routing-fg: #6ea8ff;
+    --cat-routing-bg: #101c30;
+    --cat-routing-border: #24395c;
+
+    --cat-providers-fg: #3fb984;
+    --cat-providers-bg: #0f2a1f;
+    --cat-providers-border: #1e4f3a;
+
+    --cat-react-fg: #a68cf0;
+    --cat-react-bg: #1e1830;
+    --cat-react-border: #3b3060;
+
+    --cat-styling-fg: #d9a441;
+    --cat-styling-bg: #2a2213;
+    --cat-styling-border: #6b5420;
+
+    --cat-dependency-fg: #94a5b3;
+    --cat-dependency-bg: #1d2426;
+    --cat-dependency-border: #3a4644;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #0e1213;
+  --surface: #161b1d;
+  --surface-raised: #1d2426;
+  --surface-sunk: #0a0e0f;
+  --border: #28312f;
+  --border-strong: #3a4644;
+
+  --fg: #e4ebe9;
+  --fg-muted: #9aa8a5;
+  --fg-faint: #6b7a77;
+
+  --accent: #2bb3a3;
+  --accent-hover: #38c9b8;
+  --accent-soft: #0f2b29;
+  --on-accent: #04211e;
+
+  --record: #e5484d;
+  --record-soft: #2a1113;
+  --on-record: #ffffff;
+
+  --danger: #c24a4a;
+  --danger-soft: #2a1414;
+  --on-danger: #ffffff;
+  --warn: #d9a441;
+  --warn-soft: #2a2213;
+  --warn-border: #6b5420;
+  --success: #3fb984;
+  --success-soft: #0f2a1f;
+
+  --method-get: #94a5b3;
+  --method-post: #3fb984;
+  --method-put: #d9a441;
+  --method-patch: #a68cf0;
+  --method-delete: #e88b8b;
+
+  --status-2xx: #3fb984;
+  --status-3xx: #6ea8ff;
+  --status-4xx: #d9a441;
+  --status-5xx: #e88b8b;
+
+  --log-error: #e88b8b;
+  --log-warn: #d9a441;
+  --log-info: #6ea8ff;
+  --log-log: #94a5b3;
+
+  --step-navigate: #6ea8ff;
+  --step-click: #2bb3a3;
+  --step-input: #a68cf0;
+  --step-note: #94a5b3;
+
+  --shadow-overlay: 0 12px 32px rgb(0 0 0 / 45%);
+  --scrim: rgb(0 0 0 / 60%);
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%);
+
+  --accent-glow: rgb(43 179 163 / 22%);
+  --danger-border: #6b2a2a;
+
+  --dot: #e4ebe9;
+  --dot-opacity: 0.05;
+
+  --cat-routing-fg: #6ea8ff;
+  --cat-routing-bg: #101c30;
+  --cat-routing-border: #24395c;
+
+  --cat-providers-fg: #3fb984;
+  --cat-providers-bg: #0f2a1f;
+  --cat-providers-border: #1e4f3a;
+
+  --cat-react-fg: #a68cf0;
+  --cat-react-bg: #1e1830;
+  --cat-react-border: #3b3060;
+
+  --cat-styling-fg: #d9a441;
+  --cat-styling-bg: #2a2213;
+  --cat-styling-border: #6b5420;
+
+  --cat-dependency-fg: #94a5b3;
+  --cat-dependency-bg: #1d2426;
+  --cat-dependency-border: #3a4644;
+}
+
+/*
+ * The pulsing record dot is the only ambient animation in the product, and it
+ * is precisely the kind a vestibular disorder reacts to. Everything else uses
+ * --transition, which is short enough to leave alone.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --pulse-duration: 0s;
+  }
+}
+
+/* A gutter is breathing room on a wide window and wasted width on a narrow one. */
+@media (max-width: 720px) {
+  :root {
+    --gutter: 16px;
+  }
+}
