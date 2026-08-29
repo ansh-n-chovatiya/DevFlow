@@ -1,10 +1,47 @@
 /**
  * MAIN-world agent, injected at `document_start`.
  *
- * Runs in the page's own JS context — the only place `console`, `fetch` and
- * `XMLHttpRequest` can be observed — and relays what it sees to the isolated
- * world with `postMessage`. `CustomEvent.detail` reads as null across the
- * MAIN/ISOLATED boundary, which is why this uses messages rather than events.
+ * Runs in the page's own JS context — the only place `console`, `fetch`,
+ * `XMLHttpRequest` and React's fibers can be observed — and relays what it sees
+ * to the isolated world with `postMessage`. `CustomEvent.detail` reads as null
+ * across the MAIN/ISOLATED boundary, which is why this uses messages rather than
+ * events.
+ *
+ * ## One agent, two halves
+ *
+ * DevFlow has one MAIN-world agent where the two extensions it merges had two,
+ * and this file is where they meet. The recorder's half observes passively:
+ * console, network, and the component chain above whatever the user clicked. The
+ * picker's half is interactive: the user is pointing at a component and asking
+ * what it is.
+ *
+ * They share this file and share nothing else, deliberately:
+ *
+ *   - **Neither half's listeners are attached until its own switch is on.** The
+ *     recorder's follow `ControlMessage.recording`, the picker's follow
+ *     `ControlMessage.picking`, and the two are independent — a user can pick a
+ *     component with nothing recording, and record for an hour without picking.
+ *     This agent loads on every page the user opens, so an idle one has to cost
+ *     the page nothing at all.
+ *   - **One half giving up does not disable the other.** After
+ *     `REACT_PROBE_ATTEMPTS` interactions that find no React, the recorder
+ *     detaches from this document for good — but that is a statement about where
+ *     the user has been clicking, not proof that there is no React on the page.
+ *     An SPA can mount after the probes ran out, and the user may open the panel
+ *     precisely because they suspect something is there. `reactGaveUp` therefore
+ *     gates the recorder's listeners and nothing else: not the control channel,
+ *     not the config it carries, and not the picker.
+ *
+ * ## No injection dance
+ *
+ * react-source-locator injected its agent on demand, by reading the built file
+ * and `eval`-ing it into the page, then polled a page global on a 150 ms timer
+ * for the result — because an injected script it had no channel to was all it
+ * had. None of that is ported. This agent is a manifest content script that is
+ * already present in every document, `AgentPickMessage` is a real message, and a
+ * pick result is pushed the moment it happens. Upstream's nine page globals
+ * collapse to the two in `PAGE_GLOBALS` for the same reason: seven of them were
+ * a channel, and there is a channel now.
  */
 
 import {
@@ -93,7 +130,7 @@ function applyConfig(next: Partial<AgentConfig> | undefined): void {
 const SENSITIVE_HEADERS = /^(authorization|cookie|set-cookie|x-api-key)$/i;
 
 function emit(detail: Record<string, unknown>): void {
-  window.postMessage({ __flowsnap_source__: AGENT_MESSAGE_SOURCE, ...detail }, '*');
+  window.postMessage({ __devflow_source__: AGENT_MESSAGE_SOURCE, ...detail }, '*');
 }
 
 function redactHeaders(headers: Record<string, string>): Record<string, string> {
@@ -203,17 +240,19 @@ function serializeArgs(args: unknown[]): string[] {
  * permanently uncapturable after the setting is turned back on. It gates the
  * `emit` instead, which is read per call and can change mid-page.
  */
-for (const level of CONSOLE_LEVELS) {
-  const original = console[level].bind(console) as (...args: unknown[]) => void;
-  console[level] = (...args: unknown[]) => {
-    original(...args);
-    try {
-      if (!config.consoleLevels.includes(level)) return;
-      emit({ kind: 'log', level, args: serializeArgs(args), timestamp: Date.now() });
-    } catch {
-      // Never let instrumentation break the page's own logging.
-    }
-  };
+function patchConsole(): void {
+  for (const level of CONSOLE_LEVELS) {
+    const original = console[level].bind(console) as (...args: unknown[]) => void;
+    console[level] = (...args: unknown[]) => {
+      original(...args);
+      try {
+        if (!config.consoleLevels.includes(level)) return;
+        emit({ kind: 'log', level, args: serializeArgs(args), timestamp: Date.now() });
+      } catch {
+        // Never let instrumentation break the page's own logging.
+      }
+    };
+  }
 }
 
 /* eslint-enable no-console */
@@ -285,47 +324,57 @@ function reportUncaught(prefix: string, value: unknown, fallback?: string): void
   }
 }
 
-window.addEventListener(
-  'error',
-  (event) => {
-    /*
-     * `error` fires for failed resource loads too — a broken <img>, a script
-     * that 404ed — and those bubble to the window with the element as the
-     * target. They are already visible as failed network calls, and reporting
-     * them here would file a crash for a missing favicon.
-     *
-     * Tested by `nodeType` rather than `event.target !== window`, because that
-     * comparison is a lie in any realm where the global is a proxy — under jsdom
-     * a genuine window error has a target that prints as `[object Window]` and
-     * is not `===` the `window` this file closed over, so the guard dropped the
-     * exact events it was written to keep. A DOM node has a `nodeType`; a window
-     * does not, in any realm.
-     */
-    const target = event.target as { nodeType?: number } | null;
-    if (target && typeof target.nodeType === 'number') return;
+function watchUncaught(): void {
+  window.addEventListener(
+    'error',
+    (event) => {
+      /*
+       * `error` fires for failed resource loads too — a broken <img>, a script
+       * that 404ed — and those bubble to the window with the element as the
+       * target. They are already visible as failed network calls, and reporting
+       * them here would file a crash for a missing favicon.
+       *
+       * Tested by `nodeType` rather than `event.target !== window`, because that
+       * comparison is a lie in any realm where the global is a proxy — under
+       * jsdom a genuine window error has a target that prints as
+       * `[object Window]` and is not `===` the `window` this file closed over,
+       * so the guard dropped the exact events it was written to keep. A DOM
+       * node has a `nodeType`; a window does not, in any realm.
+       */
+      const target = event.target as { nodeType?: number } | null;
+      if (target && typeof target.nodeType === 'number') return;
 
-    const where = event.filename ? ` (${event.filename}:${event.lineno}:${event.colno})` : '';
-    reportUncaught('[uncaught]', event.error, `${event.message}${where}`);
-  },
-  true,
-);
+      const where = event.filename ? ` (${event.filename}:${event.lineno}:${event.colno})` : '';
+      reportUncaught('[uncaught]', event.error, `${event.message}${where}`);
+    },
+    true,
+  );
 
-window.addEventListener(
-  'unhandledrejection',
-  (event) => {
-    reportUncaught('[unhandled rejection]', event.reason);
-  },
-  true,
-);
+  window.addEventListener(
+    'unhandledrejection',
+    (event) => {
+      reportUncaught('[unhandled rejection]', event.reason);
+    },
+    true,
+  );
+}
 
 // ── fetch ────────────────────────────────────────────────────────────────────
 
 const originalFetch = window.fetch.bind(window);
 
-window.fetch = async function patchedFetch(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
+/**
+ * The page's `fetch`, with the call written down.
+ *
+ * A function declaration rather than the expression it used to be assigned from,
+ * because the assignment now lives behind the double-injection guard at the foot
+ * of this file — see `install()`. It is still the only thing in DevFlow that
+ * touches `window.fetch`, which `tests/react-isolation.test.ts` is what holds:
+ * the resolver's fetches happen in the service worker, and if the two contexts
+ * ever met, every recording of a React app would carry a pile of requests the
+ * user never made.
+ */
+async function patchedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
   const url = redactUrl(
     typeof input === 'string' ? input : input instanceof Request ? input.url : String(input),
@@ -485,7 +534,7 @@ window.fetch = async function patchedFetch(
   }
 
   return response;
-};
+}
 
 // ── XMLHttpRequest ───────────────────────────────────────────────────────────
 
@@ -582,11 +631,13 @@ function PatchedXHR(this: unknown): XMLHttpRequest {
   return xhr;
 }
 
-// Static members (UNSENT, DONE …) live on the constructor; instance methods live
-// on the prototype. Both have to be preserved or feature detection breaks.
-Object.setPrototypeOf(PatchedXHR, OriginalXHR);
-PatchedXHR.prototype = OriginalXHR.prototype;
-window.XMLHttpRequest = PatchedXHR as unknown as typeof XMLHttpRequest;
+function patchXhr(): void {
+  // Static members (UNSENT, DONE …) live on the constructor; instance methods
+  // live on the prototype. Both have to be preserved or feature detection breaks.
+  Object.setPrototypeOf(PatchedXHR, OriginalXHR);
+  PatchedXHR.prototype = OriginalXHR.prototype;
+  window.XMLHttpRequest = PatchedXHR as unknown as typeof XMLHttpRequest;
+}
 
 // ── React component capture ──────────────────────────────────────────────────
 /*
@@ -599,8 +650,15 @@ window.XMLHttpRequest = PatchedXHR as unknown as typeof XMLHttpRequest;
  * like everything else in here.
  */
 
-import { CONTROL_MESSAGE_SOURCE, REACT_PROBE_ATTEMPTS } from '../shared/constants.js';
+import {
+  CONTROL_MESSAGE_SOURCE,
+  MAX_FN_SOURCE_LEN,
+  PAGE_GLOBALS,
+  REACT_PROBE_ATTEMPTS,
+} from '../shared/constants.js';
 import type { CapturedComponent, ControlMessage } from '../shared/messages.js';
+import type { PickResult, TreeGroup } from '../shared/types.js';
+import { pos1 } from '../core/react/positions.js';
 import {
   type ChainEntry,
   type ChainResult,
@@ -611,6 +669,8 @@ import {
 } from '../core/react/fiber.js';
 import { componentId, nameOnlyId } from '../core/react/id.js';
 import { buildNeedle } from '../core/react/needle.js';
+import { cancelPick, pickedEntry, startPick } from './picker.js';
+import { hide as hideHighlight, highlight } from './highlight.js';
 
 /** Watching only while something is recording — see ControlMessage. */
 let reactActive = false;
@@ -642,14 +702,28 @@ const componentCache = new WeakMap<ComponentFn, CapturedComponent>();
  */
 let prewarm: { el: Element; result: ChainResult; at: number } | null = null;
 
+/**
+ * `_debugSource`, in the one shape everything downstream reads.
+ *
+ * `pos1` and no arithmetic: React records 1-based lines, `CapturedComponent`
+ * and `PickedComponent` are both typed `Pos1`, and `pos1` is an assertion that
+ * says so rather than a conversion. Its clamp is what `Math.max(1, …)` used to
+ * be here. See `core/react/positions.ts` — this is one of the three boundaries
+ * where asserting a base is legitimate.
+ */
+function describeDebugSource(
+  src: ChainEntry['debugSource'],
+): CapturedComponent['debugSource'] {
+  if (!src) return null;
+  return {
+    source: src.fileName ?? '',
+    line: pos1(src.lineNumber ?? 1),
+    column: pos1(src.columnNumber ?? 1),
+  };
+}
+
 function describeEntry(entry: ChainEntry): CapturedComponent {
-  const debugSource = entry.debugSource
-    ? {
-        source: entry.debugSource.fileName ?? '',
-        line: Math.max(1, entry.debugSource.lineNumber ?? 1),
-        column: Math.max(1, entry.debugSource.columnNumber ?? 1),
-      }
-    : null;
+  const debugSource = describeDebugSource(entry.debugSource);
 
   if (!entry.fn) {
     // An unsettled lazy component. Its name is all there is, and forcing it to
@@ -855,20 +929,10 @@ function detachReactListeners(): void {
   for (const type of REACT_EVENTS) document.removeEventListener(type, onReactInteraction, true);
 }
 
-window.addEventListener('message', (event: MessageEvent<ControlMessage>) => {
-  // Same window, same origin — the same check the recorder applies to us.
-  if (event.source !== window || event.origin !== window.location.origin) return;
-
-  const data = event.data;
-  if (!data || data.__flowsnap_control__ !== CONTROL_MESSAGE_SOURCE) return;
+function applyRecording(wanted: boolean): void {
+  // The recorder's half, and only the recorder's half. Once the probes have run
+  // out there is nothing to attach or detach for this document ever again.
   if (reactGaveUp) return;
-
-  // Applied before the recording check below returns early: a settings change
-  // during a recording still has to reach the agent, and `recording` has not
-  // changed in that case.
-  applyConfig(data.config);
-
-  const wanted = Boolean(data.recording);
   if (wanted === reactActive) return;
 
   reactActive = wanted;
@@ -881,4 +945,214 @@ window.addEventListener('message', (event: MessageEvent<ControlMessage>) => {
     stopScriptInventory();
     prewarm = null;
   }
-});
+}
+
+// ── Picking ──────────────────────────────────────────────────────────────────
+
+/**
+ * Whether the picker is armed, as the agent understands it.
+ *
+ * Mirrored on this side rather than asked of `picker.ts`, because a control
+ * message arrives on every settings change and every recording state change —
+ * several times a minute during a recording. Comparing a boolean is what stops
+ * each of those from tearing the picker down and building it again under the
+ * user's pointer.
+ *
+ * Cleared when the picker reports, so the content script's `picking: true` on
+ * the *next* control message cannot silently re-arm a pick that already
+ * happened; the content script clears its own copy on the same message.
+ */
+let picking = false;
+
+function onPickResult(result: PickResult): void {
+  picking = false;
+  emit({ kind: 'pick', result });
+}
+
+/*
+ * A page can post this channel, as it can post the recording switch, and the
+ * ceiling on what that achieves is the same: the page arms a picker over itself.
+ * It gets a crosshair and its own clicks swallowed for `PICK_TIMEOUT_MS`, and the
+ * result is posted to a content script that has nobody waiting for one and drops
+ * it. Nothing is read, nothing is stored, and the extension learns nothing it did
+ * not ask for.
+ */
+function applyPicking(wanted: boolean): void {
+  if (wanted === picking) return;
+
+  picking = wanted;
+  if (wanted) startPick(onPickResult);
+  else cancelPick();
+}
+
+/**
+ * A question about the last pick, answered from the page.
+ *
+ * These are the two facts about a picked component that cannot cross
+ * `postMessage` and therefore cannot be part of `PickResult`: the component's
+ * compiled source, which is a function, and where it sits on screen, which is a
+ * set of DOM nodes. Upstream read both by `eval`-ing into the page and reaching
+ * into the globals its own injection had left there; here the extension asks
+ * and the agent answers, over the channel that already exists.
+ *
+ * **These two interfaces belong in `src/shared/messages.ts`,** beside
+ * `ControlMessage` and `AgentMessage`, and they are declared here only because
+ * Wave 0 froze that file without them — `READ_COMPONENT_SOURCE` and
+ * `HIGHLIGHT_COMPONENT` exist in `ContentRequest` with no way for the content
+ * script to reach the agent, and `AgentMessage` has no reply. Editing a frozen
+ * contract locally would invalidate every sibling session compiling against it,
+ * so this package reports the gap instead and keeps the wire shape in the one
+ * file that owns both ends of it. Move them when the contract is amended.
+ */
+export type PickQuery = { id: number } & (
+  | { kind: 'source'; group: TreeGroup; index: number }
+  | { kind: 'highlight'; group: TreeGroup; index: number | null }
+);
+
+/**
+ * A query, in the same envelope as `ControlMessage`.
+ *
+ * Same marker, because it comes from the same sender over the same channel and a
+ * second marker would be a second thing for a page to forge. Discriminated by
+ * the presence of `query`: a control message never carries one, and this is
+ * answered and returned from before `recording` is read — a query that fell
+ * through to the control path would be a message with no `recording` field,
+ * which reads as `false` and would stop a live recording's capture.
+ */
+export interface AgentQueryMessage {
+  __devflow_control__: string;
+  query: PickQuery;
+}
+
+/** What a query is answered with. `id` pairs it with the question. */
+export interface AgentQueryReply {
+  __devflow_source__: string;
+  kind: 'reply';
+  id: number;
+  /** `source` queries: the component's compiled source, or null. */
+  source?: string | null;
+  /** `highlight` queries: whether the component was still on the page to draw. */
+  ok?: boolean;
+}
+
+/**
+ * `fn.toString()`, which is only meaningful in the world the function lives in.
+ *
+ * Sliced to `MAX_FN_SOURCE_LEN` because that is what `buildNeedle` would slice
+ * it to anyway, and the alternative is carrying a megabyte of inlined data table
+ * across two message hops to throw all but the first 64 KB of it away.
+ */
+function componentSource(group: TreeGroup, index: number): string | null {
+  const entry = pickedEntry(group, index);
+  if (!entry) return null;
+
+  try {
+    const source = entry.fn.toString();
+    return source.length > MAX_FN_SOURCE_LEN ? source.slice(0, MAX_FN_SOURCE_LEN) : source;
+  } catch {
+    // An exotic proxy can throw here. Null means "no source", which the caller
+    // already has to handle for a component whose function was never captured.
+    return null;
+  }
+}
+
+function answerQuery(query: PickQuery): void {
+  if (query.kind === 'source') {
+    emit({ kind: 'reply', id: query.id, source: componentSource(query.group, query.index) });
+    return;
+  }
+
+  if (query.index === null) {
+    hideHighlight();
+    emit({ kind: 'reply', id: query.id, ok: true });
+    return;
+  }
+
+  emit({ kind: 'reply', id: query.id, ok: highlight(query.group, query.index).found });
+}
+
+// ── The control channel ──────────────────────────────────────────────────────
+
+function onControlMessage(event: MessageEvent<ControlMessage | AgentQueryMessage>): void {
+  // Same window, same origin — the same check the recorder applies to us.
+  if (event.source !== window || event.origin !== window.location.origin) return;
+
+  const data = event.data;
+  if (!data || data.__devflow_control__ !== CONTROL_MESSAGE_SOURCE) return;
+
+  if ('query' in data) {
+    // A page can post this envelope; a malformed query is ignored rather than
+    // allowed to throw out of a listener the recorder also depends on.
+    if (data.query && typeof data.query.id === 'number') answerQuery(data.query);
+    return;
+  }
+
+  /*
+   * Everything below runs whatever the recorder's probes concluded.
+   *
+   * `reactGaveUp` used to short-circuit this whole handler, which had two
+   * consequences worth naming. Settings stopped reaching the page's realm the
+   * moment the React probe gave up, so a body cap or a console level changed
+   * afterwards was silently ignored for the rest of the document's life — and
+   * console and network capture have nothing to do with React. And the picker
+   * could not be armed at all on such a page, which is precisely the page a user
+   * reaches for the picker on: they clicked three times outside the React root,
+   * and now they want to know what is inside it.
+   */
+  applyConfig(data.config);
+  applyPicking(Boolean(data.picking));
+  applyRecording(Boolean(data.recording));
+}
+
+function listenForControl(): void {
+  window.addEventListener('message', onControlMessage);
+}
+
+// ── Installation ─────────────────────────────────────────────────────────────
+
+/**
+ * Everything in this file with a side effect on the page, in one place.
+ *
+ * Nothing above this line patches, listens or draws at import time. That is what
+ * makes the guard below possible, and it is worth keeping: this script runs at
+ * `document_start` on every page the user opens.
+ */
+function install(): void {
+  patchConsole();
+  watchUncaught();
+  // The one place `window.fetch` is assigned; see `patchedFetch` and
+  // `tests/react-isolation.test.ts`.
+  window.fetch = patchedFetch;
+  patchXhr();
+  listenForControl();
+}
+
+const pageGlobals = window as unknown as Record<string, unknown>;
+
+/*
+ * One agent per document.
+ *
+ * The manifest injects this once, so a second copy means something re-injected
+ * it — a leftover `chrome.scripting` call, an extension reload against a page
+ * that was already open. Installing twice is not merely redundant: `console`,
+ * `fetch` and `XMLHttpRequest` would each be wrapped by two agents, so every
+ * request and every log line would be reported twice and land on the step twice,
+ * and the second agent's `originalFetch` would be the first agent's patched one.
+ *
+ * This is the whole of what `PAGE_GLOBALS.agent` is for. It used to be an API
+ * object, because react-source-locator's panel called into the page by
+ * `inspectedWindow.eval` and needed something to call; there is a message
+ * channel now, so what is left is the flag that says somebody is home. Frozen,
+ * so a page cannot make a second injection look like a first by deleting it —
+ * `delete` on a non-configurable property is a no-op outside strict mode and
+ * throws inside it, and either way the property stays.
+ */
+if (!pageGlobals[PAGE_GLOBALS.agent]) {
+  Object.defineProperty(pageGlobals, PAGE_GLOBALS.agent, {
+    value: Object.freeze({ installed: true }),
+    writable: false,
+    configurable: false,
+    enumerable: false,
+  });
+  install();
+}

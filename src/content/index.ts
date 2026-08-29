@@ -5,6 +5,13 @@
  * Shares the DOM with the page but not its JS context, which is why network and
  * console data arrives from `injected/agent.ts` by `postMessage` rather than
  * being read directly.
+ *
+ * It is also the relay between the extension and the picker. The popup and the
+ * DevTools panel have no scripting relationship with the page at all — the panel
+ * used to `eval` an agent into it, and that is one of the two things this merge
+ * deletes — so `START_PICK`, `CANCEL_PICK`, `READ_COMPONENT_SOURCE` and
+ * `HIGHLIGHT_COMPONENT` arrive here as `chrome.runtime` messages and leave as
+ * `postMessage` on the same channel that already carries the recording switch.
  */
 
 import {
@@ -42,10 +49,35 @@ import {
   type CapturedComponent,
   type ContentRequest,
 } from '../shared/messages.js';
-import type { BoundingBox, ConsoleEntry, DraftStep, NetworkCall } from '../shared/types.js';
+import type {
+  BoundingBox,
+  ConsoleEntry,
+  DraftStep,
+  NetworkCall,
+  PickResult,
+} from '../shared/types.js';
+/*
+ * Type-only, so nothing of the agent is bundled into the content script — an
+ * ordinary import would pull `injected/agent.ts` and its console, fetch and XHR
+ * patches into the isolated world, where they would observe nothing and patch
+ * the wrong realm. See the note on `PickQuery` in that file for why the wire
+ * shape lives there rather than in `shared/messages.ts`.
+ */
+import type { AgentQueryReply, PickQuery } from '../injected/agent.js';
 
 let isRecording = false;
 let isPaused = false;
+
+/**
+ * Whether a pick is armed in this page.
+ *
+ * A third state alongside recording and paused, and deliberately not folded into
+ * them: the picker and the recorder are two independent switches on one agent.
+ * Kept here rather than only in the page because every control message carries
+ * both flags, and a stale `picking: true` on the next settings change would
+ * re-arm a picker the user has already used.
+ */
+let isPicking = false;
 
 /** Buffers filled by the MAIN-world agent, drained onto the next step. */
 let pendingLogs: ConsoleEntry[] = [];
@@ -105,11 +137,16 @@ let captureReact = REACT_SETTING_DEFAULTS.reactCapture;
  * is that it cannot be watching without also having been told the current
  * settings. One message makes that true by construction.
  */
-function postControl(recording: boolean): void {
+function postControl(recording: boolean, picking: boolean): void {
   window.postMessage(
     {
-      __flowsnap_control__: CONTROL_MESSAGE_SOURCE,
+      __devflow_control__: CONTROL_MESSAGE_SOURCE,
       recording,
+      // Independent of `recording`, and carried on the same message for the same
+      // reason the config is: the agent must never be in a state the content
+      // script did not put it in. A user can pick a component with nothing
+      // recording, and record for an hour without picking.
+      picking,
       // Built from the *frozen* settings, so the MAIN world cannot be told a
       // body cap the recording it is capturing for was not started under. It is
       // the one path a setting has into the page's realm, and the one that
@@ -123,21 +160,43 @@ function postControl(recording: boolean): void {
 
 /** What the agent should be doing right now: recording, live, and switched on. */
 function syncAgent(): void {
-  postControl(isRecording && !isPaused && captureReact);
+  postControl(isRecording && !isPaused && captureReact, isPicking);
 }
 
 // ── Agent bridge ─────────────────────────────────────────────────────────────
 
-window.addEventListener('message', (event: MessageEvent<AgentMessage>) => {
+window.addEventListener('message', (event: MessageEvent<AgentMessage | AgentQueryReply>) => {
   // Only this window's own agent may contribute. Without this check any page
   // script or cross-origin iframe could post the same envelope and inject
   // fabricated network calls and log lines into the recording — which then flow
   // into an AI's context as if they had been observed.
   if (event.source !== window || event.origin !== window.location.origin) return;
-  if (!isRecording || isPaused) return;
 
   const data = event.data;
-  if (!data || data.__flowsnap_source__ !== AGENT_MESSAGE_SOURCE) return;
+  if (!data || data.__devflow_source__ !== AGENT_MESSAGE_SOURCE) return;
+
+  /*
+   * The picker's messages come first, before the recording gate below.
+   *
+   * Picking and recording are independent switches, and a pick is most often
+   * made with nothing recording at all — so gating the whole listener on
+   * `isRecording`, as it was written for the recorder alone, would have thrown
+   * away every pick result the user ever asked for.
+   */
+  if (data.kind === 'pick') {
+    settlePick(data.result);
+    return;
+  }
+  if (data.kind === 'reply') {
+    const settle = pendingQueries.get(data.id);
+    if (settle) {
+      pendingQueries.delete(data.id);
+      settle(data);
+    }
+    return;
+  }
+
+  if (!isRecording || isPaused) return;
 
   if (data.kind === 'log') {
     pendingLogs.push({
@@ -183,6 +242,70 @@ window.addEventListener('message', (event: MessageEvent<AgentMessage>) => {
     });
   }
 });
+
+// ── Picking ──────────────────────────────────────────────────────────────────
+
+/**
+ * The `START_PICK` that is still waiting for an answer.
+ *
+ * A pick is one gesture with one outcome, so the request is answered rather than
+ * broadcast: `chrome.runtime.onMessage` keeps the channel open while a listener
+ * returns `true`, and the result travels back along it whenever the user gets
+ * round to clicking. That is the whole of what replaces upstream's 150 ms poll
+ * of a page global.
+ *
+ * The agent guarantees exactly one outcome per arm — a component, a click that
+ * found no React, Escape, or `PICK_TIMEOUT_MS` — so this is cleared exactly once.
+ */
+let pendingPick: ((result: PickResult) => void) | null = null;
+
+function settlePick(result: PickResult): void {
+  // The agent disarms itself the moment it reports, so this is bookkeeping
+  // rather than an instruction: it stops the next control message from carrying
+  // a `picking: true` that would arm a second pick nobody asked for.
+  isPicking = false;
+
+  const answer = pendingPick;
+  pendingPick = null;
+  answer?.(result);
+}
+
+/**
+ * How long to wait for the agent to answer a question about the last pick.
+ *
+ * Not a setting and not a budget — it is a liveness backstop. The agent is a
+ * manifest content script and is always there, so the only way a reply never
+ * arrives is that something is badly wrong (an `about:` document where the MAIN
+ * world never ran, a page that navigated between the question and the answer).
+ * Long enough to be invisible when things work, short enough that the surface
+ * that asked gets an answer rather than a spinner that never stops.
+ */
+const AGENT_QUERY_TIMEOUT_MS = 1000;
+
+const pendingQueries = new Map<number, (reply: AgentQueryReply | null) => void>();
+let nextQueryId = 1;
+
+/** Asks the page a question about the last pick, resolving null if it never answers. */
+function askAgent(query: Omit<PickQuery, 'id'>): Promise<AgentQueryReply | null> {
+  const id = nextQueryId++;
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingQueries.delete(id);
+      resolve(null);
+    }, AGENT_QUERY_TIMEOUT_MS);
+
+    pendingQueries.set(id, (reply) => {
+      clearTimeout(timer);
+      resolve(reply);
+    });
+
+    window.postMessage(
+      { __devflow_control__: CONTROL_MESSAGE_SOURCE, query: { ...query, id } as PickQuery },
+      '*',
+    );
+  });
+}
 
 // ── Control messages ─────────────────────────────────────────────────────────
 
@@ -237,6 +360,59 @@ chrome.runtime.onMessage.addListener((message: ContentRequest, _sender, sendResp
       // Answered whether or not this tab is recording: the worker only asks the
       // tab it is about to photograph, and refusing would cost the correction.
       sendResponse({ x: window.scrollX, y: window.scrollY });
+      return true;
+
+    /*
+     * Answered when the pick *finishes*, not when the picker is armed.
+     *
+     * The channel stays open for as long as the gesture takes — up to
+     * `PICK_TIMEOUT_MS`, after which the agent reports `cancelled` and this
+     * settles anyway. Nothing polls, and nothing has to be told twice.
+     *
+     * A second `START_PICK` while one is outstanding supersedes it: two surfaces
+     * can both offer "Pick component", and whichever asked last is the one the
+     * user is looking at. The first is answered `cancelled` rather than left
+     * hanging, so its surface can return to idle instead of waiting for a result
+     * that will never come. The page's picker is already armed at that point and
+     * is left alone — the second request adopts it, including the remainder of
+     * the timeout the first one started, which is the right answer for a user who
+     * is in the middle of one gesture rather than starting a new one.
+     */
+    case 'START_PICK':
+      settlePick({ kind: 'cancelled' });
+      pendingPick = sendResponse;
+      isPicking = true;
+      syncAgent();
+      return true;
+
+    case 'CANCEL_PICK':
+      isPicking = false;
+      syncAgent();
+      // The agent is told to disarm without reporting, so the outstanding
+      // request is settled from here — by the surface that cancelled it.
+      settlePick({ kind: 'cancelled' });
+      sendResponse({ ok: true });
+      return true;
+
+    /*
+     * Both of these are answered *from the page*, because both need something
+     * that cannot cross a message: a function to call `toString()` on, and the
+     * DOM nodes a component currently occupies. See `PickQuery` in
+     * `injected/agent.ts`.
+     */
+    case 'READ_COMPONENT_SOURCE':
+      void askAgent({ kind: 'source', group: message.group, index: message.index }).then((reply) =>
+        sendResponse({ source: reply?.source ?? null }),
+      );
+      return true;
+
+    case 'HIGHLIGHT_COMPONENT':
+      // `ok: false` is an ordinary answer, not a failure: the component may have
+      // unmounted since the pick, and the surface asking would rather grey the
+      // row than claim it drew something.
+      void askAgent({ kind: 'highlight', group: message.group, index: message.index }).then(
+        (reply) => sendResponse({ ok: Boolean(reply?.ok) }),
+      );
       return true;
   }
 

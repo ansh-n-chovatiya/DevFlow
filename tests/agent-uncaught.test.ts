@@ -16,7 +16,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { AGENT_MESSAGE_SOURCE } from '../src/shared/constants.js';
 
 interface LogMessage {
-  __flowsnap_source__: string;
+  __devflow_source__: string;
   kind: string;
   level: string;
   args: string[];
@@ -40,7 +40,7 @@ beforeAll(async () => {
   window.fetch = () => Promise.resolve(new Response('{}', { status: 200 }));
 
   window.addEventListener('message', (event: MessageEvent<LogMessage>) => {
-    if (event.data?.__flowsnap_source__ === AGENT_MESSAGE_SOURCE) seen.push(event.data);
+    if (event.data?.__devflow_source__ === AGENT_MESSAGE_SOURCE) seen.push(event.data);
   });
 
   await import('../src/injected/agent.js');
