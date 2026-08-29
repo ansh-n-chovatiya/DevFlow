@@ -395,6 +395,7 @@ function renderCard(source: ComponentSource): void {
     onCopyPath: (path) => void copyPath(path),
     onOpenEditor: (url) => void openInEditor(url),
     onOpenSources: openInSources,
+    onPickAnother: () => void startPick(),
   });
 
   // The card is the selected component, so it gets the same page highlight its

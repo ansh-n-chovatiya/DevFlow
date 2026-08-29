@@ -264,6 +264,10 @@ export interface ResultCardOptions {
    * so — the button is not rendered rather than rendered and inert.
    */
   readonly onOpenSources?: (compiled: CompiledPosition) => void;
+  /**
+   * Start another pick gesture on the page.
+   */
+  readonly onPickAnother?: () => void;
 }
 
 /**
@@ -385,18 +389,27 @@ function ambiguity(matchCount: number, resourcesSearched?: number): HTMLElement 
   return banner;
 }
 
-/** Null when neither action is available, so the card does not grow an empty row. */
+/** Null when no action is available, so the card does not grow an empty row. */
 function actionRow(options: ResultCardOptions): HTMLElement | null {
   const row = make('div', 'result-card__actions');
 
   const editorUrl = componentEditorUrl(options.source, options.link ?? null);
   const onOpenEditor = options.onOpenEditor;
-  if (editorUrl && onOpenEditor) {
-    row.append(
-      actionButton('arrow-up-right', 'Open in Editor', 'btn btn--primary btn--compact', () =>
-        onOpenEditor(editorUrl),
-      ),
-    );
+  if (onOpenEditor) {
+    if (editorUrl) {
+      row.append(
+        actionButton('arrow-up-right', 'Open in Editor', 'btn btn--primary btn--compact', () =>
+          onOpenEditor(editorUrl),
+        ),
+      );
+    } else {
+      const btn = actionButton('arrow-up-right', 'Open in Editor', 'btn btn--primary btn--compact', () => {});
+      btn.disabled = true;
+      btn.title = options.source.source
+        ? 'Set a project root in Settings to enable editor links.'
+        : 'No original source resolved, so there is no file to open.';
+      row.append(btn);
+    }
   }
 
   const compiled = options.source.compiled;
@@ -406,6 +419,23 @@ function actionRow(options: ResultCardOptions): HTMLElement | null {
       actionButton('code', 'Open in Sources', 'btn btn--secondary btn--compact', () =>
         onOpenSources(compiled),
       ),
+    );
+  }
+
+  const path = pathText(options.source);
+  const onCopyPath = options.onCopyPath;
+  if (path && onCopyPath) {
+    row.append(
+      actionButton('copy', 'Copy', 'btn btn--secondary btn--compact', () =>
+        onCopyPath(path),
+      ),
+    );
+  }
+
+  const onPickAnother = options.onPickAnother;
+  if (onPickAnother) {
+    row.append(
+      actionButton('crosshair', 'Pick Another', 'btn btn--secondary btn--compact', onPickAnother),
     );
   }
 

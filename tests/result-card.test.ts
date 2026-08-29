@@ -249,6 +249,7 @@ describe('resultCard', () => {
       node.textContent?.includes('Open in Editor'),
     );
     expect(button).toBeDefined();
+    expect(button?.disabled).toBe(false);
 
     button?.click();
     expect(onOpenEditor).toHaveBeenCalledWith(
@@ -256,23 +257,33 @@ describe('resultCard', () => {
     );
   });
 
-  it('still shows the path when there is no link — null is the common case', () => {
+  it('renders a disabled Open in Editor button with tooltip when there is no link', () => {
     const card = resultCard({ source: resolved(), link: null, onOpenEditor: vi.fn() });
 
-    expect(card.textContent).not.toContain('Open in Editor');
+    const button = [...card.querySelectorAll('button')].find((node) =>
+      node.textContent?.includes('Open in Editor'),
+    );
+    expect(button).toBeDefined();
+    expect(button?.disabled).toBe(true);
+    expect(button?.title).toBe('Set a project root in Settings to enable editor links.');
     expect(text(card, '.result-card__path-text')).toBe('src/checkout/CartSummary.tsx:42:7');
     // A missing link is not an error, so nothing about the card says it is.
     expect(card.querySelector('.banner')).toBeNull();
   });
 
-  it('offers no editor link for a component with no original source', () => {
+  it('renders a disabled Open in Editor button for a component with no original source', () => {
     const compiledOnly = component({
       status: 'compiled-only',
       via: 'bundle-search',
       compiled: { url: 'https://x.test/a.js', line: pos0(3), column: pos0(1) },
     });
     const card = resultCard({ source: compiledOnly, link: LINK, onOpenEditor: vi.fn() });
-    expect(card.textContent).not.toContain('Open in Editor');
+    const button = [...card.querySelectorAll('button')].find((node) =>
+      node.textContent?.includes('Open in Editor'),
+    );
+    expect(button).toBeDefined();
+    expect(button?.disabled).toBe(true);
+    expect(button?.title).toBe('No original source resolved, so there is no file to open.');
   });
 
   // ── Open in Sources ────────────────────────────────────────────────────────
@@ -303,6 +314,28 @@ describe('resultCard', () => {
   it('omits Open in Sources on a surface that has no Sources panel', () => {
     const card = resultCard({ source: resolved() });
     expect(card.textContent).not.toContain('Open in Sources');
+  });
+
+  // ── Copy & Pick Another Action Buttons ──────────────────────────────────────
+
+  it('offers Copy and Pick Another buttons in the action row when handlers are provided', () => {
+    const onCopyPath = vi.fn();
+    const onPickAnother = vi.fn();
+    const card = resultCard({ source: resolved(), onCopyPath, onPickAnother });
+
+    const copyBtn = [...card.querySelectorAll<HTMLButtonElement>('.result-card__actions button')].find((node) =>
+      node.textContent?.includes('Copy'),
+    );
+    expect(copyBtn).toBeDefined();
+    copyBtn?.click();
+    expect(onCopyPath).toHaveBeenCalledWith('src/checkout/CartSummary.tsx:42:7');
+
+    const pickBtn = [...card.querySelectorAll<HTMLButtonElement>('.result-card__actions button')].find((node) =>
+      node.textContent?.includes('Pick Another'),
+    );
+    expect(pickBtn).toBeDefined();
+    pickBtn?.click();
+    expect(onPickAnother).toHaveBeenCalled();
   });
 
   // ── Ambiguity ──────────────────────────────────────────────────────────────

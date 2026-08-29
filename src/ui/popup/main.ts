@@ -299,6 +299,7 @@ function renderCard(mount: HTMLElement, located: Located | null): void {
       resourcesSearched: located.resourcesSearched,
       onCopyPath: (path) => void copyPath(path),
       onOpenEditor: (url) => void openInEditor(url),
+      onPickAnother: locateTabId !== null ? () => void runPick(locateTabId) : undefined,
     }),
   );
 }
