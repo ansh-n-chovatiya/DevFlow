@@ -439,6 +439,25 @@ export interface LocalStorageShape {
    * build, which the timer treats as "unknown" rather than "zero".
    */
   recordingStartedAt: number | null;
+  /**
+   * The tab being recorded, so a surface that is not that tab can address it.
+   *
+   * Written in the same batch as `recordingActive: true` and cleared with it, so
+   * there is never a stale id naming a tab nothing is recording.
+   *
+   * It exists because the flow review needs it and cannot derive it. Arming the
+   * picker is `START_PICK { tabId }`, and the viewer is a tab of its own —
+   * `getActiveTab()` answers with the viewer, which is the one tab the question
+   * is never about. Without this the review can say which steps touched a
+   * component (`stepsForComponentName`) but cannot go the other way and let you
+   * pick one, which is half of the bridge that makes recording and locating one
+   * product rather than two features.
+   *
+   * A tab id and not a `Tab`: ids are what every message in this extension is
+   * addressed by, and anything else about the tab has gone stale by the time a
+   * recording is being reviewed.
+   */
+  recordingTabId: number | null;
   recordedSteps: Step[];
   exportOptions: ExportOptions;
   /**
