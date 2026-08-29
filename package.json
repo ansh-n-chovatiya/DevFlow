@@ -1,6 +1,6 @@
 {
   "name": "devflow",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "private": true,
   "description": "Chrome extension that records browser flows and locates any React component's original source — one engine, two surfaces.",
   "license": "MIT",

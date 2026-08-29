@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.1.1 — 2026-08-29
 
 **The panel's result view reads in the right order.** `Source preview` is the
 picked component's own code, so it now sits directly under the card that named
