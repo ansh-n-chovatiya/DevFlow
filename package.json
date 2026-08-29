@@ -35,6 +35,7 @@
     "lint:tokens": "node scripts/check-tokens.mjs",
     "lint:settings-ui": "node scripts/check-settings-ui.mjs",
     "lint:graphify": "node scripts/check-graphify.mjs",
+    "lint:brand": "node scripts/check-brand.mjs",
     "test": "vitest run",
     "pretest": "npm run build:mcp && npm run build:settings",
     "pretest:watch": "npm run build:mcp && npm run build:settings",
@@ -45,7 +46,7 @@
     "sync-version": "node scripts/sync-version.mjs",
     "version": "npm run sync-version && git add public/manifest.json mcp-server/package.json",
     "package": "npm run verify && node scripts/package.mjs",
-    "verify": "npm run typecheck && npm run lint && npm run lint:tokens && npm run lint:settings-ui && npm run lint:graphify && npm run test && npm run build"
+    "verify": "npm run typecheck && npm run lint && npm run lint:tokens && npm run lint:settings-ui && npm run lint:graphify && npm run lint:brand && npm run test && npm run build"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

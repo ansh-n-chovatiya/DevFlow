@@ -74,7 +74,7 @@ jobs:
             1. Download the `.zip` below and unzip it.
             2. Open `chrome://extensions`, enable **Developer mode**.
             3. **Load unpacked** → select the unzipped folder.
-            4. Pin FlowSnap to the toolbar and press **Start Recording**.
+            4. Pin DevFlow to the toolbar and press **Start Recording**.
 
             ### Connect it to Claude Code
 
@@ -90,7 +90,7 @@ jobs:
       # Still useful on a manual dispatch, where no release is created.
       - uses: actions/upload-artifact@v4
         with:
-          name: flowsnap
+          name: devflow
           path: releases/*.zip
 
       # Last, so a registry problem cannot cost us the extension release — that

@@ -82,8 +82,17 @@ export function mergeComponents(
 
     if (Object.keys(table).length >= limit) {
       if (!table[CAPPED_ID]) {
+        // `name` is not a component name here, and it must not read as one.
+        //
+        // The marker rides in the component table because that is where the
+        // fact belongs — `countComponents` and `pruneComponents` both special-
+        // case it, and the markdown export prints its `detail` as a note under
+        // the table rather than as a row. But nothing stops it reaching a
+        // surface that renders `ComponentSource.name` verbatim: the shared
+        // result card puts that string in an `<h3>`, and the JSON export ships
+        // it to whoever reads the flow. So the name says what the row is.
         table[CAPPED_ID] = {
-          name: 'FlowSnap',
+          name: 'Component cap',
           status: 'skipped',
           detail: `More than ${limit} distinct components were seen in this flow; later ones were not recorded.`,
         };

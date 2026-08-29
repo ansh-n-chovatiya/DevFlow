@@ -249,12 +249,12 @@ describe('exportToMarkdown · React components', () => {
     const md = exportToMarkdown([chained(['cart'])], {
       react: react({
         cart: { name: 'Cart', status: 'resolved', source: 'src/Cart.tsx', line: pos1(3) },
-        [CAPPED_ID]: { name: 'FlowSnap', status: 'skipped', detail: 'More than 128 components.' },
+        [CAPPED_ID]: { name: 'Component cap', status: 'skipped', detail: 'More than 128 components.' },
       }),
     });
 
     expect(md).toContain('> More than 128 components.');
-    expect(md).not.toContain('| FlowSnap |');
+    expect(md).not.toContain('| Component cap |');
   });
 
   it('leaves out the table when the surviving steps reference nothing', () => {

@@ -20,7 +20,7 @@ const shaIndex = process.argv.indexOf('--sha');
 const sha = shaIndex === -1 ? null : process.argv[shaIndex + 1]?.slice(0, 7);
 
 const { version } = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
-const name = sha ? `flowsnap-${version}-${sha}.zip` : `flowsnap-${version}.zip`;
+const name = sha ? `devflow-${version}-${sha}.zip` : `devflow-${version}.zip`;
 const out = resolve(releases, name);
 
 mkdirSync(releases, { recursive: true });

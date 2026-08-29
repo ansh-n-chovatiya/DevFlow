@@ -84,7 +84,7 @@ describe('the payload carries the component table', () => {
   it('keeps the cap marker, which is a fact about the flow rather than one step', () => {
     const table = react({
       cart: resolved('Cart', 'src/Cart.tsx'),
-      [CAPPED_ID]: { name: 'FlowSnap', status: 'skipped', detail: 'too many components' },
+      [CAPPED_ID]: { name: 'Component cap', status: 'skipped', detail: 'too many components' },
     });
 
     const payload = buildPayload('flow-1', 'Checkout', [step(['cart'])], NOW, table);

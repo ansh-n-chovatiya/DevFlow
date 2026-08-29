@@ -1,5 +1,5 @@
 /**
- * Every way FlowSnap can fail, and what to tell the user about it.
+ * Every way DevFlow can fail, and what to tell the user about it.
  *
  * The message is written for the person looking at the popup, not for a log:
  * it says what happened and what to do next. `detail` carries the raw Chrome
@@ -41,12 +41,12 @@ const MESSAGES: Record<FlowErrorCode, string> = {
   TAB_NOT_RECORDABLE:
     'Chrome blocks extensions on internal pages like chrome:// and the Web Store. Open a normal web page and try again.',
   TAB_NOT_READY:
-    'This tab was open before FlowSnap was installed. Reload it and FlowSnap can record it.',
+    'This tab was open before DevFlow was installed. Reload it and DevFlow can record it.',
   TAB_GONE: 'That tab was closed before the step could be saved.',
   CAPTURE_FAILED: "Chrome wouldn't screenshot that page. The step was saved without an image.",
   CAPTURE_RATE_LIMITED:
     'Chrome limits how often extensions can screenshot. Some steps may have no image.',
-  INJECTION_FAILED: "FlowSnap couldn't start on this tab. Reload the page and try again.",
+  INJECTION_FAILED: "DevFlow couldn't start on this tab. Reload the page and try again.",
   // The fallback only. Every real instance overrides it, because what to do
   // about a 40 MB file and what to do about a PDF are different sentences.
   IMAGE_UNUSABLE: "That file can't be used as a screenshot.",
@@ -55,7 +55,7 @@ const MESSAGES: Record<FlowErrorCode, string> = {
   // last clause matters — the flow is in the library, so this is a retry, not a
   // loss, and the old copy left people thinking they had just lost a recording.
   MCP_UNREACHABLE:
-    'The FlowSnap MCP server is not running, so nothing was sent. Open Claude Code and try again — this flow is saved.',
+    'The DevFlow MCP server is not running, so nothing was sent. Open Claude Code and try again — this flow is saved.',
   // The last two never reach the popup: a bundle that will not load costs one
   // component its source file and nothing else, and the flow says so in the
   // component's own `detail`. They are `FlowError`s so that the fetch wrapper

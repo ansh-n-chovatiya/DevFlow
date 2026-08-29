@@ -747,7 +747,7 @@ function finish(
   let touched = changed;
 
   const detail = input.disabled
-    ? 'Finding source files is switched off in FlowSnap settings.'
+    ? '“Find the file each component was written in” is switched off in Settings.'
     : 'The flow finished before this component could be looked up.';
 
   for (const [id, entry] of Object.entries(components)) {

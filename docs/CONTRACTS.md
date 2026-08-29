@@ -142,7 +142,7 @@ Three consequences bind every package:
 
 ### 3.1 · Keys inherited unchanged
 
-The 74 keys already in `public/settings.default.json` keep their names, types and
+The 73 keys already in `public/settings.default.json` keep their names, types and
 defaults. They are generated, so that file — not this one — is the authority for
 their values. Grouped by prefix: `annotation.*`, `console.*`, `export.*`,
 `mcp.*`, `network.*`, `react.*`, `recording.*`, `screenshots.*`, `thumbnails.*`,

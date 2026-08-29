@@ -106,6 +106,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: flowsnap-${{ github.sha }}
+          name: devflow-${{ github.sha }}
           path: releases/*.zip
           if-no-files-found: error

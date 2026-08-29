@@ -282,7 +282,7 @@ describe('every truncation says what it cut', () => {
 
 describe('the component cap survives an empty table', () => {
   const CAP: ComponentSource = {
-    name: 'FlowSnap',
+    name: 'Component cap',
     status: 'skipped',
     detail: 'More than 128 components.',
   };

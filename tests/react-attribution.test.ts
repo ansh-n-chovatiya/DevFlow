@@ -61,7 +61,7 @@ describe('pruneComponents', () => {
   it('keeps the cap marker, which is a fact about the flow rather than a step', () => {
     const table = {
       cart: resolved('Cart', 'src/Cart.tsx'),
-      [CAPPED_ID]: { name: 'FlowSnap', status: 'skipped', detail: 'too many' } as ComponentSource,
+      [CAPPED_ID]: { name: 'Component cap', status: 'skipped', detail: 'too many' } as ComponentSource,
     };
 
     expect(pruneComponents([step(['cart'])], table)[CAPPED_ID]).toBeDefined();
@@ -146,7 +146,7 @@ describe('countComponents', () => {
     b: resolved('B', 'src/B.tsx'),
     c: { name: 'C', status: 'ambiguous', source: 'src/C.tsx', line: pos1(3), matchCount: 2 },
     d: { name: 'D', status: 'not-found' },
-    [CAPPED_ID]: { name: 'FlowSnap', status: 'skipped' },
+    [CAPPED_ID]: { name: 'Component cap', status: 'skipped' },
   };
 
   it('counts by outcome and never counts the cap marker as a component', () => {

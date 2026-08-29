@@ -348,7 +348,7 @@ describe('resolvePending', () => {
     expect(result.components.cart).toEqual({
       name: 'Cart',
       status: 'skipped',
-      detail: 'Finding source files is switched off in FlowSnap settings.',
+      detail: '“Find the file each component was written in” is switched off in Settings.',
     });
     expect(result.needles).toEqual({});
   });
