@@ -1,0 +1,463 @@
+/*
+ * Result — everything the panel puts *around* the result card: the ambiguity
+ * banner, the filter field and category chips, the parent-tree and sibling
+ * lists, and the source-preview disclosure.
+ *
+ * This is the densest screen in the panel and the only one that has to survive
+ * a 300px dock, so every horizontal run either wraps, ellipsises, or scrolls
+ * inside its own box — nothing is allowed to widen the page.
+ *
+ * ── What is not here ────────────────────────────────────────────────────────
+ *
+ * The card itself. `.result-card` and its identity block, path button, "via"
+ * badge and action row are src/ui/components/result-card.{ts,css} (package D),
+ * because the panel, the popup and the flow review all render the same card and
+ * it is built once. Everything the locator's result.css said about those
+ * elements went with it. What is left is the view, which is the panel's alone.
+ *
+ * The 45 colour literals. The locator declared the whole five-category palette
+ * here — fg/bg/border for each, three times over for the three theme states —
+ * because this file was where the chips used them. tokens.css now owns them,
+ * re-derived from FlowSnap's data ramp rather than ported, so this file
+ * declares no colour at all and only names `var(--cat-*)`. The `--chip-*`
+ * triple below stays: it aliases, it does not define.
+ */
+
+/*
+ * The result view shares the idle and locating column so the panel's content
+ * does not jump when a locate finishes.
+ */
+.result-view {
+  width: 100%;
+  max-width: 672px;
+  margin: 0 auto;
+}
+
+/* ── Ambiguity banner ────────────────────────────────────────────────────────
+ * `.banner .banner--warn` (components.css) supplies the box, the icon slot and
+ * the right-aligned action slot the dismiss button sits in, so all this view
+ * adds is the one thing the shared banner cannot know: the text in it is a
+ * component or file name, and those are unbreakable identifiers.
+ *
+ *   <div class="banner banner--warn result-banner">
+ *     <span data-icon="triangle-alert" data-icon-class="banner__icon"></span>
+ *     <p class="banner__body">...</p>
+ *     <button class="btn btn--icon btn--compact btn--ghost banner__action"
+ *             aria-label="Dismiss"><span data-icon="x"></span></button>
+ *   </div>
+ */
+.result-banner .banner__body {
+  overflow-wrap: anywhere;
+}
+
+/* ── Filter ──────────────────────────────────────────────────────────────────
+ * The filter and the category chips belong to the trees below, not to the
+ * card's identity block. The locator fenced them off with a border-top because
+ * they lived inside the card; out here the card's own edge does that job, so
+ * the rule is gone and the view's stack gap is the only separation needed.
+ */
+
+.result-filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.filter-field {
+  position: relative;
+}
+
+/*
+ * Room for the shortcut hint, which is overlaid rather than in flow so the
+ * input keeps its full-width hit area.
+ */
+.filter-input {
+  padding-right: 64px;
+}
+
+.filter-kbd {
+  position: absolute;
+  top: 50%;
+  right: var(--space-2);
+  transform: translateY(-50%);
+  display: flex;
+  gap: var(--space-1);
+  pointer-events: none;
+}
+
+/* ── Category chips ──────────────────────────────────────────────────────────
+ * Category toggles sit beside the trees rather than in Settings because they
+ * are adjusted far more often than anything else there. Pressed means hidden.
+ *
+ * The box is `.chip` from components.css — pill, mono, uppercase, 20px tall —
+ * rather than a shape of this view's own. A component category is a machine's
+ * word in exactly the way an HTTP method or a console level is, which is the
+ * rule `.chip` already encodes, and reusing it is what makes the panel's
+ * filters and the flow review's filters read as the same control.
+ */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/*
+ * Tint as a local triple, rather than components.css's single `--chip-tint`
+ * fed through color-mix. The categories are the one data set in tokens.css
+ * declared as explicit fg/bg/border triples — they were 45 hand-picked
+ * literals before Wave 0 re-derived them — so mixing one hue back out of a
+ * single token would discard values that were chosen per role. The alias also
+ * keeps the per-category rules one line each, and leaves an un-tagged chip
+ * rendering as the neutral `dependency` bucket rather than as nothing.
+ *
+ * `dependency` is deliberately achromatic: it is the catch-all, and a fifth hue
+ * beside four meaningful ones would imply a distinction that is not there.
+ */
+.chip[data-category] {
+  --chip-fg: var(--cat-dependency-fg);
+  --chip-bg: var(--cat-dependency-bg);
+  --chip-border: var(--cat-dependency-border);
+
+  max-width: 100%;
+  border-color: var(--chip-border);
+  background: var(--chip-bg);
+  color: var(--chip-fg);
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    border-color var(--transition),
+    color var(--transition);
+}
+
+.chip[data-category='routing'] {
+  --chip-fg: var(--cat-routing-fg);
+  --chip-bg: var(--cat-routing-bg);
+  --chip-border: var(--cat-routing-border);
+}
+
+.chip[data-category='providers'] {
+  --chip-fg: var(--cat-providers-fg);
+  --chip-bg: var(--cat-providers-bg);
+  --chip-border: var(--cat-providers-border);
+}
+
+.chip[data-category='react'] {
+  --chip-fg: var(--cat-react-fg);
+  --chip-bg: var(--cat-react-bg);
+  --chip-border: var(--cat-react-border);
+}
+
+.chip[data-category='styling'] {
+  --chip-fg: var(--cat-styling-fg);
+  --chip-bg: var(--cat-styling-bg);
+  --chip-border: var(--cat-styling-border);
+}
+
+.chip[data-category]::before {
+  content: '';
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.chip[data-category]:hover {
+  border-color: var(--chip-fg);
+}
+
+/*
+ * Hidden state. Draining the colour out and striking the label says "these rows
+ * are gone" at a glance; a filled or pressed look would read as "selected",
+ * which is the opposite of what pressing does here. Specificity is deliberate —
+ * this has to beat the per-category rules above, which match just as strongly.
+ */
+.chip[data-category][aria-pressed='true'] {
+  --chip-fg: var(--fg-faint);
+  --chip-bg: transparent;
+  --chip-border: var(--border);
+
+  border-style: dashed;
+}
+
+.chip[data-category][aria-pressed='true'] > span:first-child {
+  text-decoration: line-through;
+}
+
+/*
+ * Not `.chip--count`, which is a whole chip that is a count. This is the count
+ * riding inside a labelled chip, so it only drops the label's tracking.
+ */
+.chip-count {
+  color: var(--fg-muted);
+  font-size: var(--text-label);
+  letter-spacing: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Source preview ──────────────────────────────────────────────────────── */
+
+.preview {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* The `.label` recipe from base.css, spelled out because a <summary> also needs
+   the row layout and the disclosure affordance that a plain label has not. */
+.preview-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+/* The UA triangle is replaced by a chevron that matches the tree rows. */
+.preview-summary::-webkit-details-marker {
+  display: none;
+}
+
+.preview-summary::before {
+  content: '';
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  margin-left: 2px;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: translateY(-1px) rotate(-45deg);
+  transition: transform var(--transition);
+}
+
+.preview[open] .preview-summary::before {
+  transform: translateY(-2px) rotate(45deg);
+}
+
+.preview-code {
+  max-height: 220px;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunk);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  line-height: var(--leading-body);
+
+  /* Long code lines scroll here instead of widening the panel. */
+  overflow: auto;
+}
+
+/*
+ * max-content + min-width lets the row's background and rail span the whole
+ * line: a plain block would stop at the visible width and scroll away.
+ */
+.preview-line {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  padding-right: var(--space-3);
+  white-space: pre;
+}
+
+/*
+ * Left rail rather than a full-bleed tint: the row is often wider than the box,
+ * so a background alone scrolls out of sight.
+ */
+.preview-line-active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.preview-gutter {
+  display: inline-block;
+  width: 4em;
+  padding-right: 1em;
+  color: var(--fg-faint);
+  text-align: right;
+  user-select: none;
+}
+
+/* ── Trees ───────────────────────────────────────────────────────────────────
+ * `Parent tree` and `Siblings` — CONTRACTS.md §4.4.
+ */
+
+.tree-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The `.label` recipe again; markup may carry `class="label tree-heading"`, in
+   which case these declarations are the same ones and nothing changes. */
+.tree-heading {
+  padding-left: 2px;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+/* Also the history drawer's list — same rows, same affordances. */
+.tree-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.tree-list:empty {
+  display: none;
+}
+
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.tree-item + .tree-item {
+  border-top: 1px solid var(--border);
+}
+
+/*
+ * Hover and keyboard focus land on the same row treatment because they mean the
+ * same thing here: this is the row the page highlight is following.
+ */
+.tree-item:hover,
+.tree-item:focus-visible {
+  background: var(--surface-raised);
+}
+
+/*
+ * The list clips its children, so the shared outline has to be drawn inside the
+ * row or the focus ring loses its left and right edges.
+ */
+.tree-item:focus-visible {
+  outline-offset: -2px;
+}
+
+.tree-item.active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/*
+ * Depth is a fixed-width rail, not growing indentation: a 20-deep tree with
+ * per-level padding pushes names off a 300px panel.
+ */
+.tree-rail {
+  flex-shrink: 0;
+  min-width: 2ch;
+  padding-right: var(--space-2);
+  border-right: 1px solid var(--border);
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  line-height: var(--leading-body);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tree-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  line-height: var(--leading-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-item.active .tree-name {
+  color: var(--accent);
+}
+
+/*
+ * Filter matches are warn-tinted, not accent-tinted, because the active row is
+ * already the accent and a match inside it would then be invisible. Warn is the
+ * product's "look here" that is not an action.
+ */
+.tree-name mark {
+  border-radius: var(--radius-xs);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+/* Capped so a long history path can never squeeze the component name out. */
+.tree-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  line-height: var(--leading-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Drawn rather than an icon, because main.ts builds these rows and a pseudo-
+ * element keeps a purely decorative arrow out of the accessibility tree — and
+ * out of hydrateIcons(), which would otherwise mint one SVG per row.
+ */
+.tree-item::after {
+  content: '';
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  margin-right: 1px;
+  border-top: 1.5px solid var(--border-strong);
+  border-right: 1.5px solid var(--border-strong);
+  transform: rotate(45deg);
+  transition: border-color var(--transition);
+}
+
+.tree-item:hover::after,
+.tree-item:focus-visible::after {
+  border-color: var(--fg);
+}
+
+/* ── Narrow dock ─────────────────────────────────────────────────────────────
+ * The locator's rules at this width were both about the card — stretching its
+ * action row into a 2x2 grid and trimming its padding — and left with the card
+ * in package D. What replaces them is the one thing at this width that is the
+ * view's own problem: `.filter-input` reserves 64px on its right for the
+ * shortcut hint, which on a ~276px input is a quarter of the field. Below 380px
+ * the hint goes and the field gets its width back; the shortcut still works.
+ */
+
+@media (max-width: 380px) {
+  .filter-kbd {
+    display: none;
+  }
+
+  .filter-input {
+    padding-right: var(--space-3);
+  }
+}

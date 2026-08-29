@@ -1,0 +1,347 @@
+/*
+ * Locating — the stage checklist shown while a picked component's source is
+ * being resolved, plus a skeleton of the result card that replaces it.
+ *
+ * Every visual difference between a done, active and pending stage is derived
+ * from `data-state` on the row. The controller only ever writes that attribute,
+ * so it can never disagree with this stylesheet about what "active" looks like,
+ * and a stage stays visibly pending until real work is reported against it.
+ *
+ * ── Markup contract ─────────────────────────────────────────────────────────
+ * The stage's assistive-tech label carries both classes:
+ * `<span class="sr-only locating-state"></span>`. `.sr-only` (base.css) is the
+ * product's one visually-hidden recipe; this file only supplies the words. The
+ * locator declared its own copy of the recipe, which is a second answer to a
+ * question the shell has already answered.
+ *
+ * The check inside a completed marker is `<span data-icon="check">` per
+ * CONTRACTS.md §5, so the size rules below target `.icon`.
+ */
+
+/* Shares the idle view's column so the panel does not shift between the two. */
+.locating-view {
+  width: 100%;
+  max-width: 672px;
+  margin: 0 auto;
+}
+
+/* ── Progress panel ──────────────────────────────────────────────────────── */
+
+.locating-panel {
+  padding: var(--pad-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.locating-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  margin-bottom: var(--space-3);
+}
+
+/*
+ * Fixed at the popup-title step rather than the locator's
+ * `clamp(14px, 2.2vw + 8px, 18px)`. DevFlow's type is a fixed ramp of named
+ * sizes — a panel whose headings interpolate between them is a panel that never
+ * quite matches the popup at any width, which is the thing the merge is trying
+ * to avoid. The component name still wraps, which is the responsive behaviour
+ * that actually mattered.
+ */
+.locating-title {
+  min-width: 0;
+  color: var(--fg);
+  font-size: var(--text-popup-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.01em;
+
+  /* Component names are unbroken identifiers; a long one must wrap, not scroll. */
+  overflow-wrap: anywhere;
+}
+
+/* Not `.chip`: this is the component's own name set inline in the title, not a
+   categorical badge, so it stays sentence-cased and keeps the title's colour. */
+.locating-chip {
+  display: inline-block;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  font-weight: var(--weight-normal);
+  overflow-wrap: anywhere;
+}
+
+/* ── Stage checklist ─────────────────────────────────────────────────────── */
+
+.locating-steps {
+  /* Owned here because the connector rail between markers is derived from it. */
+  --locating-step-gap: var(--space-4);
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--locating-step-gap);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunk);
+}
+
+.locating-step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* Pending is the base look: nothing has been claimed about this stage yet. */
+.locating-marker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px; /* optical centring against the label's line box */
+  border: 1.5px solid var(--border-strong);
+  border-radius: 50%;
+  color: transparent; /* the check only becomes visible in the done state */
+}
+
+.locating-marker .icon {
+  width: 10px;
+  height: 10px;
+  stroke-width: 3; /* a 24-unit glyph drawn at 10px needs a heavier stroke to read */
+}
+
+/*
+ * Rail joining consecutive markers, sized from the list's own row gap. The 3px
+ * inset at each end is optical, not spacing — it is the gap that keeps a
+ * hairline from touching the circles it runs between — so it stays a literal.
+ */
+.locating-step:not(:last-child) .locating-marker::after {
+  content: '';
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 50%;
+  width: 1px;
+  height: calc(var(--locating-step-gap) - 6px);
+  transform: translateX(-50%);
+  background: var(--border);
+}
+
+.locating-label {
+  min-width: 0;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  line-height: var(--leading-body);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * State as text for assistive tech: visually the state is only colour and
+ * shape, which conveys nothing without sight. Chrome exposes generated content
+ * to the accessibility tree, so the state can stay next to the rules that draw
+ * it instead of becoming a second thing for the controller to keep in sync.
+ */
+.locating-step[data-state='done'] .locating-marker {
+  border-color: var(--success);
+  background: var(--success);
+  color: var(--bg); /* knockout check — legible on the success fill in both themes */
+}
+
+.locating-step[data-state='done'] .locating-label {
+  color: var(--fg);
+}
+
+.locating-step[data-state='done'] .locating-state::after {
+  content: 'done';
+}
+
+/*
+ * Literally the `.spinner` recipe from components.css — a `--border-strong`
+ * ring with an `--accent` top — applied as a state rather than by reusing the
+ * class, because this same element must also be able to become the filled done
+ * marker. Pending already draws the ring, so active only moves the top edge.
+ */
+.locating-step[data-state='active'] .locating-marker {
+  border-top-color: var(--accent);
+  animation: spin 700ms linear infinite;
+}
+
+.locating-step[data-state='active'] .locating-label {
+  color: var(--accent);
+  font-weight: var(--weight-medium);
+}
+
+.locating-step[data-state='active'] .locating-state::after {
+  content: 'in progress';
+}
+
+.locating-step[data-state='pending'] .locating-state::after {
+  content: 'pending';
+}
+
+/* ── Result-card skeleton ────────────────────────────────────────────────────
+ * Shape-accurate placeholder for the result card that follows: same head / code
+ * block / action row rhythm, so the swap does not jolt the layout. The card
+ * itself is src/ui/components/result-card.css (package D); this is only its
+ * silhouette, which is why the two can live in different files without either
+ * needing to know the other's internals.
+ */
+
+.locating-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+/*
+ * Same gradient, same stops, same size and the same `skeleton-sweep` keyframe
+ * as `.skeleton` in components.css. Deliberately identical: the panel's
+ * placeholder shimmering at a different rate or in different greys from the
+ * viewer's is exactly the kind of tell the merge is meant to remove. Only the
+ * radius differs: most of these bars are 9px tall, and `.skeleton`'s 6px would
+ * round them into lozenges, so they take the smaller radius and the block-sized
+ * pieces below restate the control radius for themselves.
+ */
+.locating-sk-block {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--surface-raised) 25%,
+    var(--surface-sunk) 37%,
+    var(--surface-raised) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-sweep 1.4s ease infinite;
+}
+
+.locating-sk-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.locating-sk-avatar {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-control);
+}
+
+.locating-sk-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.locating-sk-meta > :first-child {
+  width: 40%;
+  height: 12px;
+}
+
+.locating-sk-meta > :last-child {
+  width: 68%;
+  height: 9px;
+}
+
+.locating-sk-code {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunk);
+}
+
+.locating-sk-code > * {
+  height: 9px;
+}
+
+.locating-sk-code > :nth-child(1) {
+  width: 76%;
+}
+
+.locating-sk-code > :nth-child(2) {
+  width: 52%;
+}
+
+.locating-sk-code > :nth-child(3) {
+  width: 86%;
+}
+
+.locating-sk-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* The compact control height, because that is what the real action row is. */
+.locating-sk-actions > * {
+  height: var(--control-height-compact);
+  border-radius: var(--radius-control);
+}
+
+.locating-sk-actions > :nth-child(1) {
+  width: 88px;
+}
+
+.locating-sk-actions > :nth-child(2) {
+  width: 112px;
+}
+
+/* ── Reflow ──────────────────────────────────────────────────────────────── */
+
+/* Side dock (~300px): trim the nesting padding rather than the content. */
+@media (max-width: 400px) {
+  .locating-panel,
+  .locating-skeleton {
+    padding: var(--space-3);
+  }
+
+  .locating-steps {
+    --locating-step-gap: var(--space-3);
+
+    padding: var(--space-2);
+  }
+}
+
+/*
+ * Bottom dock: height is the scarce axis. The checklist is the message, so the
+ * placeholder for a card that does not exist yet is the first thing to drop.
+ */
+@media (max-height: 460px) {
+  .locating-skeleton {
+    display: none;
+  }
+
+  .locating-panel {
+    padding: var(--space-3);
+  }
+
+  .locating-head {
+    margin-bottom: var(--space-2);
+  }
+
+  .locating-steps {
+    --locating-step-gap: var(--space-2);
+
+    padding: var(--space-2);
+  }
+}

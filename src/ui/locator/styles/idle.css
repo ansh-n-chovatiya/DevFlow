@@ -1,0 +1,119 @@
+/*
+ * Idle — the panel with nothing picked yet.
+ *
+ * This is the one file of the four that is a rewrite rather than a re-skin.
+ * What it replaced was the locator's front door: an 80px spinning React mark,
+ * the other extension's name set as a 24px hero title, a 2x2 bento grid of
+ * feature cards and a tip line — 228 lines of a different product introducing
+ * itself, in a design system that no longer exists here. A merged extension has
+ * one front door, and it is the popup. So the panel's idle view becomes what
+ * every other empty surface in DevFlow already is: an icon, what this is, why
+ * it is empty, and the one thing to do about it — `.empty` in
+ * src/ui/styles/components.css.
+ *
+ * The consequence is that this stylesheet owns almost nothing, and that is the
+ * point. An idle panel that needs its own type ramp, its own card and its own
+ * icon treatment is an idle panel that still looks like the other extension,
+ * which is exactly what the Wave 3 side-by-side screenshot checks for.
+ *
+ * ── Markup contract (F writes the HTML, G writes the state) ─────────────────
+ *
+ *   <section class="view view-center surface-grid idle-view">
+ *     <div class="empty">
+ *       <span data-icon="atom" data-icon-class="empty__icon"></span>
+ *       <p class="empty__title">...</p>
+ *       <p class="empty__body">...</p>
+ *       <button class="btn btn--primary idle-action" type="button">
+ *         <span data-icon="crosshair"></span>
+ *         <span>Pick component</span>
+ *       </button>
+ *     </div>
+ *     <p class="idle-tip">... <kbd>Esc</kbd> ...</p>
+ *   </section>
+ *
+ * `atom` is the panel's subject (a React component) and `crosshair` is the
+ * action (pick one) — CONTRACTS.md §5. `Pick component` is frozen: §4.4.
+ *
+ * This file assumes the panel links src/ui/styles/index.css before the locator
+ * stylesheets, which is what makes `.empty`, `.btn`, `kbd` and `.icon` mean the
+ * same thing here as in the popup. All four view stylesheets assume it.
+ */
+
+/*
+ * The idle and locating views share one column so the panel's content does not
+ * shift sideways between two states of the same gesture. 672px is a readable
+ * measure for an undocked panel and is never reached in a side dock.
+ */
+.idle-view {
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 672px;
+  margin: 0 auto;
+}
+
+/*
+ * The action is the reason the view exists, so it takes the tall control height
+ * the popup gives its own primary action. Not `.btn--lg`, which is full-width:
+ * a button stretched across 672px reads as a banner rather than as something to
+ * press.
+ */
+.idle-action {
+  height: var(--control-height-primary);
+  padding: 0 var(--space-5);
+  margin-top: var(--space-1);
+}
+
+/*
+ * One line of keyboard detail, outside the empty state's own stack so it reads
+ * as a footnote rather than as a second sentence competing with the action.
+ */
+.idle-tip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  color: var(--fg-faint);
+  font-size: var(--text-meta);
+  text-align: center;
+}
+
+/* ── Reflow ──────────────────────────────────────────────────────────────────
+ * The panel is whatever size the user drags the dock to, and the two axes fail
+ * differently: a side dock runs out of width at ~300px, a bottom dock runs out
+ * of height at ~200px. Both breakpoints are the locator's, measured against
+ * real DevTools docks; only the values inside them are rebased on the 4px
+ * scale.
+ */
+
+/* Side dock: the empty state already wraps, so only the padding needs to go. */
+@media (max-width: 520px) {
+  .idle-view .empty {
+    padding: var(--space-5) var(--space-3);
+  }
+}
+
+/*
+ * Bottom dock: height is the scarce axis. Shed supporting content in order of
+ * importance so the icon, the title and the button always fit unscrolled.
+ */
+@media (max-height: 520px) {
+  .idle-view {
+    gap: var(--space-2);
+  }
+
+  .idle-view .empty {
+    padding: var(--space-4) var(--space-3);
+  }
+
+  .idle-tip {
+    display: none;
+  }
+}
+
+/* Last thing to go is the explanation; the action still says what to do. */
+@media (max-height: 320px) {
+  .idle-view .empty__body {
+    display: none;
+  }
+}

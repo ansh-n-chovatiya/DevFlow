@@ -1,0 +1,274 @@
+/*
+ * Picking — the picker is armed, so the user's attention is on the inspected
+ * page rather than on this panel. The view therefore explains the gesture and
+ * then gets out of the way: an instruction bar pinned to the top, a decorative
+ * diagram of the gesture centred in whatever height is left, and one supporting
+ * line at the bottom.
+ *
+ * ── Icons ───────────────────────────────────────────────────────────────────
+ * The bespoke `<use href="#i-cursor">` sprite is gone (CONTRACTS.md §5). Markup
+ * declares `<span data-icon="mouse-pointer" class="picking-cursor">` and
+ * hydrateIcons() puts an `<svg class="icon">` inside it, so any rule that has to
+ * reach the drawing itself — size, fill, stroke — targets `.icon` as a
+ * descendant. Sizing by `font-size` on the parent, which is how the locator did
+ * it, does nothing here: FlowSnap's `.icon` is a fixed 16px box, not `1em`.
+ */
+
+.picking-view {
+  min-height: 100%;
+}
+
+/* ── Instruction bar ─────────────────────────────────────────────────────── */
+
+/*
+ * No shadow. The locator lifted this bar with `--shadow`; DevFlow spends
+ * elevation on overlays only and makes depth tonal everywhere else (see the
+ * Elevation note in tokens.css), so the bar sits on `--surface` above the
+ * page's `--bg` with a hairline, which separates it just as well and keeps the
+ * panel consistent with the popup's cards.
+ */
+.picking-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.picking-copy {
+  /*
+   * min-width lets the copy wrap; without it flex refuses to shrink the text
+   * below its longest word and Cancel is pushed off a 300px dock.
+   */
+  flex: 1;
+  min-width: 0;
+}
+
+.picking-title {
+  color: var(--fg);
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.picking-sub {
+  margin-top: 2px;
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+  line-height: var(--leading-body);
+}
+
+/*
+ * Bigger than the 16px `.spinner` this overrides: here it is the "armed" light
+ * rather than a busy indicator. The tinted disc behind the travelling arc keeps
+ * it readable in both themes, where a lone 2px arc nearly vanishes.
+ */
+.picking-spinner {
+  width: 22px;
+  height: 22px;
+  background: var(--accent-soft);
+}
+
+.picking-cancel {
+  flex-shrink: 0;
+}
+
+/* ── Diagram ─────────────────────────────────────────────────────────────────
+ * A miniature of the page being inspected, with one block picked out. Entirely
+ * decorative: it is what the panel shows instead of a spinner while the real
+ * work is happening in another window.
+ */
+
+.picking-stage {
+  /*
+   * Auto block margins absorb the leftover column height, which centres the
+   * diagram between the bar and the footer without a wrapper element.
+   */
+  margin: auto 0;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  width: min(340px, 100%);
+  aspect-ratio: 17 / 10;
+  max-height: 200px;
+  padding: 0 var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-sunk);
+  overflow: hidden;
+}
+
+.picking-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 22%;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.picking-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  margin-left: var(--space-3);
+}
+
+/*
+ * Ragged widths so the skeleton reads as page content, not as a loading state.
+ *
+ * Painted in `--border-strong` rather than a surface tone. The stage is already
+ * the sunk surface, and DevFlow's four-step ramp has nothing between "sunk" and
+ * "raised" that holds contrast against it in both themes — the locator had a
+ * six-step ramp and could afford a `--bg-highest`. `--border-strong` is the
+ * product's neutral structural tone and it reads as a drawn line on the sunk
+ * surface in light and dark alike, which is what these bars are.
+ */
+.picking-line {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+}
+
+.picking-rail .picking-line:nth-child(2) {
+  width: 74%;
+}
+
+.picking-rail .picking-line:nth-child(3) {
+  width: 86%;
+}
+
+.picking-body > .picking-line {
+  width: 40%;
+  opacity: 0.5;
+}
+
+.picking-body > .picking-line:last-child {
+  width: 28%;
+}
+
+.picking-sel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1.5px dashed var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  animation: picking-breathe 2.6s ease-in-out infinite;
+}
+
+.picking-sel .picking-line {
+  width: 52%;
+  opacity: 0.8;
+}
+
+.picking-block {
+  height: 30px;
+  border-radius: var(--radius-xs);
+  background: var(--border-strong);
+  opacity: 0.55;
+}
+
+/*
+ * Filled arrow rather than the stroked treatment the rest of the icons use — it
+ * stands in for the OS pointer, so it has to read as solid, with a rim in the
+ * stage colour to keep it separated from the block it overlaps. Both properties
+ * have to be set on the `.icon` itself: base.css declares `fill: none; stroke:
+ * currentcolor` there, and fill/stroke inherited from the placeholder would
+ * lose to it.
+ */
+.picking-cursor {
+  position: absolute;
+  right: 16%;
+  bottom: -9px;
+  animation: picking-nudge 2.6s ease-in-out infinite;
+}
+
+.picking-cursor .icon {
+  width: 22px;
+  height: 22px;
+  fill: var(--fg);
+  stroke: var(--surface-sunk);
+  stroke-width: 1.4;
+}
+
+/*
+ * Only the midpoint is declared, so the implicit 0%/100% frames are the rule's
+ * own resting values. base.css collapses animations to a single 0.01ms run
+ * under prefers-reduced-motion, which then settles on that resting frame
+ * instead of freezing mid-pulse.
+ *
+ * The border brightens to `--accent-hover` rather than to the locator's
+ * `--accent-strong`. Mapping `--accent-strong` onto `--accent` as the port
+ * table says would have made this keyframe a no-op, since `--accent` is already
+ * the resting colour; `--accent-hover` is DevFlow's brighter step of the same
+ * hue. The halo is `--accent-glow`, which tokens.css added in Wave 0 for
+ * precisely this — the picker's armed state — where the locator reused
+ * `--accent-soft` and drew an invisible ring on its own fill.
+ */
+@keyframes picking-breathe {
+  50% {
+    border-color: var(--accent-hover);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+  }
+}
+
+@keyframes picking-nudge {
+  50% {
+    transform: translate(-3px, -4px);
+  }
+}
+
+/* ── Footer copy ─────────────────────────────────────────────────────────── */
+
+.picking-foot {
+  color: var(--fg-muted);
+  font-size: var(--text-body);
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* ── Reflow ──────────────────────────────────────────────────────────────── */
+
+/* Bottom dock: the diagram is decorative, the instructions are not. */
+@media (max-height: 420px) {
+  .picking-stage {
+    display: none;
+  }
+
+  /*
+   * Without the diagram there is nothing left to absorb the slack, so the
+   * supporting line keeps its place at the foot of the panel.
+   */
+  .picking-foot {
+    margin-top: auto;
+  }
+}
+
+/*
+ * Side dock: at ~300px, Cancel steals enough width that the two copy lines wrap
+ * to five and the bar eats most of the panel. Dropping it onto its own row
+ * gives the copy the full width and roughly halves the bar's height.
+ */
+@media (max-width: 420px) {
+  .picking-bar {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .picking-cancel {
+    flex: 0 0 100%;
+  }
+
+  .picking-foot {
+    font-size: var(--text-meta);
+  }
+}
