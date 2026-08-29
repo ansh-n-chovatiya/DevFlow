@@ -798,27 +798,9 @@ function adopt(settings: Settings): void {
   syncStatusBar();
 }
 
-/**
- * The settings drawer's container, under the id the drawer looks for.
- *
- * `src/panel.html` calls it `#settings-fields` and `settings-drawer.ts` looks for
- * `#settings-rows`; the two files landed in different packages of Wave 1 and
- * neither is this one's to edit. Without this the drawer mounts as `null` and the
- * Settings button does nothing at all — a silent failure, since a `null`
- * controller is the drawer's documented way of saying "no container", which is
- * meant for a page that has no drawer rather than one that has it under another
- * name. Wave 3 picks one spelling and this goes.
- */
-function reconcileDrawerContainer(): void {
-  if (document.getElementById(DRAWER_IDS.rows)) return;
-  const fields = document.getElementById('settings-fields');
-  if (fields) fields.id = DRAWER_IDS.rows;
-}
-
 async function init(): Promise<void> {
   initPanelTheme();
   hydrateIcons();
-  reconcileDrawerContainer();
   wire();
 
   setText('filter-kbd-mod', modifierLabel(navigator.userAgent));

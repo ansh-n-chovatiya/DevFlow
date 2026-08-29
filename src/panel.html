@@ -392,6 +392,13 @@
       managed-policy disabling, which is the drift D9 exists to stop — and
       `lint:settings-ui` fails any settings markup that is not built by
       `ui/settings/components.ts`.
+
+      The container's id is `settings-rows` because that is what `DRAWER_IDS.rows`
+      says, and the drawer returns `null` — silently, since a page with no drawer
+      is a legitimate answer — when it cannot find it. `DRAWER_IDS` promises "a
+      rename is a compile error in both places"; that promise stops at the door of
+      this file, which nothing typechecks, so `tests/panel-markup.test.ts` carries
+      it the rest of the way.
     -->
     <aside id="settings-drawer" class="drawer" hidden aria-label="Settings">
       <div class="drawer-head">
@@ -406,7 +413,7 @@
         </button>
       </div>
 
-      <div id="settings-fields"></div>
+      <div id="settings-rows"></div>
     </aside>
 
     <!-- Recent drawer. Its rows are `.tree-list` — the same rows as the trees. -->
