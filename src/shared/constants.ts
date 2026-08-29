@@ -581,6 +581,30 @@ export const MAX_ANCESTORS = 50;
 export const PICK_TIMEOUT_MS = 120_000;
 
 /**
+ * Whether one interactive locate reads the page's source maps.
+ *
+ * Deliberately a second answer to a question `reactResolve` already answers for
+ * the recorder, because the two costs are paid by different people at different
+ * moments. `reactResolve` gates a background pass over a whole flow; this gates
+ * the one lookup somebody is sitting and waiting for. Folded into one setting,
+ * the only way to stop a slow pick would be to turn off the background pass a
+ * recording depends on, and the only way to get an answer now would be to pay
+ * for that pass first.
+ */
+export const USE_SOURCE_MAPS = true;
+
+/**
+ * Whether a recognised framework category is hidden from the component trees.
+ *
+ * One constant for all five categories because it is one decision, not five:
+ * an app's ancestor chain is mostly routers and providers, and hiding them is
+ * what makes the tree readable at all. The categories are separate *settings*
+ * so that somebody chasing which route rendered a page can bring routers back
+ * without also bringing back every styled-component wrapper.
+ */
+export const HIDE_COMPONENT_CATEGORY = true;
+
+/**
  * Globals the injected agent owns on the inspected page.
  *
  * One namespace, because there is one agent. The nine globals the locator kept

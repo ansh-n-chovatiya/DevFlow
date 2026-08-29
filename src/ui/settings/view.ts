@@ -19,10 +19,14 @@ import type { RowNote } from './components.js';
 import {
   consequenceApplies,
   DEFAULTS,
+  fieldFor,
   GROUPS,
   groupInfo,
+  HIDDEN_CATEGORIES,
+  hiddenKeyFor,
   isModified,
   WIRED,
+  type Concept,
   type Field,
   type Group,
   type GroupInfo,
@@ -217,19 +221,21 @@ const DEPENDENCIES: readonly Dependency[] = [
     met: (settings) => settings.reactCapture,
     reason: 'Applies while the component behind each step is being recorded.',
   },
-  {
-    key: 'projectRoot',
-    met: (settings) => settings.reactCapture,
-    reason: 'Applies while the component behind each step is being recorded.',
-  },
-  {
-    key: 'editor',
-    met: (settings) => settings.reactCapture,
-    reason: 'Applies while the component behind each step is being recorded.',
-  },
+  /*
+   * The project root and the editor used to hang off `reactCapture` too, and
+   * that was true while a recording was the only thing that ever produced a
+   * source path. It is not any more: picking a component in the panel resolves
+   * a file and offers to open it whether or not a single step is ever recorded.
+   *
+   * Left as they were, switching component capture off would grey out the two
+   * fields the panel most needs — and grey them out on a screen that gives no
+   * reason a picker user would recognise, because the reason would be about
+   * recording. The custom template keeps its dependency, on the one setting that
+   * genuinely governs it.
+   */
   {
     key: 'customEditorTemplate',
-    met: (settings) => settings.reactCapture && settings.editor === 'custom',
+    met: (settings) => settings.editor === 'custom',
     reason: 'Applies when the editor above is set to “Custom…”.',
   },
 ];
@@ -243,6 +249,36 @@ export function unmetReason(key: string, settings: Settings): string | null {
   return dependency.met(settings) ? null : dependency.reason;
 }
 
+/**
+ * What a row says when an administrator has fixed it.
+ *
+ * Said, not merely greyed. A control that refuses a keystroke and gives no
+ * reason is the shape of a bug, and the person hitting it is the one person who
+ * cannot fix it — so the sentence names who decided rather than what went wrong.
+ * It also does not say what the policy is *for*: an organisation that pushes a
+ * project root has its own reasons and this screen is not where they are
+ * explained.
+ */
+export const MANAGED_NOTE =
+  'Set by your organisation’s policy, and not editable here.';
+
+/**
+ * Why a row is inert: an administrator first, then a dependency.
+ *
+ * Order, not preference. A managed row cannot be changed by satisfying anything
+ * — turning on the setting a dependency names would leave it exactly as inert —
+ * so telling the user about the dependency would be telling them to do
+ * something that will not work.
+ */
+export function inertReason(
+  key: string,
+  settings: Settings,
+  managed: ReadonlySet<string>,
+): string | null {
+  if (managed.has(key)) return MANAGED_NOTE;
+  return unmetReason(key, settings);
+}
+
 // ── The model ────────────────────────────────────────────────────────────────
 
 export interface RowModel {
@@ -250,9 +286,11 @@ export interface RowModel {
   readonly value: unknown;
   /** The gutter bar, and everything derived from it. */
   readonly modified: boolean;
-  /** Set by a dependency, never by a recording — see `RECORDING_NOTE`. */
+  /** Set by a dependency or a policy, never by a recording — see `RECORDING_NOTE`. */
   readonly disabled: boolean;
   readonly disabledReason: string | null;
+  /** Fixed by an administrator: inert, and not resettable either. */
+  readonly locked: boolean;
   /** Whether the value is currently in the range the consequence describes. */
   readonly consequence: boolean;
 }
@@ -279,6 +317,12 @@ export type RailMark =
 export interface RailItem {
   /** The anchor the rail scrolls to, and the row's identity. */
   readonly id: string;
+  /**
+   * The concept this group sits under — the heading the rail puts above the
+   * first group of each run. `null` for Advanced and Storage, which are places
+   * on the page rather than groups of settings and sit below the hairline.
+   */
+  readonly concept: Concept | null;
   readonly title: string;
   readonly mark: RailMark;
   /** Dimmed and not clickable: nothing under it survived the query. */
@@ -316,12 +360,22 @@ export interface ModelInput {
    * screen with the whole table without waiting for six more phases.
    */
   readonly fields?: readonly Field[];
+  /**
+   * The keys an administrator has fixed through `chrome.storage.managed`.
+   *
+   * Empty on every installation that is not a managed one, which is almost all
+   * of them — so it defaults to empty rather than being threaded through every
+   * test that does not care.
+   */
+  readonly managed?: ReadonlySet<string>;
 }
 
-function row(field: Field, settings: Settings): RowModel {
+const NO_POLICY: ReadonlySet<string> = new Set();
+
+function row(field: Field, settings: Settings, managed: ReadonlySet<string>): RowModel {
   const value = settings[field.key as SettingKey];
   const modified = isModified(field.key as SettingKey, value);
-  const reason = unmetReason(field.key, settings);
+  const reason = inertReason(field.key, settings, managed);
 
   return {
     field,
@@ -329,6 +383,7 @@ function row(field: Field, settings: Settings): RowModel {
     modified,
     disabled: reason !== null,
     disabledReason: reason,
+    locked: managed.has(field.key),
     consequence: consequenceApplies(field, value, modified),
   };
 }
@@ -354,8 +409,9 @@ export function settingsModel({
   query,
   advancedOpen,
   fields = WIRED,
+  managed = NO_POLICY,
 }: ModelInput): SettingsModel {
-  const rows = fields.map((field) => row(field, settings));
+  const rows = fields.map((field) => row(field, settings, managed));
   const kept = rows.filter((entry) => survives(entry, query));
 
   const groups: GroupModel[] = [];
@@ -370,6 +426,7 @@ export function settingsModel({
 
     rail.push({
       id: info.id,
+      concept: info.concept,
       title: info.title,
       mark: railMark(isActive(query) ? here : all, isActive(query)),
       muted: here.length === 0,
@@ -383,6 +440,7 @@ export function settingsModel({
   if (advancedAll.length > 0) {
     rail.push({
       id: 'advanced',
+      concept: null,
       title: 'Advanced',
       // A chevron rather than a count, always: the count of a section you have
       // not opened is a number about things you cannot see.
@@ -394,7 +452,14 @@ export function settingsModel({
 
   const showStorage = !isActive(query);
   if (showStorage) {
-    rail.push({ id: 'storage', title: 'Storage', mark: { kind: 'none' }, muted: false, foot: true });
+    rail.push({
+      id: 'storage',
+      concept: null,
+      title: 'Storage',
+      mark: { kind: 'none' },
+      muted: false,
+      foot: true,
+    });
   }
 
   return {
@@ -411,7 +476,16 @@ export function settingsModel({
     },
     rail,
     shown: kept.length,
-    shownModified: kept.filter((entry) => entry.modified).map((entry) => entry.field.key as SettingKey),
+    /*
+     * A locked row is not one of these, however far its value is from the
+     * shipped default. "Reset all shown" is a promise about what the screen will
+     * look like afterwards, and a key an administrator has fixed would come
+     * straight back — so counting it would make the button overstate what it
+     * does, on the rows where being wrong is least recoverable.
+     */
+    shownModified: kept
+      .filter((entry) => entry.modified && !entry.locked)
+      .map((entry) => entry.field.key as SettingKey),
     showStorage,
   };
 }
@@ -646,5 +720,76 @@ export function activeGroups(fields: readonly Field[]): readonly Group[] {
     fields.some((field) => field.group === id),
   );
 }
+
+// ── The drawer, which is the same store seen through a narrower window ───────
+
+/**
+ * The settings one locate actually uses, in the order the drawer shows them.
+ *
+ * The options page is the source of truth and holds all seventy-nine; this is
+ * the handful somebody reaches for *without leaving what they are doing* —
+ * they have picked a component, the file opened in the wrong program, and the
+ * fix is four inches away rather than in another tab. Anything not on this list
+ * has no bearing on the pick that is on screen, and putting it here would make
+ * the drawer a worse copy of the page instead of a different thing.
+ *
+ * Four named keys and then the category toggles derived from the table, so a
+ * sixth category added to `FIELDS` appears here without anybody remembering to
+ * come back — which is the same guarantee `FIELDS` gives everywhere else, held
+ * one level further out.
+ */
+export const DRAWER_KEYS: readonly SettingKey[] = [
+  'editor',
+  'customEditorTemplate',
+  'projectRoot',
+  'react.useSourceMaps',
+  ...HIDDEN_CATEGORIES.map(hiddenKeyFor).filter(
+    (key): key is SettingKey => key !== undefined,
+  ),
+];
+
+/** The same list as fields. Total: every key above is in the table by construction. */
+export const DRAWER_FIELDS: readonly Field[] = DRAWER_KEYS.map(
+  (key) => fieldFor(key) as Field,
+);
+
+export interface DrawerModel {
+  readonly rows: readonly RowModel[];
+  /** Whether an administrator has fixed anything the drawer shows. */
+  readonly managed: boolean;
+}
+
+/**
+ * The drawer, from the same settings the page is built from.
+ *
+ * Deliberately the same `RowModel` the options page uses, built by the same
+ * function, so the two views cannot disagree about whether a row is modified or
+ * why it is inert. Two model shapes for one store is how a drawer ends up
+ * showing a project root the page has already greyed out.
+ *
+ * No query and no groups: the list is nine rows long and a search box over nine
+ * rows is furniture. Everything else about a row — the gutter bar, the reset,
+ * the consequence — is exactly what it is on the page.
+ */
+export function drawerModel(
+  settings: Settings,
+  managed: ReadonlySet<string> = NO_POLICY,
+): DrawerModel {
+  const rows = DRAWER_FIELDS.map((field) => row(field, settings, managed));
+  return { rows, managed: rows.some((entry) => managed.has(entry.field.key)) };
+}
+
+/**
+ * The one line above the drawer when a policy is in force.
+ *
+ * Above the list rather than only on the locked rows, because the rows that are
+ * locked are not adjacent and a person scanning a short list reads the shape
+ * before the notes. The per-row sentence still says which ones.
+ */
+export const DRAWER_MANAGED_NOTE =
+  'Some of these are set by your organisation’s policy.';
+
+/** The link out of the drawer to everything it does not show. */
+export const DRAWER_MORE = 'All settings';
 
 export { groupInfo };

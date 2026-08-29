@@ -37,7 +37,7 @@
  * control, which is what `tests/settings-row-shape.test.ts` asserts.
  */
 
-import { consequenceApplies, type Field } from '../../features/settings/index.js';
+import { conceptInfo, consequenceApplies, type Field } from '../../features/settings/index.js';
 import { EDITORS } from '../../core/react/editor.js';
 import { icon, type IconName } from '../icons.js';
 import {
@@ -52,10 +52,13 @@ import {
   ADVANCED_WARNING,
   clampedNote,
   defaultLabel,
+  DRAWER_MANAGED_NOTE,
+  DRAWER_MORE,
   highlight,
   RECORDING_NOTE,
   rangeNote,
   type ChangeRow,
+  type DrawerModel,
   type Filter,
   type RowModel,
   type SettingsModel,
@@ -477,6 +480,18 @@ export interface RowState {
   readonly value: unknown;
   readonly modified: boolean;
   readonly disabled: boolean;
+  /**
+   * Inert because an administrator decided, rather than because another setting
+   * has not been switched on.
+   *
+   * A separate flag and not a second reason for `disabled`, because the two
+   * differ in exactly one visible place: the reset. A row waiting on a
+   * dependency is still the user's to clear — turning the dependency back on is
+   * a thing they can do — while a row a policy has fixed cannot be reset by
+   * anybody at this keyboard, and a live Reset button on one would be a control
+   * whose whole effect is to write a value that is then overruled.
+   */
+  readonly locked?: boolean;
   /** The one line under the control: a range, a clamp, a result, a reason. */
   readonly note: RowNote | null;
   readonly action: RowAction | null;
@@ -579,7 +594,7 @@ export function settingRow(field: Field, state: RowState, handlers: RowHandlers)
   );
   reset.setAttribute('aria-label', `Reset ${field.title} to its default`);
   reset.title = `Reset ${field.title} to its default`;
-  reset.disabled = !state.modified;
+  reset.disabled = !state.modified || state.locked === true;
   control.append(reset);
 
   head.append(text, control);
@@ -1558,9 +1573,24 @@ function activeResults(model: SettingsModel): SearchState['results'] {
   return { count: model.shown, modified: model.shownModified.length };
 }
 
+/*
+ * The rail is four concepts, and eleven groups under them.
+ *
+ * §3.6 of the contracts groups settings by concept and not by origin, and the
+ * failure it names is a rail with a section that is recognisably one of the two
+ * products this used to be. The four concepts are what stops that being a matter
+ * of anybody's restraint: a group belongs to exactly one of them, the heading is
+ * derived from the group's own entry, and there is no way to add a twelfth group
+ * without saying which of the four it is.
+ *
+ * A heading and not a button. It names a run of rows; it is not a place, because
+ * every one of its groups already is one and a concept that scrolled somewhere
+ * would only ever scroll to its first group.
+ */
 function railRows(props: PageProps, handlers: PageHandlers): HTMLElement[] {
   const nodes: HTMLElement[] = [];
   let ruled = false;
+  let concept: string | null = null;
 
   for (const item of props.model.rail) {
     // Advanced sits last, separated by a hairline. Storage joins it there —
@@ -1568,6 +1598,11 @@ function railRows(props: PageProps, handlers: PageHandlers): HTMLElement[] {
     if (item.foot && !ruled) {
       nodes.push(make('hr', 'rail__rule'));
       ruled = true;
+    }
+
+    if (item.concept && item.concept !== concept) {
+      concept = item.concept;
+      nodes.push(make('p', 'rail__concept', conceptInfo(item.concept).title));
     }
 
     const button = make('button', 'rail__item');
@@ -1661,8 +1696,19 @@ function listBlocks(props: PageProps, handlers: PageHandlers): HTMLElement[] {
   return blocks;
 }
 
-function renderRow(entry: RowModel, props: PageProps, handlers: PageHandlers): HTMLElement {
-  const extra = props.extras.get(entry.field.key);
+/**
+ * One row, from a model entry and whatever has happened to it since.
+ *
+ * Shared by the page and the drawer, which is the whole of what "one store, two
+ * views" is worth: the two surfaces cannot draw the same setting differently,
+ * because there is one function that draws it.
+ */
+function rowElement(
+  entry: RowModel,
+  extra: { note: RowNote | null; action: RowAction | null } | undefined,
+  query: string,
+  handlers: RowHandlers,
+): HTMLElement {
   return settingRow(
     entry.field,
     {
@@ -1671,12 +1717,17 @@ function renderRow(entry: RowModel, props: PageProps, handlers: PageHandlers): H
       disabled: entry.disabled,
       // A dependency's reason is the row's note when nothing more urgent has
       // happened to it — a clamp or a connection result comes from `extras`.
+      locked: entry.locked,
       note: extra?.note ?? (entry.disabledReason ? { text: entry.disabledReason, tone: 'muted' } : null),
       action: extra?.action ?? null,
-      query: props.model.query.text,
+      query,
     },
     handlers,
   );
+}
+
+function renderRow(entry: RowModel, props: PageProps, handlers: PageHandlers): HTMLElement {
+  return rowElement(entry, props.extras.get(entry.field.key), props.model.query.text, handlers);
 }
 
 /**
@@ -1967,4 +2018,89 @@ export function pickJsonFile(onPicked: (file: File) => void): void {
   });
   document.body.append(input);
   input.click();
+}
+
+// ── 9. settingsDrawer ────────────────────────────────────────────────────────
+
+export interface DrawerProps {
+  readonly model: DrawerModel;
+  /** The same per-row extras the page keeps: a clamp report, a commit problem. */
+  readonly extras: ReadonlyMap<string, { note: RowNote | null; action: RowAction | null }>;
+}
+
+export interface DrawerHandlers extends RowHandlers {
+  /** Everything the drawer does not show is one click away, in its own tab. */
+  readonly onOpenSettings: () => void;
+}
+
+export interface SettingsDrawer {
+  readonly render: (props: DrawerProps) => void;
+}
+
+/**
+ * The panel's settings drawer: the ninth primitive, and the one that proves the
+ * other eight were worth building.
+ *
+ * The two halves of this product each had a settings surface, and the merge
+ * could have gone two ways. Deleting the drawer would turn "pick a component,
+ * then change your editor" into leaving the panel for another tab, in the middle
+ * of the one gesture the panel exists for. Keeping it as it was would mean two
+ * stores, drifting, with the same key written from two places.
+ *
+ * So: one store, two views. The drawer is a **narrower window onto the same
+ * table**, not a smaller settings page. Every row here is the row the options
+ * page draws, from the same model, through the same `settingRow` — which is why
+ * this function is short rather than being a second settings screen. What it
+ * adds is a shorter list, a policy line, and a way out to the rest.
+ *
+ * `root` is the drawer's list container in the panel's markup. Everything inside
+ * it belongs to this function; the drawer's own chrome — the aside, its heading,
+ * its close button — is the panel's, and is not built here.
+ */
+export function settingsDrawer(root: HTMLElement, handlers: DrawerHandlers): SettingsDrawer {
+  const frame = make('div', 'drawer-settings');
+
+  const policy = banner('info', DRAWER_MANAGED_NOTE);
+  policy.classList.add('drawer-settings__policy');
+  frame.append(policy);
+
+  const rows = make('div', 'group__rows');
+  frame.append(rows);
+
+  /*
+   * The way out, at the foot rather than the head.
+   *
+   * A link to the full page at the top would be the first thing read, and what
+   * it says is "what you want is elsewhere" — which is untrue nine times out of
+   * ten, because the settings a pick depends on are the ones above it. At the
+   * foot it is the answer to a question the user has already failed to find on
+   * screen.
+   */
+  const more = labelledButton(
+    'arrow-up-right',
+    DRAWER_MORE,
+    'btn btn--secondary btn--compact drawer-settings__more',
+    handlers.onOpenSettings,
+  );
+  frame.append(more);
+
+  root.append(frame);
+
+  const render = (props: DrawerProps): void => {
+    // The same focus dance the page does, and for a sharper reason: the drawer
+    // sits beside the component tree, and losing the caret out of the project
+    // root mid-word is losing it into a panel that is mostly not a form.
+    const focus = focusKey();
+
+    policy.hidden = !props.model.managed;
+    rows.replaceChildren(
+      ...props.model.rows.map((entry) =>
+        rowElement(entry, props.extras.get(entry.field.key), '', handlers),
+      ),
+    );
+
+    restoreFocus(root, focus);
+  };
+
+  return { render };
 }

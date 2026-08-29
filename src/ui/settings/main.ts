@@ -28,7 +28,9 @@ import {
   FIELDS,
   fieldFor,
   isMachineKey,
+  loadManaged,
   loadOverrides,
+  migrateLegacySettings,
   resolve,
   replaceOverrides,
   save,
@@ -113,6 +115,18 @@ const state = {
    * only ever in here.
    */
   overrides: {} as Overrides,
+  /**
+   * The administrator's half of the store, and the keys it fixes.
+   *
+   * Held apart from `overrides` rather than merged into it, because the two are
+   * not the same document. The export, the JSON pane and the reset are all about
+   * what *this user* has changed; a policy is somebody else's file, arriving
+   * read-only through a different area, and folding it in would put an
+   * organisation's editor into a settings file the user then mailed to a
+   * colleague at another company.
+   */
+  managed: {} as Overrides,
+  managedLocks: new Set<string>() as ReadonlySet<string>,
   query: EMPTY_QUERY,
   advancedOpen: false,
   activeRail: '',
@@ -201,6 +215,7 @@ function paint(): void {
       settings: state.settings,
       query: state.query,
       advancedOpen: state.advancedOpen,
+      managed: state.managedLocks,
     }),
     extras: state.extras,
     recording: state.recording,
@@ -381,10 +396,20 @@ function resetKeys(keys: readonly SettingKey[]): void {
   });
 }
 
-/** Every setting the user has moved, in table order — what "Reset all" names. */
+/**
+ * Every setting the user has moved, in table order — what "Reset all" names.
+ *
+ * A key an administrator has fixed is not one of them. Its value differs from
+ * the shipped default and always will, and resetting it would write to `sync`,
+ * repaint nothing, and leave the dialog's count describing a change that did not
+ * happen — the exact shape of "saved, and does nothing" this screen is written
+ * against everywhere else.
+ */
 function modifiedFields(): Field[] {
   return (FIELDS as readonly Field[]).filter(
-    (field) => state.settings[field.key as SettingKey] !== DEFAULTS[field.key as SettingKey],
+    (field) =>
+      !state.managedLocks.has(field.key) &&
+      state.settings[field.key as SettingKey] !== DEFAULTS[field.key as SettingKey],
   );
 }
 
@@ -397,8 +422,15 @@ function modifiedFields(): Field[] {
  * export and the pane are both the *sparse* object — see `state.overrides`.
  */
 async function reload(): Promise<void> {
-  state.overrides = await loadOverrides();
-  state.settings = resolve(state.overrides);
+  // Both areas at once, and the lock set derived from the one read rather than
+  // taken from `managedKeys()`. The two would agree; asking twice would just be
+  // a second round trip to storage on every repaint, on a screen that repaints
+  // on every keystroke.
+  const [overrides, managed] = await Promise.all([loadOverrides(), loadManaged()]);
+  state.overrides = overrides;
+  state.managed = managed;
+  state.managedLocks = new Set(Object.keys(managed));
+  state.settings = resolve(overrides, managed);
   syncJsonPane();
   paint();
 }
@@ -868,9 +900,24 @@ const page = settingsPage(document.body, {
  * newer version and a hand-edited number all arrive here already usable.
  */
 void (async () => {
-  state.overrides = await loadOverrides();
-  state.settings = resolve(state.overrides);
-  syncJsonPane();
+  /*
+   * Before the first read, because it changes what the first read returns.
+   *
+   * A profile arriving from the sibling extension holds its settings in a shape
+   * this build cannot read, and a screen that painted before the migration would
+   * show an empty project root for a moment and then move it under the user —
+   * or, if they typed into it first, save an empty one over a value they never
+   * knew they still had. It is a no-op on every profile that has already been
+   * through it and on every profile that never had the other extension, which
+   * between them is all of them after the first run.
+   *
+   * This is not the only caller, and must not be: somebody who never opens this
+   * screen still has the values. The worker runs it on install as well, and the
+   * migration is written to be run twice.
+   */
+  await migrateLegacySettings();
+
+  await reload();
   await readRecording();
   await refreshPending();
   await refreshStorage();

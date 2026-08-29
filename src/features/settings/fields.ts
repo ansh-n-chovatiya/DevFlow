@@ -47,6 +47,7 @@ import {
   EXPORT_DEFAULT_NETWORK,
   EXPORT_DEFAULT_REACT,
   HEALTH_TIMEOUT_MS,
+  HIDE_COMPONENT_CATEGORY,
   INPUT_DEBOUNCE_MS,
   LAUNCHER_TAB_TIMEOUT_MS,
   LOG_ARG_CAP,
@@ -93,6 +94,7 @@ import {
   THUMBNAIL_HEIGHT,
   THUMBNAIL_QUALITY,
   THUMBNAIL_WIDTH,
+  USE_SOURCE_MAPS,
   WARN_STEPS,
 } from "../../shared/constants.js";
 import { EDITORS } from "../../core/react/editor.js";
@@ -361,8 +363,8 @@ export const FIELDS = [
     default: "system",
     title: "Theme",
     description:
-      "Whether FlowSnap follows the operating system or is pinned to light or dark.",
-    consumers: ["content"],
+      "Whether FlowSnap follows the operating system or is pinned to light or dark. In the DevTools panel, “System” means the theme DevTools itself is set to, which DevTools lets you choose independently of the OS; a light or dark choice here wins on every surface.",
+    consumers: ["content", "ui"],
     wired: true,
   },
 
@@ -935,6 +937,24 @@ export const FIELDS = [
     wired: true,
   },
   {
+    key: "react.useSourceMaps",
+    group: "react",
+    tier: 1,
+    type: "boolean",
+    default: USE_SOURCE_MAPS,
+    title: "Read source maps when you locate one component",
+    description:
+      "Separate from the switch above because the two costs are paid at different moments: that one governs a background pass over a whole recording, this one governs the single lookup somebody is sitting and waiting for. One switch for both would mean stopping a slow pick by turning off the pass a recording depends on, or paying for that whole pass to get one answer now.",
+    consequence:
+      "Off, a pick names the component and the bundled file it was compiled into, and stops there. There is no original file to open.",
+    // The sentence is about being off, and being off is the whole of it — a
+    // `modified` fallback would say the same thing, but this way the row is
+    // explicit that there is exactly one state worth warning about.
+    consequenceWhen: { is: false },
+    consumers: ["worker", "ui"],
+    wired: true,
+  },
+  {
     key: "projectRoot",
     group: "react",
     tier: 1,
@@ -943,8 +963,8 @@ export const FIELDS = [
     maxLength: 4096,
     title: "Project root",
     description:
-      "Absolute local path the recorded source paths sit under, so the viewer can offer to open one in an editor. Empty means no link is offered.",
-    consumers: ["content"],
+      "Absolute local path the source paths sit under, so a component’s file can be opened in an editor — whether the component was recorded in a step or picked out of the page. Empty means no link is offered.",
+    consumers: ["content", "ui"],
     wired: true,
   },
   {
@@ -956,7 +976,7 @@ export const FIELDS = [
     default: REACT_SETTING_DEFAULTS.editor,
     title: "Editor",
     description: "Which editor a source link opens.",
-    consumers: ["content"],
+    consumers: ["content", "ui"],
     wired: true,
   },
   {
@@ -977,7 +997,67 @@ export const FIELDS = [
      * validate" are one condition. `commitProblem` in `ui/settings/view.ts`
      * says the more specific thing at the keystroke that caused it.
      */
-    consumers: ["content"],
+    consumers: ["content", "ui"],
+    wired: true,
+  },
+  {
+    key: "locator.hidden.routing",
+    group: "react",
+    tier: 1,
+    type: "boolean",
+    default: HIDE_COMPONENT_CATEGORY,
+    title: "Hide routers in component trees",
+    description:
+      "Routers, routes and switches — react-router and its relatives. Hidden by default because an ancestor chain is mostly these; bring them back when the question is which route rendered the page.",
+    consumers: ["ui"],
+    wired: true,
+  },
+  {
+    key: "locator.hidden.providers",
+    group: "react",
+    tier: 1,
+    type: "boolean",
+    default: HIDE_COMPONENT_CATEGORY,
+    title: "Hide providers in component trees",
+    description:
+      "Context, store and client providers. They wrap everything and are almost never the component that was clicked; bring them back when the question is where a value came from.",
+    consumers: ["ui"],
+    wired: true,
+  },
+  {
+    key: "locator.hidden.react",
+    group: "react",
+    tier: 1,
+    type: "boolean",
+    default: HIDE_COMPONENT_CATEGORY,
+    title: "Hide React internals in component trees",
+    description:
+      "Fragment, Suspense, Portal, StrictMode, and the memo and forwardRef wrappers React inserts on its own. Nobody wrote these, so there is no file behind one to open.",
+    consumers: ["ui"],
+    wired: true,
+  },
+  {
+    key: "locator.hidden.styling",
+    group: "react",
+    tier: 1,
+    type: "boolean",
+    default: HIDE_COMPONENT_CATEGORY,
+    title: "Hide styling wrappers in component trees",
+    description:
+      "Theme providers, style engines and headless UI primitives. They sit between the component that was written and the node that was clicked, and hiding them is what leaves the two ends of that chain next to each other.",
+    consumers: ["ui"],
+    wired: true,
+  },
+  {
+    key: "locator.hidden.dependency",
+    group: "react",
+    tier: 1,
+    type: "boolean",
+    default: HIDE_COMPONENT_CATEGORY,
+    title: "Hide components from node_modules",
+    description:
+      "Anything React recorded as living in node_modules — and in a production build, where no source is recorded, anything matching a list of known names instead. Components written in this project are never hidden by any of these five.",
+    consumers: ["ui"],
     wired: true,
   },
   {
@@ -1665,6 +1745,82 @@ export function fieldsInGroup(group: Group): readonly Field[] {
   return FIELDS.filter((field) => field.group === group);
 }
 
+// ── The component-tree filter, derived ───────────────────────────────────────
+
+/**
+ * The prefix the component-tree filter's five keys share.
+ *
+ * A storage prefix and not a word the product says — see docs/CONTRACTS.md §4.5.
+ * Flat dotted keys rather than one nested `hidden` object because a nested value
+ * cannot be partially overridden, and a sparse store that could only hold all
+ * five or none of them would write four defaults into every profile the moment
+ * somebody changed the fifth.
+ */
+export const HIDDEN_KEY_PREFIX = "locator.hidden.";
+
+/**
+ * The categories a component tree can suppress, in table order.
+ *
+ * Derived from `FIELDS` rather than imported from `core/react/classify.ts`, and
+ * that is the direction the dependency has to run: the settings table is the one
+ * place a setting exists, so the list of categories that *have* a setting is a
+ * fact about this table. A category added to the classifier and not to the table
+ * is a category nothing can hide, and this list says so by not containing it.
+ */
+export const HIDDEN_CATEGORIES: readonly string[] = FIELDS.filter((field) =>
+  field.key.startsWith(HIDDEN_KEY_PREFIX),
+).map((field) => field.key.slice(HIDDEN_KEY_PREFIX.length));
+
+/** The key a category's toggle is stored under, or `undefined` if it has none. */
+export function hiddenKeyFor(category: string): SettingKey | undefined {
+  const key = `${HIDDEN_KEY_PREFIX}${category}`;
+  return isSettingKey(key) ? key : undefined;
+}
+
+// ── Concepts ─────────────────────────────────────────────────────────────────
+
+/**
+ * The four things this product is configured *about*.
+ *
+ * Settings are grouped by concept, not by origin. Half of the table came from a
+ * recorder and half from a tool that finds the file a component was written in,
+ * and a rail with a "Recording" section and a section that is recognisably the
+ * other half's would tell the user they are holding two products in one window.
+ * They are not: the project root and the chosen editor already served both, and
+ * the source resolution a recording does in the background is the same work one
+ * interactive pick does in the foreground.
+ *
+ * So the concept is the top level and `Group` is the level under it. A concept
+ * is not a second grouping of settings — every group belongs to exactly one, and
+ * `tests/settings-groups.test.ts` holds that the partition is total — it is the
+ * word the rail puts above a run of groups so that "where would I look for this"
+ * has four answers instead of eleven.
+ */
+export type Concept = "source" | "recording" | "handover" | "appearance";
+
+/** The four, in the order the rail reads them. */
+export const CONCEPTS = [
+  { id: "source", title: "React & source resolution" },
+  { id: "recording", title: "Recording" },
+  { id: "handover", title: "Export & MCP" },
+  { id: "appearance", title: "Appearance" },
+] as const satisfies readonly { id: Concept; title: string }[];
+
+export type ConceptInfo = (typeof CONCEPTS)[number];
+
+const BY_CONCEPT = new Map<Concept, ConceptInfo>(
+  CONCEPTS.map((concept) => [concept.id, concept]),
+);
+
+/** A concept's title. Total: `Concept` is the union of `CONCEPTS` ids. */
+export function conceptInfo(concept: Concept): ConceptInfo {
+  const found = BY_CONCEPT.get(concept);
+  // Unreachable while `CONCEPTS` satisfies the union — the same guarantee, and
+  // the same reason, as `groupInfo` below.
+  if (!found) throw new Error(`FlowSnap: no such settings concept: ${concept}`);
+  return found;
+}
+
 // ── Groups ───────────────────────────────────────────────────────────────────
 
 /**
@@ -1675,75 +1831,93 @@ export function fieldsInGroup(group: Group): readonly Field[] {
  * came out as. The rail is built from this list rather than from a number in
  * the plan, so it cannot describe a set of groups the settings are not in.
  *
+ * Eleven groups under four concepts, and the eleven are kept rather than
+ * collapsed into the four: "Screenshots", "Network" and "Console" are each a
+ * real subject with its own paragraph, and merging them would throw away three
+ * headings and three paragraphs to buy a shorter list. The concept is what the
+ * user navigates by; the group is what they land in.
+ *
  * The paragraph is the group's own writing — each group opens with one
  * — and it lives here for the same reason every other sentence on the screen
  * does: the screen has no copy of its own.
  */
 export const GROUPS = [
   {
-    id: "appearance",
-    title: "Appearance",
-    description: "Applies to the popup and the flow viewer.",
+    id: "react",
+    concept: "source",
+    title: "React & source resolution",
+    description:
+      "On a React page a component can be traced back to the file it was written in — for every step of a recording, and for any one component picked out of the page. These decide how far that goes, where the files are, and what the component trees leave out.",
   },
   {
     id: "recording",
+    concept: "recording",
     title: "Recording",
     description:
       "What ends a recording, and how much of what happened is treated as one step.",
   },
   {
     id: "screenshots",
+    concept: "recording",
     title: "Screenshots",
     description:
       "Every step carries a picture. These decide how good it is and how long FlowSnap waits for the page to settle before taking it.",
   },
   {
     id: "network",
+    concept: "recording",
     title: "Network",
     description:
       "Request and response bodies are the most useful thing in a flow and the most likely to hold something private. Headers are always stripped.",
   },
   {
     id: "console",
+    concept: "recording",
     title: "Console",
     description:
       "Which console output is kept beside the step that produced it.",
   },
   {
     id: "annotation",
+    concept: "recording",
     title: "Annotation",
     description: "The boxes and arrows drawn on a screenshot in the viewer.",
   },
   {
+    id: "thumbnails",
+    concept: "recording",
+    title: "Thumbnails",
+    description: "The small images the library lists a flow by.",
+  },
+  {
     id: "export",
+    concept: "handover",
     title: "Handing over",
     description:
       "What an export or a send includes before anybody touches a checkbox. These are the defaults the dialogs open on, not a ceiling.",
   },
   {
-    id: "react",
-    title: "React components",
-    description:
-      "On a React page a step can record the component it happened in, and which file that component was written in, so an AI opens the right one instead of searching for it.",
-  },
-  {
     id: "mcp",
+    concept: "handover",
     title: "Claude and MCP",
     description:
       "Where recorded flows go when you send them to the local MCP server.",
   },
   {
-    id: "thumbnails",
-    title: "Thumbnails",
-    description: "The small images the library lists a flow by.",
+    id: "appearance",
+    concept: "appearance",
+    title: "Appearance",
+    description: "Applies to the popup and the flow viewer.",
   },
   {
     id: "ui",
+    concept: "appearance",
     title: "Interface",
     description: "Small behaviours of the popup and the viewer.",
   },
 ] as const satisfies readonly {
   id: Group;
+  concept: Concept;
   title: string;
   description: string;
 }[];

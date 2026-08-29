@@ -265,16 +265,42 @@ describe('the eight settings that already existed', () => {
     expect(localStorage.getItem(THEME_MIRROR_KEY)).toBe('dark');
   });
 
-  it('greys the fields that follow the React master switch, and says why', async () => {
+  it('greys the field that follows the React master switch, and says why', async () => {
     await openSettings({ reactCapture: false });
 
-    for (const key of ['reactResolve', 'projectRoot', 'editor', 'customEditorTemplate']) {
-      expect(row(key).dataset.disabled, key).toBe('true');
-      expect(control<HTMLInputElement>(key).disabled, key).toBe(true);
-      const note = row(key).querySelector<HTMLElement>('.setting-row__note')!;
-      expect(note.hidden, key).toBe(false);
-      expect(note.textContent, key).toContain('Applies');
+    const note = row('reactResolve').querySelector<HTMLElement>('.setting-row__note')!;
+    expect(row('reactResolve').dataset.disabled).toBe('true');
+    expect(control<HTMLInputElement>('reactResolve').disabled).toBe(true);
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toContain('Applies');
+  });
+
+  /*
+   * The project root and the editor used to be greyed by the same switch, and
+   * the merge is what made that wrong rather than a change of taste.
+   *
+   * They hung off `reactCapture` while a recording was the only thing that ever
+   * produced a source path. Picking a component in the DevTools panel produces
+   * one too, and has nothing to do with whether steps are being attributed — so
+   * a user who records nothing and only ever picks would have found the two
+   * fields their whole workflow depends on greyed out, under a sentence about
+   * recording that would not have told them which switch to look for.
+   */
+  it('leaves the project root and the editor live when component capture is off', async () => {
+    await openSettings({ reactCapture: false });
+
+    for (const key of ['projectRoot', 'editor']) {
+      expect(row(key).dataset.disabled, key).toBe('false');
+      expect(control<HTMLInputElement>(key).disabled, key).toBe(false);
     }
+  });
+
+  it('still greys the custom template until the editor is set to Custom', async () => {
+    await openSettings({ reactCapture: false, editor: 'vscode' });
+
+    const note = row('customEditorTemplate').querySelector<HTMLElement>('.setting-row__note')!;
+    expect(row('customEditorTemplate').dataset.disabled).toBe('true');
+    expect(note.textContent).toContain('Custom');
   });
 
   it('warns at the keystroke that an http editor template will be refused', async () => {

@@ -1,0 +1,76 @@
+/*
+ * The settings drawer, seen from inside a DevTools panel.
+ *
+ * One `@import` and a handful of overrides, and that ratio is the point. The
+ * drawer's rows are the options page's rows — same primitive, same classes, same
+ * stylesheet — so everything about how a setting *looks* is already decided by
+ * the time this file is read. What is left is the one thing the page could not
+ * know: a DevTools panel docked to the side of a window is roughly a third the
+ * width the page was drawn for, and a row laid out as title-left / control-right
+ * has nowhere to put the control.
+ *
+ * **This file declares no class of its own.** Every selector below names a class
+ * that `ui/settings/components.css` already declares and `components.ts` already
+ * uses — which is what keeps `npm run lint:settings-ui` able to account for all
+ * of them from one file. A new class here would be markup the linter cannot see,
+ * built by something that is not `components.ts`, which is the arrangement this
+ * whole layer exists to prevent. If the drawer needs a shape the primitives
+ * cannot express, the primitive gets widened; it does not get worked around
+ * here.
+ *
+ * No colour literals — `npm run lint:tokens` covers this file like every other.
+ */
+
+@import '../settings/components.css';
+
+/*
+ * The row goes vertical below the width a two-column row needs.
+ *
+ * A container query rather than a media query, because the thing that is narrow
+ * is the drawer and not the viewport: the same drawer is wide when the panel is
+ * docked to the bottom of a maximised window and narrow when it is docked to the
+ * side of a half one, and a media query would answer for the window in both.
+ */
+.drawer-settings {
+  container-type: inline-size;
+  padding: var(--space-4);
+}
+
+@container (max-width: 420px) {
+  .drawer-settings .setting-row__head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  .drawer-settings .setting-row__control {
+    justify-content: flex-start;
+  }
+}
+
+/*
+ * The gutter goes, and the modified state stays.
+ *
+ * The bar is a two-pixel lane down the left of all seventy-nine rows on a page
+ * that is scrolled and scanned; across nine rows in a narrow drawer it is two
+ * pixels of the little width there is, spent on a signal the accent-coloured
+ * reset button beside the control is already giving. What it marks is not lost —
+ * `data-modified` is still on the row, and the reset still appears.
+ */
+.drawer-settings .setting-row__gutter {
+  display: none;
+}
+
+/*
+ * The description stays, and the key line goes.
+ *
+ * The two are not the same kind of loss. `editor · default vscode` is a line
+ * about the *file* — it is there so somebody who read a key in the docs can find
+ * the control, and searching is what the options page is for. The sentence under
+ * the control is the writing, and it is the reason a setting in this product
+ * explains its own cost rather than hiding it in a tooltip; dropping that to save
+ * a line would be dropping the only part of the row that says anything.
+ */
+.drawer-settings .setting-row__meta {
+  display: none;
+}
