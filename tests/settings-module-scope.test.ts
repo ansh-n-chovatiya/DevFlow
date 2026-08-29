@@ -90,6 +90,11 @@ describe('no surface resolves its settings once, at import time', () => {
     'src/ui/settings/file-view.ts',
     'src/ui/locator/settings-drawer.ts',
     'src/ui/popup/main.ts',
+    // One interactive locate reads five budget numbers, a filter and a source-map
+    // switch. It takes them as an argument — `locateSettings(settings)` is called
+    // per locate, from the controller — so the answer is the one that was true
+    // when the user pressed the button rather than when the window opened.
+    'src/ui/popup/locate.ts',
     'src/ui/viewer/main.ts',
     'src/ui/viewer/review.ts',
     'src/ui/viewer/annotate.ts',
