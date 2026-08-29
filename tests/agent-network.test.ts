@@ -11,7 +11,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AGENT_MESSAGE_SOURCE, BODY_CAP, CONTROL_MESSAGE_SOURCE } from '../src/shared/constants.js';
 
 interface AgentMessage {
-  __flowsnap_source__: string;
+  __devflow_source__: string;
   kind: string;
   url: string;
   requestBody: string | null;
@@ -48,7 +48,7 @@ beforeAll(async () => {
   window.fetch = () => Promise.resolve(respondWith());
 
   window.addEventListener('message', (event: MessageEvent<AgentMessage>) => {
-    if (event.data?.__flowsnap_source__ === AGENT_MESSAGE_SOURCE) seen.push(event.data);
+    if (event.data?.__devflow_source__ === AGENT_MESSAGE_SOURCE) seen.push(event.data);
   });
 
   await import('../src/injected/agent.js');
@@ -184,7 +184,7 @@ describe('when the user has switched body capture off', () => {
     window.dispatchEvent(
       new MessageEvent('message', {
         data: {
-          __flowsnap_control__: CONTROL_MESSAGE_SOURCE,
+          __devflow_control__: CONTROL_MESSAGE_SOURCE,
           recording: true,
           config: { captureBodies },
         },

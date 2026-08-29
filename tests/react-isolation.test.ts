@@ -1,5 +1,5 @@
 /**
- * FlowSnap must not record itself.
+ * DevFlow must not record itself.
  *
  * The recorder observes network by patching `fetch` and `XMLHttpRequest` in the
  * page's own JS context. The resolver fetches the page's bundles and source maps
@@ -29,11 +29,34 @@ const fetchWrapper = read('src/chrome/fetch.ts');
 
 describe('the resolver and the page never share a fetch', () => {
   it('the agent is the only thing that patches fetch, and it patches the page', () => {
-    expect(agent).toMatch(/window\.fetch = async function patchedFetch/);
+    // Two halves of one assertion since the patch moved behind the agent's
+    // double-injection guard: the replacement exists, and it is installed. It
+    // used to be a single `window.fetch = async function patchedFetch` — a
+    // statement at module scope, which is exactly what the guard exists to stop
+    // being unconditional. Installing twice would wrap `fetch` in two agents and
+    // report every request on the step twice.
+    expect(agent).toMatch(/async function patchedFetch\(/);
+    expect(agent).toMatch(/window\.fetch = patchedFetch;/);
     // If this ever appears in the worker, the patch and the resolver are in one
     // context and every resolution lands in the recording.
     expect(resolver).not.toContain('window.fetch');
     expect(fetchWrapper).not.toContain('window.fetch');
+  });
+
+  /*
+   * The picker's half of the agent is on the same side of the boundary, and it
+   * fetches nothing at all: it reads fibers, calls `toString()` and draws a box.
+   * Every byte the locate path pulls off the network is pulled by the worker,
+   * through `BundleProvider`. If a fetch ever appeared in these three files it
+   * would be a patched one, and a locate would show up in the recording as
+   * requests the user never made.
+   */
+  it('the picker fetches nothing, so a locate cannot land in a flow', () => {
+    for (const file of ['picker.ts', 'overlay.ts', 'highlight.ts']) {
+      const source = read(`src/injected/${file}`);
+      expect(source).not.toMatch(/[^.\w]fetch\(/);
+      expect(source).not.toContain('XMLHttpRequest');
+    }
   });
 
   it('the agent cannot reach the resolver or the fetch wrapper', () => {
