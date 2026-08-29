@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { exportToMarkdown, flowHost, urlPath } from '../src/core/export/markdown.js';
 import { CAPPED_ID } from '../src/core/react/table.js';
 import type { ComponentSource, FlowReact, Step } from '../src/shared/types.js';
+import { pos0, pos1 } from '../src/core/react/positions.js';
 
 const click = (over: Partial<Step> = {}): Step =>
   ({
@@ -169,8 +170,8 @@ describe('exportToMarkdown · React components', () => {
   it('names the owning component on the step and its path only in the table', () => {
     const md = exportToMarkdown([chained(['app', 'cart'])], {
       react: react({
-        app: { name: 'App', status: 'resolved', source: 'src/App.tsx', line: 1 },
-        cart: { name: 'AddToCartButton', status: 'resolved', source: 'src/Cart.tsx', line: 34 },
+        app: { name: 'App', status: 'resolved', source: 'src/App.tsx', line: pos1(1) },
+        cart: { name: 'AddToCartButton', status: 'resolved', source: 'src/Cart.tsx', line: pos1(34) },
       }),
     });
 
@@ -190,13 +191,13 @@ describe('exportToMarkdown · React components', () => {
           name: 'CheckoutButton',
           status: 'resolved',
           source: 'src/components/checkout/CheckoutButton.tsx',
-          line: 42,
+          line: pos1(42),
         },
         button: {
           name: 'Button',
           status: 'resolved',
           source: 'src/components/ui/Button.tsx',
-          line: 8,
+          line: pos1(8),
         },
       }),
     });
@@ -209,8 +210,8 @@ describe('exportToMarkdown · React components', () => {
   it('adds nothing when the owner is already the feature component', () => {
     const md = exportToMarkdown([chained(['app', 'cart'])], {
       react: react({
-        app: { name: 'App', status: 'resolved', source: 'src/App.tsx', line: 1 },
-        cart: { name: 'AddToCartButton', status: 'resolved', source: 'src/Cart.tsx', line: 34 },
+        app: { name: 'App', status: 'resolved', source: 'src/App.tsx', line: pos1(1) },
+        cart: { name: 'AddToCartButton', status: 'resolved', source: 'src/Cart.tsx', line: pos1(34) },
       }),
     });
 
@@ -234,7 +235,7 @@ describe('exportToMarkdown · React components', () => {
         tag: {
           name: 'PriceTag',
           status: 'compiled-only',
-          compiled: { url: 'https://cdn.example.com/assets/main.js', line: 1, column: 88_214 },
+          compiled: { url: 'https://cdn.example.com/assets/main.js', line: pos0(1), column: pos0(88_214) },
           detail: 'no source map',
         },
       }),
@@ -246,7 +247,7 @@ describe('exportToMarkdown · React components', () => {
   it('notes the cap below the table instead of listing it as a component', () => {
     const md = exportToMarkdown([chained(['cart'])], {
       react: react({
-        cart: { name: 'Cart', status: 'resolved', source: 'src/Cart.tsx', line: 3 },
+        cart: { name: 'Cart', status: 'resolved', source: 'src/Cart.tsx', line: pos1(3) },
         [CAPPED_ID]: { name: 'FlowSnap', status: 'skipped', detail: 'More than 128 components.' },
       }),
     });

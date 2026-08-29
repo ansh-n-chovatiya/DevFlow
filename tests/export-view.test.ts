@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FlowReact, NetworkCall, Step } from '../src/shared/types.js';
 import { deriveExportView, measure, type ExportInput } from '../src/ui/viewer/export-view.js';
+import { pos1 } from '../src/core/react/positions.js';
 
 /** 300 base64 characters — 224 bytes decoded, once the header is discounted. */
 const IMAGE = `data:image/jpeg;base64,${'A'.repeat(300)}`;
@@ -190,7 +191,7 @@ describe('the React row', () => {
         name: 'Cart',
         status: 'resolved',
         source: 'src/components/Cart.tsx',
-        line: 34,
+        line: pos1(34),
       },
     },
   };

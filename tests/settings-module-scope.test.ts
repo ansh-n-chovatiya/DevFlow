@@ -76,6 +76,12 @@ describe('no surface resolves its settings once, at import time', () => {
   /** Every file that reads the mechanism rather than the constants. */
   const consumers = [
     'src/content/index.ts',
+    // The provider is a consumer because it is where the five Tier 2 budget
+    // numbers stop being settings and become a `BundleBudget`. Its read is
+    // inside `loadBundleBudget`, not at module scope — which is the whole point:
+    // a budget frozen at import would be the answer from whenever the worker
+    // last woke, applied to every resolution until Chrome next killed it.
+    'src/features/react/providers/worker.ts',
     'src/background/index.ts',
     'src/core/mcp-bundle.ts',
     'src/ui/settings/main.ts',

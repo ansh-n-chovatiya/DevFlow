@@ -15,6 +15,7 @@ import { exportToJSON } from '../src/core/export/json.js';
 import { exportToMarkdown } from '../src/core/export/markdown.js';
 import { CAPPED_ID } from '../src/core/react/table.js';
 import type { ComponentSource, FlowReact, NetworkCall, Step } from '../src/shared/types.js';
+import { pos1 } from '../src/core/react/positions.js';
 
 const click = (over: Partial<Step> = {}): Step =>
   ({
@@ -102,7 +103,7 @@ describe('a response body cannot escape its code block', () => {
         click({ action: 'Clicked "Next"' }),
       ],
       {
-        react: react({ cart: { name: 'Cart', status: 'resolved', source: 'src/Cart.tsx', line: 3 } }),
+        react: react({ cart: { name: 'Cart', status: 'resolved', source: 'src/Cart.tsx', line: pos1(3) } }),
       },
     );
 

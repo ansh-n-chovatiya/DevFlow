@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { pos1 } from '../src/core/react/positions.js';
 import type {
   ComponentSource,
   ConsoleEntry,
@@ -306,9 +307,9 @@ describe('the React component on a step', () => {
         name: 'CheckoutButton',
         status: 'resolved',
         source: 'src/components/checkout/CheckoutButton.tsx',
-        line: 42,
+        line: pos1(42),
       },
-      button: { name: 'Button', status: 'resolved', source: 'src/components/ui/Button.tsx', line: 8 },
+      button: { name: 'Button', status: 'resolved', source: 'src/components/ui/Button.tsx', line: pos1(8) },
     }).steps;
 
     // The card and the Markdown say the same thing, in the same words.
@@ -323,8 +324,8 @@ describe('the React component on a step', () => {
 
   it('names the owning component and where it was written', () => {
     const [card] = view([chained(['app', 'cart'])], {
-      app: { name: 'App', status: 'resolved', source: 'src/App.tsx', line: 1 },
-      cart: { name: 'AddToCartButton', status: 'resolved', source: 'src/Cart.tsx', line: 34 },
+      app: { name: 'App', status: 'resolved', source: 'src/App.tsx', line: pos1(1) },
+      cart: { name: 'AddToCartButton', status: 'resolved', source: 'src/Cart.tsx', line: pos1(34) },
     }).steps;
 
     expect(card.component).toEqual({
@@ -347,7 +348,7 @@ describe('the React component on a step', () => {
           steps: [chained(['cart'])],
           createdAt: NOW,
           react: react({
-            cart: { name: 'AddToCartButton', status: 'resolved', source: 'src/Cart.tsx', line: 34 },
+            cart: { name: 'AddToCartButton', status: 'resolved', source: 'src/Cart.tsx', line: pos1(34) },
           }),
           settings: null,
         },
@@ -392,7 +393,7 @@ describe('the React component on a step', () => {
         name: 'ButtonBase',
         status: 'resolved',
         source: 'node_modules/@mui/material/ButtonBase.js',
-        line: 12,
+        line: pos1(12),
         dependency: true,
       },
     }).steps;
@@ -402,7 +403,7 @@ describe('the React component on a step', () => {
 
   it('summarises the whole table once, in the header', () => {
     const header = view([chained(['a', 'b'])], {
-      a: { name: 'App', status: 'resolved', source: 'src/App.tsx', line: 1 },
+      a: { name: 'App', status: 'resolved', source: 'src/App.tsx', line: pos1(1) },
       b: { name: 'Cart', status: 'pending' },
     }).header;
 

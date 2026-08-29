@@ -25,6 +25,7 @@ const read = (file: string) => readFileSync(resolve(root, file), 'utf8');
 
 const agent = read('src/injected/agent.ts');
 const resolver = read('src/features/react/resolver.ts');
+const provider = read('src/features/react/providers/worker.ts');
 const fetchWrapper = read('src/chrome/fetch.ts');
 
 describe('the resolver and the page never share a fetch', () => {
@@ -67,10 +68,20 @@ describe('the resolver and the page never share a fetch', () => {
   });
 
   it('the resolver reaches the network through the wrapper and nothing else', () => {
-    expect(resolver).toContain("from '../../chrome/fetch.js'");
-    // Every call goes through `deps.fetchText`, so a test can supply its own and
-    // the worker can supply the wrapper. A bare `fetch(` here would bypass both
-    // the scheme check and the size cap.
+    /*
+     * The invariant is unchanged; the wrapper moved one hop.
+     *
+     * The resolver no longer fetches at all — it asks a `BundleProvider`, and
+     * `WorkerProvider` is what holds the import. So the assertion follows it
+     * there, and the resolver gets the stronger claim: not "it fetches through
+     * the wrapper" but "it does not fetch". Both files keep the bare-`fetch(`
+     * check, because a bare call in either would bypass the scheme check and the
+     * size cap exactly as before.
+     */
+    expect(provider).toContain("from '../../../chrome/fetch.js'");
+    expect(provider).not.toMatch(/[^.\w]fetch\(/);
+
+    expect(resolver).not.toContain("from '../../chrome/fetch.js'");
     expect(resolver).not.toMatch(/[^.\w]fetch\(/);
   });
 

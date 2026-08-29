@@ -28,6 +28,8 @@ import {
   resolvePending,
   type ResolveDeps,
 } from '../src/features/react/resolver.js';
+import { createWorkerProvider } from '../src/features/react/providers/worker.js';
+import { flowError } from '../src/shared/errors.js';
 import { toAgentConfig } from '../src/features/settings/agent.js';
 import { frozen, recordedOverrides } from '../src/features/settings/recording.js';
 import { RECORDED } from '../src/features/settings/fields.js';
@@ -249,11 +251,35 @@ describe('what actually reads them', () => {
 
   it('fetches a bundle under the configured ceiling, not the compiled-in one', async () => {
     const caps: number[] = [];
+    /*
+     * The ceiling moved but the claim did not. It used to reach the fetch
+     * through `ResolveDeps.fetchText`; since the providers landed it is
+     * `BundleBudget.maxResourceBytes`, which is `react.maxResourceBytes` read by
+     * whoever builds the provider. What this test is for — a configured ceiling
+     * reaches the fetch and the compiled-in one does not — is the setting's
+     * whole claim, and is unchanged.
+     */
     const deps: ResolveDeps = {
-      fetchText: (url, maxBytes) => {
-        caps.push(maxBytes);
-        return Promise.resolve(url.endsWith('.js') ? { ok: true as const, value: 'function Cart(){}' } : { ok: false as const });
-      },
+      provider: createWorkerProvider(
+        {
+          concurrency: DEFAULT_RESOLVE_LIMITS.concurrency,
+          maxResourceBytes: 4096,
+          maxMapBytes: DEFAULT_RESOLVE_LIMITS.mapBytes,
+          cacheEntries: DEFAULT_RESOLVE_LIMITS.cacheEntries,
+          cacheBytes: DEFAULT_RESOLVE_LIMITS.cacheBytes,
+        },
+        {
+          scripts: {},
+          fetchText: (url, maxBytes) => {
+            caps.push(maxBytes);
+            return Promise.resolve(
+              url.endsWith('.js')
+                ? { ok: true as const, value: 'function Cart(){}' }
+                : { ok: false as const, error: flowError('RESOURCE_UNFETCHABLE', url) },
+            );
+          },
+        },
+      ),
       now: () => 0,
     };
 
@@ -275,14 +301,34 @@ describe('what actually reads them', () => {
   it('runs no more resolutions at once than it was allowed', async () => {
     let inFlight = 0;
     let peak = 0;
+    /*
+     * Two gates now stand between eight components and the network, and this
+     * asserts the one nearest it. The resolver's pool bounds how many
+     * *components* are in flight; the provider's bounds how many *bundles* are
+     * being fetched, which is the number `react.resolveConcurrency` names and
+     * the one a site owner would feel. Both are set to 2 so neither can mask
+     * the other having been dropped.
+     */
     const deps: ResolveDeps = {
-      fetchText: async () => {
-        inFlight += 1;
-        peak = Math.max(peak, inFlight);
-        await Promise.resolve();
-        inFlight -= 1;
-        return { ok: false as const };
-      },
+      provider: createWorkerProvider(
+        {
+          concurrency: 2,
+          maxResourceBytes: DEFAULT_RESOLVE_LIMITS.resourceBytes,
+          maxMapBytes: DEFAULT_RESOLVE_LIMITS.mapBytes,
+          cacheEntries: DEFAULT_RESOLVE_LIMITS.cacheEntries,
+          cacheBytes: DEFAULT_RESOLVE_LIMITS.cacheBytes,
+        },
+        {
+          scripts: {},
+          fetchText: async (url) => {
+            inFlight += 1;
+            peak = Math.max(peak, inFlight);
+            await Promise.resolve();
+            inFlight -= 1;
+            return { ok: false as const, error: flowError('RESOURCE_UNFETCHABLE', url) };
+          },
+        },
+      ),
       now: () => 0,
     };
 

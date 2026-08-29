@@ -31,7 +31,7 @@ import { toAgentConfig } from '../src/features/settings/agent.js';
 import type { AgentConfig } from '../src/shared/messages.js';
 
 interface Emitted {
-  __flowsnap_source__?: string;
+  __devflow_source__?: string;
   kind?: string;
   level?: string;
   args?: string[];
@@ -50,7 +50,7 @@ const seen: Emitted[] = [];
  */
 async function pushControl(recording: boolean, config?: Partial<AgentConfig>): Promise<void> {
   const event = new MessageEvent('message', {
-    data: { __flowsnap_control__: CONTROL_MESSAGE_SOURCE, recording, config },
+    data: { __devflow_control__: CONTROL_MESSAGE_SOURCE, recording, config },
     origin: window.location.origin,
     source: window,
   });
@@ -65,7 +65,7 @@ async function drain(): Promise<Emitted[]> {
 
 beforeAll(async () => {
   window.addEventListener('message', (event: MessageEvent<Emitted>) => {
-    if (event.data?.__flowsnap_source__) seen.push(event.data);
+    if (event.data?.__devflow_source__) seen.push(event.data);
   });
   await import('../src/injected/agent.js');
   await drain();

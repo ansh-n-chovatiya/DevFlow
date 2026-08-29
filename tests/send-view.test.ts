@@ -19,6 +19,7 @@ import type {
   Step,
 } from '../src/shared/types.js';
 import { deriveSendView, SEND_DEFAULTS } from '../src/ui/viewer/send-view.js';
+import { pos1 } from '../src/core/react/positions.js';
 
 const NOW = 1_700_000_000_000;
 
@@ -71,7 +72,7 @@ const REACT_TABLE: FlowReact = {
       name: 'CheckoutButton',
       status: 'resolved',
       source: 'src/components/checkout/CheckoutButton.tsx',
-      line: 42,
+      line: pos1(42),
     },
   },
 };
