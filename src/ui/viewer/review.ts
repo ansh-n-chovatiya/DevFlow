@@ -6,6 +6,32 @@
  * replay data behind disclosures. Every decision about *what* to show is in
  * review-view.ts; this file knows how to put it on screen and how to turn an
  * edit into a write.
+ *
+ * ## Where the component disclosure went (W2·K)
+ *
+ * It used to draw its own source row: a path, a copy button, an open button and
+ * a sentence, all assembled here. That was a second result card — the DevTools
+ * panel and the popup each render one for a component the user just picked, and
+ * a recorded step is holding the identical `ComponentSource`. So the disclosure
+ * now renders `components/result-card.ts` and nothing of its own, which is why
+ * the review can say "ambiguous" or "no map" without ever having learned those
+ * words. Three surfaces, one card, built once in W1·D.
+ *
+ * The step line above it gained the file, and became the way in: it opens the
+ * disclosure the card lives in. That is the whole of what K adds — the review
+ * finally saying what the recording already knew.
+ *
+ * ## The other direction
+ *
+ * A component's other steps are listed under its card, and a click on one moves
+ * the selection there. Going the *other* way round — arm the picker, click a
+ * component on the page, and land on the steps that touched it — needs a tab id
+ * to send `START_PICK` to, and this surface has none: the viewer is a tab of its
+ * own, so `getActiveTab()` answers with the viewer, nothing on `ViewerState`
+ * names the tab being recorded, and no key in `LocalStorageShape` records it
+ * either. `stepsForComponentName` in review-view.ts is the half of that question
+ * this package can answer and does; the missing half is a seam for Wave 3, not a
+ * message type to invent here — `shared/messages.ts` is frozen.
  */
 
 import { compactBody } from '../../core/schema/index.js';
@@ -15,7 +41,8 @@ import { getLocal } from '../../chrome/storage.js';
 import { deleteFlow, renameFlow } from '../../features/flows/store.js';
 import { sendToWorker } from '../../shared/messages.js';
 import type { ConsoleEntry, NetworkCall, Step } from '../../shared/types.js';
-import { hydrateIcons } from '../icons.js';
+import { resultCard } from '../components/result-card.js';
+import { hydrateIcons, icon } from '../icons.js';
 import { showToast } from '../toast.js';
 import type { App, UndoEntry } from './app.js';
 import { openAnnotate } from './annotate.js';
@@ -24,7 +51,13 @@ import { confirm } from './dialogs.js';
 import { clone, el, find, show } from './dom.js';
 import { openExport } from './export-dialog.js';
 import { openSend } from './send-dialog.js';
-import { deriveReviewView, firstVisibleIndex, type StepCardView, type StepFilter } from './review-view.js';
+import {
+  deriveReviewView,
+  firstVisibleIndex,
+  type StepCardView,
+  type StepComponentView,
+  type StepFilter,
+} from './review-view.js';
 import { LIBRARY } from './route.js';
 
 const dom = {
@@ -651,6 +684,126 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
     return node;
   }
 
+  // ── The component a step happened in ───────────────────────────────────
+
+  /**
+   * Move the selection to a step by its index, whatever the filter is doing.
+   *
+   * Reached from another step's component, so the target is very often one the
+   * current filter hides — and scrolling to a card that is not in the document
+   * is a click that appears to do nothing. Clearing the filter first is the
+   * honest reading of "take me to step 7": the step is what was asked for, the
+   * filter was only a way of looking.
+   */
+  function goToStep(index: number): void {
+    if (!document.querySelector(`.step[data-index="${index}"]`)) setFilter('all');
+    setActive(index);
+  }
+
+  /**
+   * The step's own way into its component's source.
+   *
+   * The file, on the line that already names the component, because "every step
+   * shows its component and file" is the point of the bridge — and pressing it
+   * opens the disclosure the shared card sits in rather than navigating
+   * anywhere, so the answer arrives on the card the user is already reading.
+   *
+   * When there is no path there is still a button, carrying the status word.
+   * Removing it would make an unresolved component silently indistinguishable
+   * from one nobody has asked about, and the sentence explaining which of the
+   * eight outcomes happened is exactly what the card behind it is for.
+   */
+  function sourceButton(component: StepComponentView, detail: HTMLElement): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'step__react-open';
+
+    const label = document.createElement('span');
+    label.className = component.path ? 'step__react-path mono truncate' : 'chip step__react-status';
+    label.textContent = component.path ?? component.statusLabel ?? '';
+
+    button.append(icon('file-code', 'icon step__react-file'), label);
+    button.title = component.path ?? component.detail ?? '';
+    button.setAttribute('aria-label', `Show where ${component.name} was written`);
+
+    button.addEventListener('click', () => {
+      const details = detail as HTMLDetailsElement;
+      details.open = true;
+      details.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+
+    return button;
+  }
+
+  /**
+   * The disclosure body: the one shared card, and nothing this screen invented.
+   *
+   * `onOpenSources` is deliberately not passed. The viewer is an extension tab
+   * with no DevTools window to reveal a compiled position in, and the card reads
+   * a missing handler as "this surface cannot do that" — the button is absent
+   * rather than present and inert. `resourcesSearched` is absent for the same
+   * kind of reason: it belongs to an interactive locate, and a recorded step
+   * never had one, so the ambiguity sentence goes without it.
+   */
+  function fillComponentDetail(detail: HTMLElement, component: StepComponentView): void {
+    const status = find(detail, '.react__status');
+    // The chip states the doubt in the status's own word, so an unresolved
+    // component never sits under a heading that implies it has an answer.
+    if (component.statusLabel) status.textContent = component.statusLabel;
+    else status.remove();
+
+    const body = find(detail, '.detail__body');
+    body.replaceChildren(
+      resultCard({
+        source: component.record,
+        link: app.state.editor,
+        onCopyPath: (path) => void copy(path, 'source path'),
+        onOpenEditor: (url) => void openInEditor(url),
+      }),
+    );
+
+    if (component.alsoOn.length > 0) body.append(alsoOnRow(component));
+  }
+
+  /**
+   * The other steps this component was touched on.
+   *
+   * The reverse of the bridge as far as the review can carry it: having found
+   * where a component lives, the next question is where else it was used, and
+   * the flow already knows. Numbers rather than actions, because the step
+   * numbers are what the rail is labelled with.
+   */
+  function alsoOnRow(component: StepComponentView): HTMLElement {
+    const row = document.createElement('p');
+    row.className = 'step__also';
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = 'Also on';
+    row.append(label);
+
+    for (const number of component.alsoOn) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'chip step__also-step';
+      button.textContent = `Step ${number}`;
+      button.setAttribute('aria-label', `Go to step ${number}`);
+      button.addEventListener('click', () => goToStep(number - 1));
+      row.append(button);
+    }
+
+    // The count, not another thirty chips. A shared component touched on every
+    // step of a long flow is a fact worth stating and a list worth not drawing.
+    if (component.alsoOnMore > 0) {
+      const more = document.createElement('span');
+      more.className = 'meta';
+      more.textContent = `and ${component.alsoOnMore} more`;
+      row.append(more);
+    }
+
+    return row;
+  }
+
   function buildCard(card: StepCardView, step: Step): HTMLElement {
     const node = clone('tpl-step');
     node.dataset.index = String(card.index);
@@ -697,6 +850,8 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
 
     // ── Component ──────────────────────────────────────────────────────
     const react = find(node, '.step__react');
+    const reactDetail = find(node, '.detail--react');
+
     if (card.component) {
       // `Button · in CheckoutButton` — the same wording the Markdown uses, so
       // the card and the export never read as two different claims.
@@ -704,10 +859,18 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
         ? `${card.component.name} · in ${card.component.within}`
         : card.component.name;
       const tag = find(react, '.step__react-tag');
-      if (card.component.dependency) tag.textContent = 'dependency';
+      // The directory name, which is what the card in the disclosure below says
+      // about the same component. "dependency" was a product noun with no entry
+      // in the glossary, and one fact wearing two words on one card is the
+      // vocabulary drift the shared card exists to stop.
+      if (card.component.dependency) tag.textContent = 'node_modules';
       else tag.remove();
+
+      react.append(sourceButton(card.component, reactDetail));
+      fillComponentDetail(reactDetail, card.component);
     } else {
       react.remove();
+      reactDetail.remove();
     }
 
     // ── Screenshot ─────────────────────────────────────────────────────
@@ -810,45 +973,6 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
       });
     } else {
       selectors.remove();
-    }
-
-    // ── Where that component lives ─────────────────────────────────────
-    const reactDetail = find(node, '.detail--react');
-    if (card.component) {
-      const { source, detail: why } = card.component;
-
-      const status = find(reactDetail, '.react__status');
-      // The chip states the doubt, so an unresolved component never sits under
-      // a heading that implies it has an answer.
-      if (why) status.textContent = 'unresolved';
-      else status.remove();
-
-      const sourceRow = find(reactDetail, '.selector');
-      if (source) {
-        find(sourceRow, '.react__source').textContent = source;
-        find(sourceRow, '[data-action="copy-source"]').addEventListener('click', () => {
-          void copy(source, 'source path');
-        });
-
-        // The button is removed rather than disabled: with no project root set
-        // there is nothing wrong to fix in the moment, and a permanently greyed
-        // control on every step reads as a broken feature.
-        const open = find(sourceRow, '[data-action="open-source"]');
-        const editorUrl = card.component.editorUrl;
-        if (editorUrl) {
-          open.addEventListener('click', () => void openInEditor(editorUrl));
-        } else {
-          open.remove();
-        }
-      } else {
-        sourceRow.remove();
-      }
-
-      const reason = find(reactDetail, '.react__detail');
-      if (why) reason.textContent = why;
-      else reason.remove();
-    } else {
-      reactDetail.remove();
     }
 
     // ── Network and console ────────────────────────────────────────────

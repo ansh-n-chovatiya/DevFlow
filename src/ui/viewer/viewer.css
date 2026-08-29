@@ -5,9 +5,15 @@
  * colour is declared here that is not a token. The file it replaces was 950
  * lines of hardcoded hexes inside a <style> block, which is why the viewer was
  * the last surface with no dark theme.
+ *
+ * The result card is imported rather than restyled. A step's component opens
+ * the same card the DevTools panel and the popup show, and a sheet of its own
+ * here is how three surfaces end up with three cards that look alike until one
+ * of them changes.
  */
 
 @import '../styles/index.css';
+@import '../components/result-card.css';
 
 .view {
   display: flex;
@@ -772,10 +778,15 @@
 /*
  * The component line sits between what the user did and the picture of it, at
  * the same weight as the typed value: a fact about the step, not a heading.
+ *
+ * It wraps, because it now carries two facts rather than one — which component,
+ * and which file it was written in. On a narrow window the file drops below the
+ * name instead of squeezing an identifier nobody can read out of it.
  */
 .step__react {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
   min-width: 0;
 }
@@ -790,23 +801,89 @@
   color: var(--fg-muted);
 }
 
-/* Not the user's code. Said quietly, because it is a caveat and not a warning. */
+/*
+ * Not the user's code. Said quietly, because it is a caveat and not a warning —
+ * and said as `node_modules`, the same word the card in the disclosure uses, so
+ * the chip drops the uppercasing every other chip wants. A directory name is not
+ * a machine's category; it is a path, and shouting it makes it harder to read.
+ */
 .step__react-tag {
   color: var(--fg-faint);
-}
-
-.react__source {
-  font-size: var(--text-code);
+  text-transform: none;
 }
 
 /*
- * Why there is no path. It reads as prose because it is a sentence, and the one
- * place on the card where the extension explains itself rather than reports.
+ * The way from a step to its component's source.
+ *
+ * Quiet until it is wanted: this sits on every card of a React recording, and
+ * thirty framed buttons down a flow would read as thirty warnings. It takes its
+ * border on hover and focus, which is where a control has to look like one.
  */
-.react__detail {
-  margin-top: var(--space-2);
-  font-size: var(--text-label);
+.step__react-open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+  padding: 1px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: none;
   color: var(--fg-faint);
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.step__react-open:hover,
+.step__react-open:focus-visible {
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+.step__react-file {
+  flex: none;
+}
+
+.step__react-path {
+  min-width: 0;
+  font-size: var(--text-code);
+}
+
+/* No path to show, so the status stands in its place — never a blank. */
+.step__react-status {
+  color: var(--fg-faint);
+}
+
+/*
+ * The card brings its own frame and its own rhythm, so the disclosure gives it
+ * room rather than a second set of padding to sit inside.
+ */
+.detail--react .detail__body {
+  padding: var(--space-2);
+}
+
+/*
+ * Where else this component was touched. Under the card because it is the
+ * question that follows the answer, not part of it.
+ */
+.step__also {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
+.step__also-step {
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.step__also-step:hover,
+.step__also-step:focus-visible {
+  color: var(--fg);
+  border-color: var(--border-strong);
 }
 
 /*
