@@ -28,6 +28,22 @@
  * The bridge is meant to run both ways, so `stepsForComponentName` answers the
  * other direction — given a component, which steps touched it — and `alsoOn`
  * puts the answer on the card for the component the step already names.
+ *
+ * ## The pick, and the four ways it does not happen (W3·P2)
+ *
+ * W2·K could answer the question and had no way to ask it: arming the picker is
+ * `START_PICK { tabId }`, and the viewer is a tab of its own. `recordingTabId`
+ * is that tab, and `pickView` below is everything the review decides with it.
+ *
+ * Most of what it decides is refusal, and that is the point. A pick from this
+ * screen fails in four ordinary ways — the flow is a saved one and there is no
+ * page behind it, nothing is recording, the page said no, the user changed
+ * their mind — plus two more the wave's brief did not list: a flow that
+ * recorded no components at all, and an element with no React component above
+ * it. Six outcomes, six sentences, none of them an error dialog: they are all
+ * answers to a question the user asked, and only one of them is "here are the
+ * steps". Deciding them here rather than in the controller is what makes them
+ * six lines of a test file instead of six paths through a browser.
  */
 
 import { flowHost, formatDelta, stepFailed, worstLevel, worstStatus } from '../../core/flow/index.js';
@@ -40,6 +56,7 @@ import type {
   ComponentStatus,
   ConsoleLevel,
   FlowReact,
+  PickResult,
   RecordingState,
   Overrides,
   Step,

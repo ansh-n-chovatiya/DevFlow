@@ -82,7 +82,7 @@ function updateBadge(count: number): void {
  * can actually see.
  */
 async function reportError(error: FlowError): Promise<void> {
-  console.warn(`FlowSnap: ${error.code} — ${error.detail ?? error.message}`);
+  console.warn(`DevFlow: ${error.code} — ${error.detail ?? error.message}`);
   await setLocal({ lastError: { ...error, at: Date.now() } });
 }
 
@@ -148,6 +148,7 @@ async function captureAndSave(
   const stored = await getLocal([
     'recordedSteps',
     'recordingActive',
+    'recordingTabId',
     'reactComponents',
     'reactNeedles',
   ]);
@@ -171,11 +172,17 @@ async function captureAndSave(
       url: step.url,
       timestamp: Date.now(),
       action: 'limit-reached',
-      value: `Recording stopped at ${maxSteps} steps, FlowSnap's safety limit. Every step up to here was saved.`,
+      value: `Recording stopped at ${maxSteps} steps, DevFlow's safety limit. Every step up to here was saved.`,
       screenshot: null,
       stepNumber: recordedSteps.length + 1,
     });
-    const written = await setLocal({ recordingActive: false, recordedSteps });
+    // Ending a recording and forgetting its tab are one write, here as
+    // everywhere else — see `recordingTabId` in `shared/types.ts`.
+    const written = await setLocal({
+      recordingActive: false,
+      recordingTabId: null,
+      recordedSteps,
+    });
     if (!written.ok) await reportError(written.error);
     updateBadge(recordedSteps.length);
     return;
@@ -202,7 +209,7 @@ async function captureAndSave(
   // network either way.
   const senderVisible = sender.tab?.active !== false;
   if (!dataUrl && !recording['screenshots.capture']) {
-    omitted = 'Screenshots are switched off in FlowSnap settings for this recording.';
+    omitted = 'Screenshots are switched off in DevFlow settings for this recording.';
   } else if (!dataUrl && !senderVisible) {
     omitted = 'The tab was not on screen when this step was captured, so no screenshot was taken.';
   } else if (!dataUrl) {
@@ -286,6 +293,32 @@ async function captureAndSave(
 
   recordedSteps.push(withoutImages(captured));
 
+  /*
+   * Which tab this recording is happening in, learned from the tab producing it.
+   *
+   * `recordingTabId` exists so the flow review can arm the picker on the page
+   * being recorded (`shared/types.ts`), and the worker is not where a recording
+   * starts — the popup writes `recordingActive: true`. What the worker has is
+   * better than a guess made at that moment anyway: the tab that sent this step.
+   * The content script logs a navigation step the instant a recording starts, so
+   * the id lands with the recording's own first write; and because a recording
+   * follows the user across tabs, re-reading it from each step keeps it naming
+   * the tab they are actually recording in rather than the one they began on.
+   *
+   * `senderVisible`, for the same reason the screenshot uses it: a debounced
+   * input arriving from a tab the user has switched away from is a step in this
+   * recording, but it is not the page they would be pointing at.
+   *
+   * Only when it changed. This batch is written once per step, and rewriting an
+   * identical id forty times would wake every `storage.onChanged` listener in
+   * the product for nothing.
+   */
+  const senderTabId = senderVisible ? (sender.tab?.id ?? null) : null;
+  const tabPatch =
+    senderTabId !== null && senderTabId !== (stored.value.recordingTabId ?? null)
+      ? { recordingTabId: senderTabId }
+      : {};
+
   const merged = components?.length
     ? mergeComponents(
         components,
@@ -302,6 +335,7 @@ async function captureAndSave(
 
   const written = await setLocal({
     recordedSteps,
+    ...tabPatch,
     ...(shotPatch(captured, screenshot, screenshotOriginal) ?? {}),
     // Only when something actually changed: a flow that clicks one button forty
     // times would otherwise rewrite an identical table forty times.
@@ -371,8 +405,76 @@ async function finishRecording(): Promise<void> {
     recordingActive: false,
     recordingPaused: false,
     recordingStartedAt: null,
+    // In the batch that ends the recording, not after it. A separate write
+    // would leave an instant in which nothing is recording and storage still
+    // names a tab as the one being recorded, which is the whole of what
+    // `recordingTabId` promises not to do.
+    recordingTabId: null,
   });
   if (!written.ok) await reportError(written.error);
+}
+
+/**
+ * Forget the tab a recording was happening in, if storage still names one.
+ *
+ * Read before write, and silent when there is nothing to forget. This runs from
+ * a `storage.onChanged` listener among other places, and an unconditional `set`
+ * would echo through every listener in the product on every recording that ends
+ * — including this one, which would then read `null` and write `null` again.
+ */
+async function clearRecordingTab(): Promise<void> {
+  const stored = await getLocal('recordingTabId');
+  if (!stored.ok || stored.value.recordingTabId == null) return;
+
+  const written = await setLocal({ recordingTabId: null });
+  if (!written.ok) await reportError(written.error);
+}
+
+/**
+ * Whether a tab is still open.
+ *
+ * `chrome.tabs.get` rejects for a tab that is gone, and the callback form makes
+ * that a `lastError` to read rather than a rejection to catch — which is the
+ * only reason this is not `chrome/tabs.ts`'s promise style: an unread
+ * `lastError` logs on every call for a tab that has closed, which is the case
+ * this exists to detect.
+ */
+function tabIsOpen(tabId: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    chrome.tabs.get(tabId, () => resolve(!chrome.runtime.lastError));
+  });
+}
+
+/**
+ * Make `recordingTabId` true again after the worker has been away.
+ *
+ * The guarantee the key makes is that it never names a tab nothing is
+ * recording, and every path that *ends* a recording clears it in the same write.
+ * What no write can cover is the worker not being alive to make one: Chrome
+ * kills the service worker at its own discretion, and the browser itself can be
+ * closed mid-recording. Both come back to storage that still names a tab, and
+ * in the second case to a browser where every tab id has been reissued — so the
+ * id could name a tab that exists and is a completely unrelated page.
+ *
+ * Two answers, because they are two different facts. `onStartup` is a new
+ * browser session and therefore a new set of tab ids, so the stored one is
+ * meaningless whatever it says. An ordinary worker wake keeps the id if the tab
+ * is still open, because it is still the right answer; the recording's next
+ * step re-establishes it either way.
+ */
+async function reconcileRecordingTab(): Promise<void> {
+  const stored = await getLocal(['recordingActive', 'recordingTabId']);
+  if (!stored.ok) return;
+
+  const tabId = stored.value.recordingTabId;
+  if (tabId == null) return;
+
+  if (stored.value.recordingActive !== true) {
+    await clearRecordingTab();
+    return;
+  }
+
+  if (!(await tabIsOpen(tabId))) await clearRecordingTab();
 }
 
 /**
@@ -527,7 +629,7 @@ function enqueueResolve(final: boolean): Promise<void> {
     runResolve(final).catch((error: unknown) =>
       // A failed pass costs some components their path and nothing else; the
       // needles are still in storage and the next trigger retries them.
-      console.warn('FlowSnap: component resolution failed', error),
+      console.warn('DevFlow: component resolution failed', error),
     ),
   );
   return resolveQueue;
@@ -570,7 +672,7 @@ async function purgeReact(): Promise<void> {
 
   resolveQueue = resolveQueue.then(() => {
     captureQueue = captureQueue.then(() =>
-      clear().catch((error: unknown) => console.warn('FlowSnap: React purge failed', error)),
+      clear().catch((error: unknown) => console.warn('DevFlow: React purge failed', error)),
     );
     return captureQueue;
   });
@@ -757,7 +859,7 @@ async function fetchForPanel(url: string): Promise<FetchContentResponse> {
 async function relayToTab<T>(tabId: number, request: ContentRequest): Promise<Result<T>> {
   const answer = await sendToTab<T>(tabId, request);
   if (!answer.ok) {
-    console.warn(`FlowSnap: ${request.type} did not reach tab ${tabId} (${answer.error.code})`);
+    console.warn(`DevFlow: ${request.type} did not reach tab ${tabId} (${answer.error.code})`);
   }
   return answer;
 }
@@ -878,6 +980,20 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 
   /*
+   * Whatever ended this recording, storage must stop naming a tab as the one
+   * being recorded.
+   *
+   * The three paths the worker owns clear it in their own write, which is
+   * better — there is no instant between the two facts. This is for the paths it
+   * does not own: the popup writes `recordingActive: false` directly when Stop
+   * cannot reach the worker, and again when a recording is discarded. Neither
+   * knows about this key, and a fourth path added later would not either. A
+   * reconciler on the one change every ending has in common is the only version
+   * of this promise that a caller cannot forget to keep.
+   */
+  void clearRecordingTab();
+
+  /*
    * An import made during a recording was parked rather than applied, and
    * this is the moment it was parked for.
    *
@@ -948,7 +1064,26 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   precaptures.delete(tabId);
   panelTabs.delete(tabId);
+  /*
+   * And it is no longer somewhere a pick can be armed.
+   *
+   * The recording itself continues — it follows the user across tabs, and
+   * closing one of them does not end it — so this is not `finishRecording`. It
+   * is the one way `recordingTabId` can go stale while everything else about
+   * the recording stays true, and the flow review would otherwise offer a pick
+   * that could only fail. The next step captured in another tab names that one.
+   */
+  void forgetRecordingTabIfClosed(tabId);
 });
+
+/** Clears `recordingTabId` only when the tab that went away is the one it names. */
+async function forgetRecordingTabIfClosed(tabId: number): Promise<void> {
+  const stored = await getLocal('recordingTabId');
+  if (!stored.ok || stored.value.recordingTabId !== tabId) return;
+
+  const written = await setLocal({ recordingTabId: null });
+  if (!written.ok) await reportError(written.error);
+}
 
 chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendResponse) => {
   if (!message?.type) return;
@@ -994,7 +1129,7 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
       // belongs to may still be in it.
       captureQueue = captureQueue.then(() =>
         attachDomDelta(message.key, message.before, message.after).catch((error: unknown) =>
-          console.warn('FlowSnap: DOM delta not attached', error),
+          console.warn('DevFlow: DOM delta not attached', error),
         ),
       );
       sendResponse({ ok: true });
@@ -1007,7 +1142,7 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
       // one failure cannot break the chain for later steps.
       captureQueue = captureQueue.then(() =>
         captureAndSave(step, elementBox, dpr, sender, components, componentsPageUrl, scroll).catch((error: unknown) =>
-          console.error('FlowSnap: captureAndSave rejected', error),
+          console.error('DevFlow: captureAndSave rejected', error),
         ),
       );
       // Resolve immediately — the caller only needs to know the request landed,
@@ -1109,7 +1244,7 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
 
     case 'FINISH_RECORDING': {
       void finishRecording()
-        .catch((error: unknown) => console.error('FlowSnap: finishRecording rejected', error))
+        .catch((error: unknown) => console.error('DevFlow: finishRecording rejected', error))
         .then(() => sendResponse({ ok: true }));
       return true;
     }
@@ -1129,6 +1264,7 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
             recordedSteps: [],
             recordingActive: false,
             recordingPaused: false,
+            recordingTabId: null,
             reactComponents: {},
             reactNeedles: {},
             reactScripts: {},
@@ -1245,6 +1381,30 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
  * A failure here is not worth interrupting an install for: the Settings page
  * will try again the moment it is opened.
  */
+/**
+ * A new browser session reissues every tab id, so any stored one is a coincidence.
+ *
+ * Unconditional, and not gated on the tab existing: the danger is not an id
+ * naming nothing, it is an id naming *something* — Chrome hands the restored
+ * tabs fresh ids from the same small range, so a stored `42` will very often
+ * resolve to a real tab that has nothing to do with the recording. Cleared, the
+ * review simply does not offer the pick until the next captured step says where
+ * the recording actually is.
+ */
+chrome.runtime.onStartup.addListener(() => {
+  void clearRecordingTab();
+});
+
+/*
+ * And on every worker wake, including the ones nothing announces.
+ *
+ * `onStartup` covers the browser restarting; this covers Chrome killing the
+ * service worker and reviving it, which happens constantly and fires no event
+ * of its own. Here the id is usually still correct, so this only checks that
+ * the tab is open and that something is still recording.
+ */
+void reconcileRecordingTab();
+
 chrome.runtime.onInstalled.addListener(() => {
   void migrateLegacySettings().then(
     (migrated) => {
