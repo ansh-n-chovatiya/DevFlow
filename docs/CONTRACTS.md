@@ -326,15 +326,19 @@ the difference is exactly what the `detail` sentence on a non-`resolved`
 
 ### 4.5 · Banned, and grep-checkable
 
-Wave 3 greps for every one of these. Each returns nothing:
+Wave 3 runs the greps below over `src/` and `public/`. Each returns nothing —
+**including in code comments**, with the single exception noted in the last row.
+A gate with a standing exception is not a gate, so a comment that needs to
+explain what did not survive says it without naming it.
 
-| Banned | Because |
+| Grep | Because |
 | --- | --- |
-| `React Source`, `React Source Locator` | the other product's name |
+| `React Source` | the other product's name |
 | `DevPrecision` | the other product's design-system identity |
-| `rst:` | the other product's storage prefix (D8 migrates it, then it is gone) |
-| `__RST_` | the other product's page globals — one agent now, one namespace |
+| `rst:settings` | the other product's storage key. **Not bare `rst:`** — that matches `first:` and `worst:` in ordinary prose, and a gate that cries wolf is one nobody reads. D8 migrates the key, then it is gone. |
+| `__RST` | the other product's page globals — one agent now, one namespace |
 | `symbol id="i-` | the bespoke SVG sprite (§5) |
+| `FlowSnap` **in user-facing strings** | the recorder's own former product name, which is as much a tell as the locator's. Ordinary comments may still name FlowSnap and react-source-locator as the repos this code came from — that is provenance, and it is worth keeping. What may not survive is a string a person reads: page titles, button labels, error sentences, settings copy, console prefixes. |
 | "the recorder" / "the locator" *in user-facing text* | names the two halves the merge exists to dissolve. Fine in code comments and in this document; never on screen. |
 
 DevFlow's page globals take the `__DEVFLOW_*` prefix, and its `localStorage`
