@@ -50,6 +50,7 @@ import type {
   DraftStep,
   PickResult,
   Step,
+  FlowPayload,
 } from '../shared/types.js';
 import type { CapturedComponent } from '../shared/messages.js';
 import { stripReactRef } from '../core/react/attribution.js';
@@ -57,6 +58,7 @@ import { mergeTrailing, stepKey, type Pending } from '../core/flow/index.js';
 import { mergeComponents } from '../core/react/table.js';
 import { mergeScripts } from '../features/react/inventory.js';
 import { clearResolverCaches, resolvePending } from '../features/react/resolver.js';
+import { ingestFlowToArkg, ingestComponentToArkg } from '../features/arkg/ingest.js';
 
 /** Serialises captures so concurrent clicks never clobber each other's write. */
 let captureQueue: Promise<void> = Promise.resolve();
@@ -917,26 +919,24 @@ chrome.runtime.onConnect.addListener((port) => {
 
 async function autoExportToMcp(steps: Step[]): Promise<void> {
   const settings = await loadSettings();
-  if (!settings.mcpAutoSend) return;
 
-  /*
-   * The same stamp the Send dialog builds.
-   *
-   * This path exists precisely for the user who never presses Send, so it is
-   * the path where an unexplained flow is *most* likely to be read: nobody was
-   * in the loop when it was made. A flow that arrives here with no screenshots
-   * and no stamp is the exact failure the stamp exists to prevent.
-   */
   const stamp = { ...(await readRecordingStamp()), ...renderedOverrides(settings) };
 
-  const payload = JSON.stringify({
+  const payloadObj = {
     id: `flow-${Date.now()}`,
     name: `Flow ${new Date().toLocaleString()}`,
     timestamp: Date.now(),
     startUrl: steps[0]?.url,
     ...(Object.keys(stamp).length ? { settings: stamp } : {}),
     steps,
-  });
+  };
+
+  // Ingest into ARKG unconditionally — it honors arkg.enabled internally.
+  void ingestFlowToArkg(payloadObj as FlowPayload);
+
+  if (!settings.mcpAutoSend) return;
+
+  const payload = JSON.stringify(payloadObj);
 
   /*
    * The same timeout the Send dialog uses, which this path did not have at all.
@@ -1318,13 +1318,17 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
        * a page it cannot reach and a user who changed their mind are the same
        * outcome — nothing was picked — and the difference is a sentence.
        */
-      void relayToTab<PickResult>(message.tabId, { type: 'START_PICK' }).then((answer) =>
+      const start = Date.now();
+      void relayToTab<PickResult>(message.tabId, { type: 'START_PICK' }).then((answer) => {
+        if (answer.ok && answer.value.kind === 'picked' && answer.value.ancestry[0]) {
+          void ingestComponentToArkg(answer.value.ancestry[0], Date.now() - start);
+        }
         sendResponse(
           answer.ok
             ? answer.value
             : { kind: 'error', error: 'That page cannot be picked on. Reload it and try again.' },
-        ),
-      );
+        );
+      });
       return true;
     }
 

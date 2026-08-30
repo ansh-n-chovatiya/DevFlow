@@ -39,20 +39,20 @@
 **Objective:** Lay the foundational data layer that every subsequent feature is built upon. The ARKG is DevFlow's deepest competitive moat and must be designed correctly from the start.
 
 ### Work Stream 0.1: ARKG Schema Design & SQLite Implementation
-- [ ] **Core Graph Schema:**
+- [x] **Core Graph Schema:**
   - Nodes: `components`, `state_keys`, `api_endpoints`, `source_files`, `git_commits`, `named_flows`
   - Edges: `renders`, `subscribes_to`, `calls`, `maps_to`, `changed_in`, `caused_by`
   - Properties on every node/edge: `timing_p50`, `timing_p95`, `frequency`, `failure_rate`, `last_observed_at`, `git_sha`
-- [ ] **Observation Ingestion Pipeline:**
+- [x] **Observation Ingestion Pipeline:**
   - Every recorded flow writes to the ARKG automatically on completion.
   - Every component inspection writes a `maps_to` edge linking the DOM element → source file.
   - Merge strategy for duplicate observations: update `frequency` and `last_observed_at`, preserve `failure_rate`.
-- [ ] **Query Interface:**
+- [x] **Query Interface:**
   - `arkg.getComponent(id)` → full node with all edges
   - `arkg.getComponentHistory(id, since)` → all observations since a date/git SHA
   - `arkg.getAnomalies(since)` → components/endpoints whose timing deviates >2σ from historical baseline
   - `arkg.getBlastRadius(sourceFile, lineRange)` → all components with runtime dependency on that range
-- [ ] **MCP Tools for ARKG:**
+- [x] **MCP Tools for ARKG:**
   - `get_app_architecture` → compact graph summary of all observed components and their relationships
   - `get_component_history(componentId)` → timing, failure rate, and change history from the ARKG
   - `get_anomalies(since)` → components/endpoints deviating from baseline

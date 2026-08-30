@@ -416,7 +416,7 @@ describe('search and the filter chips', () => {
       [...document.querySelectorAll('.settings__list .group__title')].map(
         (node) => node.textContent,
       ),
-    ).toEqual(['Claude and MCP', 'Advanced']);
+    ).toEqual(['Claude and MCP', 'Action Reasoning Knowledge Graph', 'Advanced']);
     expect(document.querySelectorAll('mark.hl').length).toBeGreaterThan(0);
   });
 

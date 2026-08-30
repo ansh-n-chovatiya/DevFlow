@@ -57,7 +57,7 @@ describe('the table', () => {
      * here by name rather than letting them be inherited by silence a fourth
      * time; this phase tabled them.
      */
-    expect(tier2).toHaveLength(28);
+    expect(tier2).toHaveLength(29);
     expect(tier2.filter((field) => field.wired !== true)).toEqual([]);
     expect(WIRED).toHaveLength(FIELDS.length);
   });

@@ -27,6 +27,8 @@
 
 import {
   ANNOTATION_STROKE,
+  ARKG_ENABLED,
+  ARKG_RETENTION_DAYS,
   BODY_CAP,
   BUNDLE_CACHE_BYTES,
   BUNDLE_CACHE_ENTRIES,
@@ -143,7 +145,8 @@ export type Group =
   | "react"
   | "mcp"
   | "thumbnails"
-  | "ui";
+  | "ui"
+  | "arkg";
 
 /**
  * Tier 1 is a plain preference; Tier 2 lives behind the Advanced disclosure
@@ -277,7 +280,8 @@ interface NumberField extends Common {
     | "px"
     | "%"
     | "flows"
-    | "chars";
+    | "chars"
+    | "days";
 }
 
 interface BooleanField extends Common {
@@ -1662,6 +1666,38 @@ export const FIELDS = [
     consumers: ["ui"],
     wired: true,
   },
+
+  // ── ARKG ─────────────────────────────────────────────────────────────────
+  {
+    key: "arkg.enabled",
+    group: "arkg",
+    tier: 1,
+    type: "boolean",
+    default: ARKG_ENABLED,
+    title: "Enable cross-session intelligence",
+    description:
+      "Send observations to the local ARKG after each flow is received by the MCP server. The graph accumulates component timing, API failure rates, and session history across all recordings, and powers get_app_architecture, get_component_history, and get_anomalies.",
+    consumers: ["worker"],
+    wired: true,
+  },
+  {
+    key: "arkg.retentionDays",
+    group: "arkg",
+    tier: 2,
+    type: "number",
+    default: ARKG_RETENTION_DAYS,
+    min: 7,
+    max: 730,
+    unit: "days",
+    title: "ARKG retention",
+    description:
+      "How many days of cross-session observations to keep. Older entries are pruned on the next flow send.",
+    consequence:
+      "Reducing this permanently removes historical observations from the graph.",
+    consequenceWhen: { below: ARKG_RETENTION_DAYS },
+    consumers: ["worker"],
+    wired: true,
+  },
 ] as const satisfies readonly Field[];
 
 // ── The type, derived ────────────────────────────────────────────────────────
@@ -1902,6 +1938,13 @@ export const GROUPS = [
     title: "Claude and MCP",
     description:
       "Where recorded flows go when you send them to the local MCP server.",
+  },
+  {
+    id: "arkg",
+    concept: "handover",
+    title: "Action Reasoning Knowledge Graph",
+    description:
+      "Cross-session reasoning graph that correlates component usage with historical success rates.",
   },
   {
     id: "appearance",

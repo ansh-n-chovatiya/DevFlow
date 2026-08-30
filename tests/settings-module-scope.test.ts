@@ -107,6 +107,7 @@ describe('no surface resolves its settings once, at import time', () => {
     'src/features/mcp/machine.ts',
     'src/features/flows/store.ts',
     'src/features/export/download.ts',
+    'src/features/arkg/ingest.ts',
   ];
 
   it.each(consumers)('%s', (file) => {

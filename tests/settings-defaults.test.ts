@@ -119,6 +119,9 @@ const SOURCE: Record<SettingKey, unknown> = {
 
   'ui.errorTtlMs': constants.ERROR_TTL_MS,
   'ui.launcherTimeoutMs': constants.LAUNCHER_TAB_TIMEOUT_MS,
+
+  'arkg.enabled': constants.ARKG_ENABLED,
+  'arkg.retentionDays': constants.ARKG_RETENTION_DAYS,
 };
 
 describe('every default equals today’s constant', () => {

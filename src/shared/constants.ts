@@ -620,3 +620,22 @@ export const PAGE_GLOBALS = {
   /** The fibers and nodes behind the components in the last pick result. */
   picked: '__DEVFLOW_PICKED__',
 } as const;
+
+/**
+ * Whether ARKG ingestion is enabled by default.
+ *
+ * The ARKG is additive intelligence — it never changes a recording, it only
+ * accumulates cross-session patterns. On by default because the whole value of
+ * Phase 0 is that it starts accumulating from the first send, without the user
+ * having to do anything.
+ */
+export const ARKG_ENABLED = true;
+
+/**
+ * How many days of ARKG observations to retain before pruning.
+ *
+ * Deliberately generous: 90 days covers most active projects and is well below
+ * the storage budget. The pruning sweep runs on every flow send, so there is
+ * no maintenance the user has to do.
+ */
+export const ARKG_RETENTION_DAYS = 90;

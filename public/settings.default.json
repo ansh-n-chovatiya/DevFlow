@@ -1,5 +1,7 @@
 {
   "annotation.stroke": "#FF3B30",
+  "arkg.enabled": true,
+  "arkg.retentionDays": 90,
   "console.captureUncaught": true,
   "console.levels": [
     "log",

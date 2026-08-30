@@ -47,7 +47,7 @@ const CONTRACT: Record<Concept, readonly string[]> = {
     'annotation.',
     'thumbnails.',
   ],
-  handover: ['export.', 'mcp.', 'mcpAutoSend', 'mcpServerUrl'],
+  handover: ['export.', 'mcp.', 'mcpAutoSend', 'mcpServerUrl', 'arkg.'],
   appearance: ['theme', 'ui.'],
 };
 

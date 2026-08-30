@@ -48,6 +48,15 @@ import {
   resolve as resolveSettings,
   urlPath,
 } from './core.js';
+import {
+  openArkg,
+  ingestFlow as arkgIngestFlow,
+  ingestComponentPick,
+  getComponent,
+  getComponentHistory,
+  getAnomalies,
+  getAppArchitecture,
+} from './arkg.js';
 
 /*
  * The CLI verbs, before anything else in this file happens.
@@ -75,6 +84,7 @@ const HOME = process.env.DEVFLOW_DIR
   ? path.resolve(process.env.DEVFLOW_DIR)
   : path.join(os.homedir(), '.devflow');
 const FLOWS_DIR = path.join(HOME, 'flows');
+const ARKG_DB = path.join(HOME, 'arkg.db');
 // The port is `mcp.port`, and it is settled below, once the settings layer that
 // decides it exists — see `HTTP_PORT`.
 
@@ -282,11 +292,10 @@ async function readConfigFile() {
     }
     return { ok: true, value: parsed };
   } catch (error) {
-    return { ok: false, problem: `${CONFIG_FILE} is not valid JSON (${error.message})` };
+    return { ok: false, problem: `${CONFIG_FILE} is not valid JSON` };
   }
 }
 
-/** The file as settings, with every failure reading as "no config". */
 async function readConfig() {
   const read = await readConfigFile();
   if (read.ok) return read.value;
@@ -439,6 +448,15 @@ function renderingFor(flow) {
 const bodyLimitFor = (render, full) => (full ? render.bodyLimit * 4 : render.bodyLimit);
 
 await fs.mkdir(FLOWS_DIR, { recursive: true });
+
+// Open the ARKG database once at startup. Failures are announced and ignored —
+// the server is fully functional without ARKG; it is additive intelligence.
+try {
+  openArkg(ARKG_DB);
+  log(`ARKG database opened at ${ARKG_DB}`);
+} catch (error) {
+  log(`ARKG unavailable: ${error.message}`);
+}
 
 function log(message) {
   process.stderr.write(`DevFlow: ${message}\n`);
@@ -1477,6 +1495,10 @@ const httpServer = http.createServer(async (req, res) => {
       const meta = await saveFlow(flow);
       log(`saved "${meta.name}" — ${meta.stepCount} steps, ${meta.errorCount} with failures`);
 
+      // Ingest into ARKG — fire and forget. A failure here must never fail the
+      // send: the flow is already on disk and readable, which is the contract.
+      try { arkgIngestFlow(flow); } catch (e) { log(`ARKG ingest failed: ${e.message}`); }
+
       // Never allowed to fail the save: the flow is already on disk and readable,
       // and telling the extension otherwise would have it offer a retry that
       // stores a second copy.
@@ -1496,6 +1518,38 @@ const httpServer = http.createServer(async (req, res) => {
       );
     } catch (error) {
       log(`error saving flow: ${error.message}`);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // POST /arkg/ingest-component — a single component pick from the DevTools panel.
+  if (req.method === 'POST' && req.url === '/arkg/ingest-component') {
+    if (!extensionOrigin(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Component picks may only be posted by the DevFlow extension.' }));
+      return;
+    }
+
+    try {
+      let body = '';
+      let bytes = 0;
+      for await (const chunk of req) {
+        bytes += chunk.length;
+        if (bytes > 64 * 1024) {
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Payload too large.' }));
+          req.destroy();
+          return;
+        }
+        body += chunk;
+      }
+      const pick = JSON.parse(body);
+      try { ingestComponentPick(pick); } catch (e) { log(`ARKG component ingest failed: ${e.message}`); }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (error) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error.message }));
     }
@@ -1626,6 +1680,36 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: 'First step to return, 1-based. Omit to start at the beginning.',
           },
           raw: { type: 'boolean', description: 'Also return the step JSON. See get_flow.' },
+        },
+      },
+    },
+    {
+      name: 'get_app_architecture',
+      description:
+        'Compact summary of everything DevFlow has observed about this application across all recorded sessions: top components by frequency, which API endpoints each calls, failure rates, and timing. Use this to understand the application before opening individual flows — it is the accumulated knowledge graph, not one recording.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'get_component_history',
+      description:
+        'All recorded flows in which a specific React component appeared, with failure count and timing from each session. Use the component id from get_flow or get_flow_errors. Useful for spotting whether a component that is failing now was working before.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Component id from a flow\'s react.components table or from get_app_architecture' },
+          since: { type: 'number', description: 'Return only sessions after this Unix timestamp in milliseconds. Defaults to all history.' },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'get_anomalies',
+      description:
+        'Components and API endpoints whose failure rate or response time spikes in recent observations compared to their historical baseline. Requires at least 30 observations per entity for statistical reliability. Pass since (Unix ms) to narrow the recency window; defaults to the last 24 hours.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          since: { type: 'number', description: 'Look for anomalies observed after this Unix timestamp in milliseconds. Defaults to last 24 hours.' },
         },
       },
     },
@@ -2361,6 +2445,82 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
           ? failure(error.message)
           : failure('The most recent flow could not be read.');
       }
+    }
+
+    case 'get_app_architecture': {
+      const arch = getAppArchitecture();
+      if (!arch) {
+        return text('No application data in the ARKG yet. Record and send at least one flow to begin accumulating cross-session intelligence.');
+      }
+
+      const lines = [
+        `Application Architecture (${arch.totalFlows} session${arch.totalFlows === 1 ? '' : 's'} recorded${arch.lastSeen ? `, last seen ${arch.lastSeen}` : ''})`,
+        '',
+        'Top Components (by frequency):',
+        ...arch.topComponents.map((c) => {
+          const loc = c.source ? `  → source: ${c.source}` : '';
+          const fail = c.failureRate > 0 ? `  → failure rate: ${(c.failureRate * 100).toFixed(1)}%` : '';
+          const calls = c.calls.length
+            ? c.calls.map((e) =>
+                `  → calls: ${e.endpoint} (${e.frequency}x${e.failureRate > 0 ? `, ${(e.failureRate * 100).toFixed(0)}% fail` : ''})`
+              ).join('\n')
+            : '';
+          return [`  ${c.name} (${c.frequency}x)`, fail, calls, loc].filter(Boolean).join('\n');
+        }),
+        '',
+        'Top API Endpoints (by frequency):',
+        ...arch.topEndpoints.map((e) => {
+          const timing = e.timingP50Ms ? `p50: ${e.timingP50Ms.toFixed(0)}ms${e.timingP95Ms ? ` | p95: ${e.timingP95Ms.toFixed(0)}ms` : ''}` : '';
+          const fail = e.failureRate > 0 ? `fail: ${(e.failureRate * 100).toFixed(1)}%` : '';
+          const stats = [timing, fail].filter(Boolean).join(' | ');
+          return `  ${e.name.padEnd(40)} ${e.frequency}x${stats ? ` | ${stats}` : ''}`;
+        }),
+      ];
+
+      return text(lines.join('\n'));
+    }
+
+    case 'get_component_history': {
+      if (!args.id) return failure('id is required');
+      const history = getComponentHistory(args.id, args.since ? Number(args.since) : 0);
+      const comp = getComponent(args.id);
+
+      if (!comp) return text(`No component with id "${args.id}" found in the ARKG. Use get_app_architecture to list known component ids.`);
+      if (!history.length) return text(`Component "${comp.display_name}" is in the ARKG but has not been observed in any flow${args.since ? ' since the given timestamp' : ''}.`);
+
+      const lines = [
+        `## ${comp.display_name}`,
+        comp.source_file ? `**Source:** ${comp.source_file}${comp.source_line ? `:${comp.source_line}` : ''}` : '',
+        `**Total observations:** ${comp.frequency}  `,
+        comp.failure_rate > 0 ? `**Failure rate:** ${(comp.failure_rate * 100).toFixed(1)}%  ` : '',
+        comp.timing_p50_ms ? `**Timing p50:** ${comp.timing_p50_ms.toFixed(0)}ms  ` : '',
+        '',
+        `**Appears in ${history.length} recorded flow${history.length === 1 ? '' : 's'}:**`,
+        '',
+        ...history.map((f) => `- **${f.name}** — ${new Date(f.created_at).toLocaleDateString()} — ${f.step_count} steps${f.failure_count ? `, ${f.failure_count} failures` : ''}`),
+      ].filter((l) => l !== null && l !== '');
+
+      return text(lines.join('\n'));
+    }
+
+    case 'get_anomalies': {
+      const since = args.since ? Number(args.since) : undefined;
+      const anomalies = getAnomalies(since);
+
+      if (!anomalies.length) {
+        return text(
+          `No anomalies detected${since ? ` since ${new Date(since).toLocaleString()}` : ' in the last 24 hours'}. ` +
+          'Anomaly detection requires at least 30 observations per component or endpoint.',
+        );
+      }
+
+      const lines = [
+        `## Anomalies${since ? ` since ${new Date(since).toLocaleDateString()}` : ' — last 24 hours'}`,
+        '',
+        ...anomalies.map((a) => `**${a.type === 'component' ? '🧩' : '🌐'} ${a.name}** — ${a.issue.replace('_', ' ')}: ${a.detail}${a.source ? `\n  Source: ${a.source}` : ''}`),
+      ];
+
+      return text(lines.join('\n'));
     }
 
     default:

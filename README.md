@@ -79,7 +79,7 @@ The current capabilities are Phase 1 of a 5-phase roadmap. Each phase builds on 
 
 | Phase | Capability | Timeline |
 |---|---|---|
-| **Phase 0** | Accumulating Runtime Knowledge Graph (ARKG) — the foundational data layer | Months 0–1 |
+| **Phase 0** | ✅ Accumulating Runtime Knowledge Graph (ARKG) — the foundational data layer | Completed |
 | **Phase 1** | Runtime-to-Source Intelligence: causal threading, "Why did this render?", bidirectional source maps | Months 1–3 |
 | **Phase 2** | Autonomous bug reproduction, "Why is this value here?" provenance, Interaction-to-Test compiler, natural language app navigator | Months 4–6 |
 | **Phase 3** | Full-stack wire & DB lineage (OTel), Living Architecture Map, Temporal Diff & regression detection, Source → Browser live link | Months 7–9 |
