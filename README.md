@@ -1,16 +1,16 @@
 # DevFlow
 
-**The Unified Runtime-to-Source Intelligence Platform.**
-*Record what happened in the browser, trace causality across runtime state, and link directly to source code AST.*
+**The Ambient Runtime-to-Source Intelligence Platform.**
+*Record what happened in the browser, trace causality across runtime state, link directly to source code AST, and accumulate living knowledge of your application across every session.*
 
-DevFlow is an AI-assisted developer platform and Chrome extension for understanding, navigating, debugging, and modifying web applications. By connecting **live browser execution (DOM, React Fiber, state stores, wire requests) ↔ source code AST ↔ AI coding agents**, DevFlow enables deterministic, automated development workflows.
+DevFlow is an AI-assisted developer platform and Chrome extension for understanding, navigating, debugging, and modifying web applications. By connecting **live browser execution (DOM, React Fiber, state stores, wire requests) ↔ source code AST ↔ Accumulating Runtime Knowledge Graph ↔ AI coding agents**, DevFlow enables deterministic, automated development workflows — not just when something breaks, but continuously as you build.
 
 ---
 
 ## 🧭 Platform Vision & Architecture
 
-- 🌟 **[Grand Vision & Architecture (`VISION.md`)](./VISION.md):** The core thesis, unified runtime-to-source graph, 18-stage autonomous debugging loop, and strategic moat.
-- 🗺️ **[Implementation Roadmap & Phased Plan (`ROADMAP_AND_PHASES.md`)](./ROADMAP_AND_PHASES.md):** 4-phase rollout plan, modular work streams, and production-grade engineering benchmarks.
+- 🌟 **[Grand Vision & Architecture (`VISION.md`)](./VISION.md):** The core thesis, Accumulating Runtime Knowledge Graph (ARKG), unified runtime-to-source graph, 10 novel capabilities, 18-stage autonomous debugging loop, prioritization matrix, competitive moat analysis, and the ultimate 2–3 year vision.
+- 🗺️ **[Implementation Roadmap & Phased Plan (`ROADMAP_AND_PHASES.md`)](./ROADMAP_AND_PHASES.md):** 5-phase rollout plan (Phase 0: ARKG Foundation → Phase 5: Ambient Intelligence Platform), modular work streams, and production-grade engineering benchmarks.
 
 ```
        TRADITIONAL AI CODING TOOLS                     DEVFLOW CORE MOAT
@@ -20,9 +20,13 @@ DevFlow is an AI-assisted developer platform and Chrome extension for understand
 │  • Reads logs post-facto             │     │                  ↕                   │
 │  • Blind to UI/render lifecycle      │     │  UNIFIED RUNTIME-TO-SOURCE GRAPH     │
 │  • Trial-and-error reproduction      │     │                  ↕                   │
-│                                      │     │   AUTONOMOUS REASONING & REPAIR      │
+│                                      │     │ ACCUMULATING APPLICATION INTELLIGENCE│
 └──────────────────────────────────────┘     └──────────────────────────────────────┘
 ```
+
+### The Strategic Difference
+
+Other AI tools are debuggers you invoke when something breaks. DevFlow is the **ambient intelligence layer** between your running application and your source code — always on, accumulating knowledge of your app across every session, every developer, and every deployment. The Accumulating Runtime Knowledge Graph (ARKG) is DevFlow's deepest competitive moat: it knows your application's normal behavior, its history, and its architecture as well as your best senior engineer does.
 
 ---
 
@@ -55,9 +59,9 @@ Finding the file works most of the time and not always, and when it does not,
 DevFlow says which way it failed instead of showing a blank. A bundle served
 without a source map, a map that would not parse, a component sitting in a lazy
 chunk the page never loaded, a match found in more than one place — each comes
-with a sentence, because *this component has no source* is discouraging and
-usually untrue, while *most likely a lazy chunk that was never fetched* tells you
-to load that route and pick again.
+with a sentence and a confidence score, because *this component has no source* is
+discouraging and usually untrue, while *most likely a lazy chunk that was never
+fetched* tells you to load that route and pick again.
 
 An ambiguous match says how many places matched and across how many scripts. The
 path it offers may be the wrong one of them, and that is better learnt before you
@@ -66,6 +70,23 @@ open it than after you edit it.
 When the compiled position is known but the original is not, the card still
 offers **Open in Sources** in the DevTools panel — the minified line is a worse
 answer than the original, and a much better one than nothing.
+
+---
+
+## Where DevFlow is going
+
+The current capabilities are Phase 1 of a 5-phase roadmap. Each phase builds on the last:
+
+| Phase | Capability | Timeline |
+|---|---|---|
+| **Phase 0** | Accumulating Runtime Knowledge Graph (ARKG) — the foundational data layer | Months 0–1 |
+| **Phase 1** | Runtime-to-Source Intelligence: causal threading, "Why did this render?", bidirectional source maps | Months 1–3 |
+| **Phase 2** | Autonomous bug reproduction, "Why is this value here?" provenance, Interaction-to-Test compiler, natural language app navigator | Months 4–6 |
+| **Phase 3** | Full-stack wire & DB lineage (OTel), Living Architecture Map, Temporal Diff & regression detection, Source → Browser live link | Months 7–9 |
+| **Phase 4** | Production telemetry ingestion, autonomous regression watcher (CI), self-healing CI bot, Accessibility Autopilot | Months 10–12 |
+| **Phase 5** | Team intelligence, counterfactual replay, platform-level ambient intelligence | Year 2+ |
+
+The ultimate experience: a developer right-clicks a broken button, types *"Why is this disabled?"*, and gets an instant answer tracing the exact state, the event that set it, the source line, and the commit that introduced the bug — along with a two-line fix, a generated test, and a PR link. Under 5 minutes. Zero manual investigation.
 
 ---
 
