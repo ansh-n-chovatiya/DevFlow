@@ -93,6 +93,14 @@ export function viaLabel(source: ComponentSource): string | null {
   return source.source ? 'source map' : 'compiled';
 }
 
+/** The confidence score for the given source attribution. */
+export function confidenceLabel(source: ComponentSource): 'HIGH' | 'MEDIUM' | 'LOW' | null {
+  if (source.status === 'ambiguous') return 'LOW';
+  if (source.via === 'debug-source') return 'HIGH';
+  if (source.via !== 'bundle-search') return null;
+  return source.source ? 'MEDIUM' : 'LOW';
+}
+
 /** The sentence behind each `via`, as a tooltip. */
 const VIA_TITLE: Record<string, string> = {
   'dev build': 'Read directly from the location React recorded on the component.',
@@ -345,6 +353,15 @@ function head(source: ComponentSource): HTMLElement {
     const via = make('span', 'chip result-card__via', label);
     via.title = VIA_TITLE[label] ?? '';
     row.append(via);
+  }
+
+  const confidence = confidenceLabel(source);
+  if (confidence) {
+    const confChip = make('span', 'chip result-card__confidence', `Confidence: ${confidence}`);
+    if (confidence === 'HIGH') confChip.setAttribute('data-tint', 'green');
+    else if (confidence === 'MEDIUM') confChip.setAttribute('data-tint', 'yellow');
+    else confChip.setAttribute('data-tint', 'red');
+    row.append(confChip);
   }
 
   return row;

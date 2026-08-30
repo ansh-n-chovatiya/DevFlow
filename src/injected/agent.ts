@@ -62,6 +62,7 @@ import type {
   PickQuery,
 } from '../shared/messages.js';
 import { redactUrl } from '../core/redact/index.js';
+import { installStateInterceptor } from './state-interceptor.js';
 
 /**
  * What this agent has been told to do, and what it does until it is told.
@@ -1074,6 +1075,7 @@ function listenForControl(): void {
 function install(): void {
   patchConsole();
   watchUncaught();
+  installStateInterceptor();
   // The one place `window.fetch` is assigned; see `patchedFetch` and
   // `tests/react-isolation.test.ts`.
   window.fetch = patchedFetch;
