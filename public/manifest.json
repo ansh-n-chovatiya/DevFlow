@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DevFlow — Record & Locate",
-  "version": "3.1.1",
+  "version": "3.2.0",
   "description": "Record browser flows as AI-ready context, and pick any component on the page to open the source it was written in.",
   "minimum_chrome_version": "116",
   "devtools_page": "devtools.html",

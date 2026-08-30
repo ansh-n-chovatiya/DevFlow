@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.2.0 — 2026-08-30
+
+**Phase 1 Completed.**
+- Added Causal Threading to recorder
+- Implemented Render Blame Evaluator
+- Added High-Density MCP Tooling (get_flow_summary, get_causal_chain, get_state_patch)
+
 ## 3.1.1 — 2026-08-29
 
 **The panel's result view reads in the right order.** `Source preview` is the
