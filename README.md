@@ -1,24 +1,32 @@
 # DevFlow
 
-**Record what happened in the browser, and find the file it happened in.**
+**The Unified Runtime-to-Source Intelligence Platform.**
+*Record what happened in the browser, trace causality across runtime state, and link directly to source code AST.*
 
-DevFlow is a Chrome extension for debugging your own web app. You record a flow —
-a run through the thing that is broken — and every step comes back with the
-element you touched, the requests it fired, the console output it produced, a
-screenshot, and, on a React page, the component behind it and **the file and line
-that component was written in**. Or you skip the recording entirely, point at
-something on the page, and get the same answer for that one component.
-
-Both are the same question — *where in my code is this?* — so both go through the
-same engine and come back on the same card, whether it was reached from a picked
-element or from a step recorded twenty minutes ago.
-
-The end of that is usually a keystroke: **Open in Editor** puts your cursor on
-the line.
+DevFlow is an AI-assisted developer platform and Chrome extension for understanding, navigating, debugging, and modifying web applications. By connecting **live browser execution (DOM, React Fiber, state stores, wire requests) ↔ source code AST ↔ AI coding agents**, DevFlow enables deterministic, automated development workflows.
 
 ---
 
-## What it does
+## 🧭 Platform Vision & Architecture
+
+- 🌟 **[Grand Vision & Architecture (`VISION.md`)](./VISION.md):** The core thesis, unified runtime-to-source graph, 18-stage autonomous debugging loop, and strategic moat.
+- 🗺️ **[Implementation Roadmap & Phased Plan (`ROADMAP_AND_PHASES.md`)](./ROADMAP_AND_PHASES.md):** 4-phase rollout plan, modular work streams, and production-grade engineering benchmarks.
+
+```
+       TRADITIONAL AI CODING TOOLS                     DEVFLOW CORE MOAT
+┌──────────────────────────────────────┐     ┌──────────────────────────────────────┐
+│  Static Codebase + LLM + Terminal    │     │      LIVE RUNTIME EXECUTION FABRIC   │
+│  • Guesses runtime state             │     │  (DOM + Fiber + State + Wire + DB)   │
+│  • Reads logs post-facto             │     │                  ↕                   │
+│  • Blind to UI/render lifecycle      │     │  UNIFIED RUNTIME-TO-SOURCE GRAPH     │
+│  • Trial-and-error reproduction      │     │                  ↕                   │
+│                                      │     │   AUTONOMOUS REASONING & REPAIR      │
+└──────────────────────────────────────┘     └──────────────────────────────────────┘
+```
+
+---
+
+## What it does today
 
 **Record a flow.** Open the popup, press **Start recording**, and use the page.
 Clicks, typed values and navigations become steps; network calls and console
