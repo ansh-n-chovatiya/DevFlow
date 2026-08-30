@@ -4,7 +4,7 @@
  * Auto-discovers Zustand, Redux DevTools extension instances, and other state stores
  * to track state mutations using lightweight proxies without importing external libraries.
  */
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unused-vars */
 
 import { AGENT_MESSAGE_SOURCE } from '../shared/constants.js';
 

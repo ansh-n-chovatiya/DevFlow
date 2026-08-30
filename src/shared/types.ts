@@ -176,6 +176,8 @@ export interface NetworkCall {
   responseBodyBytes?: number;
   durationMs: number;
   timestamp: number;
+  /** Causal threading ID of the event that triggered this call */
+  causedBy?: string;
 }
 
 export type ConsoleLevel = 'log' | 'warn' | 'error' | 'info' | 'debug';
@@ -184,6 +186,8 @@ export interface ConsoleEntry {
   level: ConsoleLevel;
   args: string[];
   timestamp: number;
+  /** Causal threading ID of the event that triggered this log */
+  causedBy?: string;
 }
 
 export type StepType = 'click' | 'input' | 'navigate' | 'note';
@@ -213,6 +217,8 @@ interface StepBase {
   timestamp: number;
   /** Human-readable sentence: `Clicked "Save"`, `Typed "ada@" into Email`. */
   action: string;
+  /** Causal threading ID of the event that triggered this step */
+  causedBy?: string;
   /** Assigned at capture time. Stale after a deletion — see `renumber()`. */
   stepNumber?: number;
   /** Annotated JPEG data URL, or null when capture failed or was skipped. */

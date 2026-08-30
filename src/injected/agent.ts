@@ -63,6 +63,7 @@ import type {
 } from '../shared/messages.js';
 import { redactUrl } from '../core/redact/index.js';
 import { installStateInterceptor } from './state-interceptor.js';
+import { installRenderBlameInterceptor } from './render-blame.js';
 
 /**
  * What this agent has been told to do, and what it does until it is told.
@@ -134,9 +135,33 @@ function applyConfig(next: Partial<AgentConfig> | undefined): void {
 
 const SENSITIVE_HEADERS = /^(authorization|cookie|set-cookie|x-api-key)$/i;
 
+let activeCauseId: string | undefined;
+
 function emit(detail: Record<string, unknown>): void {
-  window.postMessage({ __devflow_source__: AGENT_MESSAGE_SOURCE, ...detail }, '*');
+  window.postMessage({ __devflow_source__: AGENT_MESSAGE_SOURCE, causedBy: activeCauseId, ...detail }, '*');
 }
+
+/** 
+ * WS 1.3 Causal Threading: Capture the synchronous execution frame of user interactions.
+ * Any network calls or logs emitted synchronously or in microtasks from this event 
+ * will be tagged with this `activeCauseId`. 
+ */
+function setCause(e: Event) {
+  if (e.isTrusted) {
+    // Generate a deterministic ID based on the event so the isolated world can compute the same ID
+    activeCauseId = `${e.type}-${e.timeStamp}`;
+    // Clear the cause at the end of the microtask queue (end of synchronous execution)
+    queueMicrotask(() => {
+      activeCauseId = undefined;
+    });
+  }
+}
+
+// Hook into capture phase to guarantee we set the cause before any app code runs
+window.addEventListener('click', setCause, true);
+window.addEventListener('pointerdown', setCause, true);
+window.addEventListener('keydown', setCause, true);
+window.addEventListener('input', setCause, true);
 
 function redactHeaders(headers: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -1076,6 +1101,7 @@ function install(): void {
   patchConsole();
   watchUncaught();
   installStateInterceptor();
+  installRenderBlameInterceptor();
   // The one place `window.fetch` is assigned; see `patchedFetch` and
   // `tests/react-isolation.test.ts`.
   window.fetch = patchedFetch;

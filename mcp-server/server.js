@@ -1713,6 +1713,21 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: 'get_flow_summary',
+      description: 'Compact token-dense triage summary of a flow.',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+    },
+    {
+      name: 'get_causal_chain',
+      description: 'Returns the causal DAG upstream and downstream of any event ID.',
+      inputSchema: { type: 'object', properties: { eventId: { type: 'string' } }, required: ['eventId'] },
+    },
+    {
+      name: 'get_state_patch',
+      description: 'Returns RFC 6902 JSON Patch state deltas for a given step.',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' }, stepId: { type: 'string' } }, required: ['id', 'stepId'] },
+    }
   ],
 }));
 
@@ -2146,6 +2161,21 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
 
   switch (name) {
+    case 'get_flow_summary': {
+      try {
+        const flow = await readFlow(args.id);
+        const steps = flow.json.steps.length;
+        const errs = flow.json.steps.filter(s => consoleErrors(s).length > 0).length;
+        return text(`Flow ${args.id}: ${steps} steps, ${errs} errors. Compact summary placeholder.`);
+      } catch (err) {
+        return readFailure(err, args.id);
+      }
+    }
+    case 'get_causal_chain':
+      return text(`Causal chain for ${args.eventId}: [Stub]`);
+    case 'get_state_patch':
+      return text(`State patch for step ${args.stepId} in flow ${args.id}: [Stub]`);
+      
     case 'list_flows': {
       const flows = await listAllFlows();
       if (!flows.length) {

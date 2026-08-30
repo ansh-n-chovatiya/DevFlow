@@ -171,6 +171,10 @@ function bytesFor(parts: Parts, format: ExportFormat, options: ExportOptions): n
       return parts.base + react + network + logs + (options.images ? parts.screenshotsInline : 0);
     case 'json':
       return parts.base + react + network + logs;
+    case 'playwright':
+    case 'cypress':
+      // Test scripts don't carry images or logs, just the text logic and network mocks
+      return parts.base + network;
   }
 }
 
@@ -178,12 +182,16 @@ const DESCRIPTION: Record<ExportFormat, string> = {
   zip: 'Markdown, JSON and screenshot files. Best for Claude — attach the folder.',
   markdown: 'One file, screenshots embedded. Readable anywhere.',
   json: 'Full selectors and timings. For replay and tooling.',
+  playwright: 'Playwright E2E test script (.spec.ts) with network mocks.',
+  cypress: 'Cypress E2E test script (.cy.ts) with network mocks.',
 };
 
 const FORMAT_ICON: Record<ExportFormat, IconName> = {
   zip: 'file-archive',
   markdown: 'file-text',
   json: 'braces',
+  playwright: 'file-code',
+  cypress: 'file-code',
 };
 
 /**

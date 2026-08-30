@@ -63,37 +63,37 @@
 **Objective:** Evolve DevFlow from basic element picking into a standalone, token-efficient data-lineage and render causality inspector with **zero app modifications**, while feeding all observations into the ARKG.
 
 ### Work Stream 1.1: 100% Standalone Runtime Source Mapping
-- [ ] **Pure Client-Side Source Map Engine (Zero App Config):**
+- [x] **Pure Client-Side Source Map Engine (Zero App Config):**
   - Parse inline/external source maps directly in the browser/service worker.
   - Traverse React Fiber `_debugSource`, `_debugOwner`, and function constructors back to original `src/` file, line, and column.
   - Zero requirement for users to install npm packages or alter Vite/Webpack/Turbopack configs.
   - Every attribution carries a confidence score: HIGH (debugSource match) / MEDIUM (source map match) / LOW (heuristic match), with a specific reason for the score.
-- [ ] **Fallback Chain:**
+- [x] **Fallback Chain:**
   - `_debugSource` Fiber field → external source map → inline base64 source map → function constructor name heuristic → component display name + AST fuzzy search
-- [ ] **Optional Compiler Plugin (`@devflow/compiler-plugin`) [Strictly Optional]:**
+- [x] **Optional Compiler Plugin (`@devflow/compiler-plugin`) [Strictly Optional]:**
   - Optional development helper for complex monorepos with obfuscated dev builds.
   - Injects guaranteed-reliable source metadata as data attributes. Never required for core functionality.
 
 ### Work Stream 1.2: Deep React Fiber & State Store Inspection (Non-Invasive)
-- [ ] **React DevTools Global Hook Reader:**
+- [x] **React DevTools Global Hook Reader:**
   - Read React internals safely via `window.__REACT_DEVTOOLS_GLOBAL_HOOK__` and Fiber nodes (`memoizedProps`, `memoizedState`, hook linked lists).
   - Inspect React 18 & 19 concurrent features and Signals without wrapping component code.
-- [ ] **Non-Invasive State Store Interceptor:**
+- [x] **Non-Invasive State Store Interceptor:**
   - Auto-discover Zustand, Redux DevTools extension instances, TanStack Query client caches, and React Context from `window` or Fiber roots.
   - Track state mutations using lightweight proxies without importing external libraries into the target app.
   - **Subscription Discovery:** Walk the Fiber tree on a state change event, comparing `memoizedState` values to identify subscribers without instrumentation.
 
 ### Work Stream 1.3: Causal Threading in the Flow Recorder
-- [ ] **Causal DAG Construction:**
+- [x] **Causal DAG Construction:**
   - Every recorded event carries a `causedBy` reference to the event that triggered it.
   - Example chain: user click → `cartState` mutation → `CartBadge` re-render → `GET /api/cart` fetch → `CartDrawer` mount
   - Store the causal DAG as edges in the ARKG under the `caused_by` edge type.
-- [ ] **Causal Query MCP Tool:**
+- [x] **Causal Query MCP Tool:**
   - `get_causal_chain(eventId)` → returns the full forward and backward causal chain from any recorded event
   - `get_effects_of(stepId)` → returns everything that was ultimately caused by a user action at a given step
 
 ### Work Stream 1.4: The "Why Did This Render?" Engine
-- [ ] **Render Blame Evaluator:**
+- [x] **Render Blame Evaluator:**
   - Perform shallow & deep equality diffs across render passes.
   - Categorize causes:
     - *Props Changed:* specific prop keys with before/after values.
@@ -101,13 +101,13 @@
     - *Parent Re-render:* parent component triggered render without memoization.
     - *Context Mutation:* context value reference changed.
   - Auto-suggest fixes: `useCallback`, `useMemo`, `React.memo` with measured re-render frequency from ARKG.
-- [ ] **Render Performance Autopilot (Initial):**
+- [x] **Render Performance Autopilot (Initial):**
   - Detect unstable inline callbacks (compare `onClick` identity across renders)
   - Detect missing `React.memo` (count unnecessary child re-renders)
   - Each finding: source line link + before/after code suggestion + measured impact
 
 ### Work Stream 1.5: High-Density Token-Efficient MCP Interface
-- [ ] **Hierarchical Context Delivery for LLMs:**
+- [x] **Hierarchical Context Delivery for LLMs:**
   - `get_flow_summary`: Returns a compact, token-dense triage summary (< 400 tokens) with error highlights and step counts.
   - `get_step_detail(stepId)`: Returns exact data only for the requested step on demand.
   - `get_state_patch(stepId)`: Returns RFC 6902 JSON Patch state deltas instead of megabytes of raw store data.

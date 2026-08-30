@@ -709,6 +709,7 @@ document.addEventListener(
         type: 'click',
         url: redactUrl(window.location.href),
         timestamp: Date.now(),
+        causedBy: `click-${event.timeStamp}`,
         element: {
           tag: el.tagName.toLowerCase(),
           text: getElementText(el),
@@ -772,6 +773,7 @@ document.addEventListener(
             type: 'input',
             url: redactUrl(window.location.href),
             timestamp: Date.now(),
+            causedBy: `input-${eventTime}`,
             element: {
               tag: el.tagName.toLowerCase(),
               label,
@@ -812,6 +814,7 @@ document.addEventListener(
         type: 'input',
         url: redactUrl(window.location.href),
         timestamp: Date.now(),
+        causedBy: `change-${event.timeStamp}`,
         element: {
           tag: 'select',
           label,

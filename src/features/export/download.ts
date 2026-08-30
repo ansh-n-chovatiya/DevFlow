@@ -10,6 +10,8 @@
 import { exportToJSON } from '../../core/export/json.js';
 import { exportToMarkdown } from '../../core/export/markdown.js';
 import { createZip, dataUrlToBytes, type ZipEntry } from '../../core/export/zip.js';
+import { generatePlaywrightTest } from '../../core/export/playwright.js';
+import { generateCypressTest } from '../../core/export/cypress.js';
 import { flowHost, pad2, renumber } from '../../core/flow/index.js';
 import { err, ok, type Result } from '../../shared/result.js';
 import { flowError } from '../../shared/errors.js';
@@ -209,6 +211,12 @@ export async function exportFlow(input: ExportRequest): Promise<Result<string>> 
         limits,
       });
       downloadFile(filename, new Blob([markdown], { type: 'text/markdown' }));
+    } else if (format === 'playwright') {
+      const code = generatePlaywrightTest(steps, title);
+      downloadFile(filename, new Blob([code], { type: 'application/typescript' }));
+    } else if (format === 'cypress') {
+      const code = generateCypressTest(steps, title);
+      downloadFile(filename, new Blob([code], { type: 'application/typescript' }));
     } else {
       downloadFile(
         filename,
