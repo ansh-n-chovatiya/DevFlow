@@ -1,9 +1,11 @@
 /**
  * Tier 2, and the claim Phase 6 is the proof of.
  *
- * The plan's bet is that after five phases of building the mechanism, adding
- * twenty-eight settings is adding twenty-eight rows to a table — no new
- * markup, no new control, no new screen state. Two other files hold the
+ * The plan's bet is that after five phases of building the mechanism, adding a
+ * setting is adding a row to a table — no new markup, no new control, no new
+ * screen state. Phase 6 added twenty-eight and the bet held; state capture
+ * added six more and it held again, which is the only reason the numbers below
+ * moved rather than the file. Two other files hold the
  * visible half of that: `settings-row-shape.test.ts` renders every entry and
  * asserts the row is one object seventy-three times, and
  * `settings-page.test.ts` opens the Advanced disclosure on the real page and
@@ -45,7 +47,7 @@ import {
 const tier2 = (FIELDS as readonly Field[]).filter((field) => field.tier === 2);
 
 describe('the table', () => {
-  it('wires all twenty-eight, so the disclosure holds no control that does nothing', () => {
+  it('wires all thirty-four, so the disclosure holds no control that does nothing', () => {
     /*
      * the list reads as twenty-two because it pairs four of them off —
      * `BUNDLE_CACHE_ENTRIES / BUNDLE_CACHE_BYTES`, `REACT_BUFFER_SIZE / _TTL_MS`
@@ -56,8 +58,14 @@ describe('the table', () => {
      * the tier tables list in no tier at all. Phase 3 ruled both Tier 2 and handed them
      * here by name rather than letting them be inherited by silence a fourth
      * time; this phase tabled them.
+     *
+     * The six after those are state capture's caps — depth, keys per object,
+     * entries per list, string cap, stores read, patch operations. Tier 2 for
+     * the same reason the fiber walk's limits are: they are the shape of what
+     * is captured rather than whether it is, and the answer that suits an app
+     * is the app's, not a default's.
      */
-    expect(tier2).toHaveLength(28);
+    expect(tier2).toHaveLength(34);
     expect(tier2.filter((field) => field.wired !== true)).toEqual([]);
     expect(WIRED).toHaveLength(FIELDS.length);
   });
@@ -102,6 +110,12 @@ describe('the table', () => {
      * before this phase: Session 0 put them there because they ride to the
      * agent in the same message as the console levels, and noted that when
      * Phase 6 drew them the freeze would already be right. It was.
+     *
+     * All six of state capture's caps are frozen, and there is no interesting
+     * split to make: every one of them shapes what a snapshot *is*, and a cap
+     * that moved halfway through a recording would leave one flow whose early
+     * steps were bounded one way and whose later ones another, with only the
+     * stamp — which records one value — to say which.
      */
     const frozenT2 = tier2.filter((f) => f.recorded === true).map((f) => f.key).sort();
     expect(frozenT2).toEqual([
@@ -114,6 +128,12 @@ describe('the table', () => {
       'react.maxFiberWalk',
       'react.prewarmTtlMs',
       'recording.spaSettleMs',
+      'recording.stateMaxDepth',
+      'recording.stateMaxEntries',
+      'recording.stateMaxKeys',
+      'recording.stateMaxStores',
+      'recording.statePatchOps',
+      'recording.stateStringCap',
       'screenshots.minIntervalMs',
       'screenshots.paintTimeoutMs',
       'screenshots.precaptureTtlMs',

@@ -56,6 +56,7 @@ import type {
   ComponentStatus,
   ConsoleLevel,
   FlowReact,
+  FlowState,
   RecordingState,
   Overrides,
   Step,
@@ -76,6 +77,17 @@ export interface ReviewFlow {
   /** The component table, or `null` when the page was not React. For the live
    *  recording this is a snapshot: the resolver is still filling it in. */
   react: FlowReact | null;
+  /**
+   * What the recording saw of the app's state, on the same split as `react`:
+   * `null` for the live recording, which is read at send time, and for a flow
+   * archived before state capture existed.
+   *
+   * Optional where `react` is required, because this view model never reads it
+   * — it is carried through to the send dialog and nothing else — so absent and
+   * `null` say the same thing here and a caller that has nothing to say should
+   * not have to write it down.
+   */
+  state?: FlowState | null;
   /**
    * The settings this flow was recorded under — the stamp, sparse.
    *

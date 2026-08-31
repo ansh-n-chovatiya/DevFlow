@@ -178,6 +178,111 @@ export interface NetworkCall {
   timestamp: number;
 }
 
+// ── Application state ────────────────────────────────────────────────────────
+
+/**
+ * One operation of an RFC 6902 JSON Patch.
+ *
+ * `move`, `copy` and `test` are never generated. A patch here is read by a
+ * person or a model asking *what changed*, and `move` answers that question by
+ * naming two paths and no value — which is cheaper on the wire and worse to
+ * read. `test` has no meaning for a record of something that already happened.
+ */
+export interface PatchOp {
+  op: 'add' | 'remove' | 'replace';
+  /** RFC 6901 JSON Pointer into the store's snapshot. */
+  path: string;
+  /** Absent for `remove`, and only for `remove`. */
+  value?: unknown;
+}
+
+/**
+ * How DevFlow came to be able to read a store.
+ *
+ * Not the library's marketing name — the mechanism. `context` is any React
+ * context whose value DevFlow read off a fiber's dependency list; `redux`,
+ * `zustand` and `react-query` are the three whose shape it recognised well
+ * enough to name, and to read a *state* out of rather than the raw value.
+ */
+export type StateStoreKind = 'redux' | 'zustand' | 'react-query' | 'context';
+
+/**
+ * A store the recording read, named once per flow.
+ *
+ * Listed on the flow rather than repeated on every step for the same reason
+ * `FlowReact.components` is: forty steps referring to one store should cost one
+ * description, and `StepStateDelta.store` is an index into this.
+ */
+export interface StateStoreRef {
+  /** Stable for the life of one recording. Referenced by `StepStateDelta.store`. */
+  id: string;
+  kind: StateStoreKind;
+  /** What the app calls it, when the page says so — a context's `displayName`. */
+  label?: string;
+  /**
+   * Components observed reading this store, as component ids.
+   *
+   * Observed, not inferred: a component is listed only when its own fiber
+   * carried a dependency on the context this store was found behind, or an
+   * external-store read whose snapshot is this store's. Being rendered
+   * underneath a provider is not reading it, and is never counted here — a
+   * subscriber list that includes every component in the app answers no
+   * question at all.
+   */
+  subscribers?: string[];
+}
+
+/**
+ * What one store did across one step.
+ *
+ * The patch runs from the state as it was when the interaction was dispatched
+ * to the state once the app had settled — `recording.stateSettleMs` later,
+ * mirroring the DOM delta. A step where the state did not move carries no delta
+ * at all rather than an empty patch, so that "nothing changed" costs nothing.
+ */
+export interface StepStateDelta {
+  /** The `id` of a `StateStoreRef` on the flow. */
+  store: string;
+  /** RFC 6902, before → after. Applying it to the before snapshot yields the after snapshot. */
+  patch: PatchOp[];
+  /**
+   * Finer operations folded into a coarser `replace` to fit the operation
+   * budget.
+   *
+   * The budget is never spent by *dropping* operations. A patch with holes in
+   * it is not a patch — it no longer reconstructs the after state, and a reader
+   * that applies it gets a state the app never had, with nothing saying so. So
+   * an over-budget patch is re-cut at a shallower path instead: fewer, larger
+   * `replace`s that still apply exactly. This counts what that cost in detail.
+   */
+  collapsed?: number;
+  /**
+   * A snapshot was cut at its depth, width or string caps, so the patch
+   * describes the *bounded view* of the store and not the store.
+   *
+   * A value below the cut reads as unchanged whether it changed or not, which
+   * is the one thing a state diff must never claim silently.
+   */
+  bounded?: true;
+}
+
+/**
+ * What the recording could and could not see of the app's state.
+ *
+ * `stores` is empty and `read` false on every flow recorded on a page with no
+ * React, with state capture switched off, or with no store DevFlow recognises.
+ * Those are three different answers and the reader needs to tell them apart,
+ * which is what `note` is for — absence of state and absence of change look
+ * identical otherwise, exactly as `FlowPayload.omitted` exists to prevent.
+ */
+export interface FlowState {
+  /** Whether state capture ran at all during this recording. */
+  read: boolean;
+  stores: StateStoreRef[];
+  /** Why there is less here than the reader expected, in the words they need. */
+  note?: string;
+}
+
 export type ConsoleLevel = 'log' | 'warn' | 'error' | 'info' | 'debug';
 
 export interface ConsoleEntry {
@@ -270,6 +375,12 @@ interface StepBase {
    * useful field becomes noise.
    */
   domDelta?: { before: string; after: string };
+  /**
+   * What the app's stores did across this step, one entry per store that moved.
+   *
+   * Stores that did not move are absent, not empty — see `StepStateDelta`.
+   */
+  state?: StepStateDelta[];
 }
 
 export interface ClickStep extends StepBase {
@@ -368,6 +479,12 @@ export interface FlowPayload {
    * know, which is exactly what the version field exists to allow.
    */
   react?: FlowReact;
+  /**
+   * What the recording could and could not see of the app's state. Absent
+   * entirely on a flow recorded before state capture existed — additive for
+   * `react`'s reason, and not a `schemaVersion` bump for it either.
+   */
+  state?: FlowState;
   /**
    * Which sections the sender deliberately left out.
    *
@@ -491,6 +608,15 @@ export interface LocalStorageShape {
   /** React facts about the page, minus the component table. */
   reactMeta: Omit<FlowReact, 'components'> | null;
   /**
+   * The stores the live recording has read, described once each.
+   *
+   * Its own key for `reactComponents`' reason — `recordedSteps` is rewritten
+   * whole by every capture, and one key with two writers loses updates — and
+   * because it is a description of the *page*, which outlives any one step.
+   * `StepStateDelta.store` indexes this.
+   */
+  stateStores: StateStoreRef[];
+  /**
    * Search needles for components still awaiting resolution.
    *
    * Deliberately a separate key from `reactComponents`: a needle is 200
@@ -567,6 +693,18 @@ export function savedFlowKey(id: string): `savedFlow_${string}` {
  */
 export function savedFlowReactKey(id: string): `savedFlowReact_${string}` {
   return `savedFlowReact_${id}`;
+}
+
+/**
+ * An archived flow's state stores, one key per flow.
+ *
+ * Beside the React table rather than inside it, for its reason and one of its
+ * own: the two are written by different things at different times, and a flow
+ * archived before state capture existed has no such key — which reads as "no
+ * store was read", the same thing it meant then.
+ */
+export function savedFlowStateKey(id: string): `savedFlowState_${string}` {
+  return `savedFlowState_${id}`;
 }
 
 /**

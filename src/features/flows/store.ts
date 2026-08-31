@@ -22,8 +22,10 @@ import { flowError } from '../../shared/errors.js';
 import {
   savedFlowKey,
   savedFlowReactKey,
+  savedFlowStateKey,
   type FlowMeta,
   type FlowReact,
+  type FlowState,
   type Overrides,
   type Step,
 } from '../../shared/types.js';
@@ -31,6 +33,7 @@ import { readRecordingStamp } from '../settings/recording.js';
 import { makeThumbnail, thumbnailSource, type ThumbnailSize } from './thumbnail.js';
 import { load as loadSettings } from '../settings/index.js';
 import type { Settings } from '../settings/fields.js';
+import { resolve } from '../settings/resolve.js';
 
 /** The three `thumbnails.*` settings, as the drawing function wants them. */
 function thumbnailSize(settings: Settings): ThumbnailSize {
@@ -51,6 +54,12 @@ export interface Flow {
   meta: FlowMeta | null;
   /** Absent when the flow was not recorded on a React page. */
   react: FlowReact | null;
+  /**
+   * What the recording could see of the app's state, including when the answer
+   * is "nothing, and here is why". `null` only for a flow archived before state
+   * capture existed, which says nothing about state either way.
+   */
+  state: FlowState | null;
 }
 
 /** The name the unsaved recording is shown under until it is given one. */
@@ -214,6 +223,43 @@ export async function readCurrentReact(steps: Step[]): Promise<FlowReact | null>
 }
 
 /**
+ * The live recording's state stores, and what to say when there are none.
+ *
+ * Read at the moment it is needed for `readCurrentReact`'s reason. The
+ * difference is the answer when there is nothing: React returns `null` and the
+ * flow simply has no `react`, because a page with no React is a page with no
+ * React. State has three nothings — capture was off, capture ran and the page
+ * had no store DevFlow could read, and capture ran and nothing changed — and
+ * they are not the same fact. `read` and `note` are what keep them apart, and
+ * `FlowState` is returned even when `stores` is empty precisely so the reader
+ * is told which one it was.
+ */
+export async function readCurrentState(): Promise<FlowState | null> {
+  const stored = await getLocal(['stateStores', 'recordingSettings']);
+  if (!stored.ok) return null;
+
+  const settings = resolve(stored.value.recordingSettings ?? {});
+  if (!settings['recording.state']) {
+    return {
+      read: false,
+      stores: [],
+      note: 'State was not recorded — “Record the app’s state” was off for this recording.',
+    };
+  }
+
+  const stores = stored.value.stateStores ?? [];
+  return {
+    read: true,
+    stores,
+    ...(stores.length
+      ? {}
+      : {
+          note: 'No store was read. DevFlow reads state through React contexts, so a page with no React, or one whose store is held in a module rather than a provider, has none to read.',
+        }),
+  };
+}
+
+/**
  * What storage actually holds for an id, with the two ways a flow can be absent
  * kept apart.
  *
@@ -230,6 +276,7 @@ interface FlowRecord {
   /** `null` when the index lists the flow but its steps key is gone. */
   steps: Step[] | null;
   react: FlowReact | null;
+  state: FlowState | null;
 }
 
 async function readFlowRecord(id: string): Promise<Result<FlowRecord>> {
@@ -237,18 +284,22 @@ async function readFlowRecord(id: string): Promise<Result<FlowRecord>> {
   if (!flows.ok) return flows;
 
   const meta = flows.value.find((flow) => flow.id === id) ?? null;
-  if (!meta) return ok({ meta: null, steps: null, react: null });
+  if (!meta) return ok({ meta: null, steps: null, react: null, state: null });
 
   const key = savedFlowKey(id);
   const reactKey = savedFlowReactKey(id);
-  const stored = await getLocal([key, reactKey]);
+  const stateKey = savedFlowStateKey(id);
+  const stored = await getLocal([key, reactKey, stateKey]);
   if (!stored.ok) return stored;
 
   const steps = stored.value[key];
   // Flows archived before components were captured have no such key at all.
   const react = (stored.value[reactKey] as FlowReact | undefined) ?? null;
+  // Nor before state was. Null reads as "this recording says nothing about
+  // state", which is exactly what a flow from that build does say.
+  const state = (stored.value[stateKey] as FlowState | undefined) ?? null;
 
-  return ok({ meta, steps: Array.isArray(steps) ? (steps as Step[]) : null, react });
+  return ok({ meta, steps: Array.isArray(steps) ? (steps as Step[]) : null, react, state });
 }
 
 /**
@@ -261,10 +312,10 @@ export async function readFlow(id: string): Promise<Result<Flow | null>> {
   const record = await readFlowRecord(id);
   if (!record.ok) return record;
 
-  const { meta, steps, react } = record.value;
+  const { meta, steps, react, state } = record.value;
   if (!meta || !steps) return ok(null);
 
-  return ok({ id, name: meta.name, steps, meta, react });
+  return ok({ id, name: meta.name, steps, meta, react, state });
 }
 
 // ── Describing ───────────────────────────────────────────────────────────────
@@ -368,12 +419,14 @@ export async function saveAsFlow(name: string, steps: Step[]): Promise<Result<Fl
 
   await sendToWorker({ type: 'RESOLVE_COMPONENTS', final: true });
   const react = await readCurrentReact(numbered);
+  const state = await readCurrentState();
 
   // Steps first: if the index went first and the steps failed, the library would
   // list a flow that cannot be opened.
   const written = await setLocal({
     [savedFlowKey(id)]: numbered,
     ...(react ? { [savedFlowReactKey(id)]: react } : {}),
+    ...(state ? { [savedFlowStateKey(id)]: state } : {}),
   });
   if (!written.ok) return written;
 
@@ -389,7 +442,7 @@ export async function saveAsFlow(name: string, steps: Step[]): Promise<Result<Fl
      * occupied by a key nothing can name — which is the failure they were
      * already having, made permanent.
      */
-    await removeLocal([savedFlowKey(id), savedFlowReactKey(id)]);
+    await removeLocal([savedFlowKey(id), savedFlowReactKey(id), savedFlowStateKey(id)]);
     return indexed;
   }
 
@@ -499,7 +552,11 @@ export async function deleteFlow(id: string): Promise<Result<DeletedFlow>> {
   if (!meta) return err(flowError('STORAGE_WRITE', `no flow ${id}`));
 
   if (steps !== null) {
-    const removed = await removeLocal([savedFlowKey(id), savedFlowReactKey(id)]);
+    const removed = await removeLocal([
+      savedFlowKey(id),
+      savedFlowReactKey(id),
+      savedFlowStateKey(id),
+    ]);
     if (!removed.ok) return removed;
   }
 

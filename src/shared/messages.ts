@@ -20,7 +20,10 @@ import type {
   DraftStep,
   FlowReact,
   PickResult,
+  StateStoreKind,
+  StateStoreRef,
   Step,
+  StepStateDelta,
   TreeGroup,
 } from './types.js';
 import type { Pos1 } from '../core/react/positions.js';
@@ -65,6 +68,25 @@ export interface StepDomDelta {
   key: string;
   before: string;
   after: string;
+}
+
+/**
+ * What the app's stores did across one step, once the app had settled.
+ *
+ * Sent separately from the step, later, and merged in by key — the same
+ * arrangement as `StepDomDelta` and for the same reason. What an interaction
+ * *did* to the state is not knowable at the moment the step is written, and
+ * holding the step back until it is would delay the screenshot by the settle
+ * delay on every click.
+ */
+export interface StepStateDeltaMessage {
+  type: 'STEP_STATE_DELTA';
+  /** `timestamp:type`, exactly as `stepKey` builds it. */
+  key: string;
+  /** Only stores that actually moved. Never empty — nothing is sent when nothing changed. */
+  deltas: StepStateDelta[];
+  /** Stores seen for the first time in this recording, to be named on the flow. */
+  stores?: StateStoreRef[];
 }
 
 export interface CaptureAndSaveStep {
@@ -280,6 +302,7 @@ export type WorkerRequest =
   | ReadComponentSource
   | HighlightComponent
   | StepDomDelta
+  | StepStateDeltaMessage
   | FinishRecording
   | Precapture
   | AnnotateScreenshot
@@ -345,6 +368,7 @@ export interface ResponseByType {
   /** Resolves once the capture is done, so the page can restore its indicator. */
   CAPTURE_AND_SAVE_STEP: OkResponse;
   STEP_DOM_DELTA: OkResponse;
+  STEP_STATE_DELTA: OkResponse;
   PRECAPTURE: OkResponse;
   ANNOTATE_SCREENSHOT: AnnotateScreenshotResponse;
   REACT_META: OkResponse;
@@ -442,6 +466,44 @@ export interface AgentReactMessage {
 }
 
 /**
+ * What the app's stores held before an interaction and after it settled, keyed
+ * by the `timeStamp` of the event — exactly as `AgentReactMessage` is, and for
+ * exactly the same reason.
+ *
+ * The two snapshots travel rather than the patch between them, because the
+ * differ is pure `core/` code and the agent runs in the page: doing the diff
+ * here would put a bounded-budget decision inside the one context DevFlow does
+ * not control and cannot test without a browser.
+ */
+export interface AgentStateMessage {
+  __devflow_source__: string;
+  kind: 'state';
+  eventTime: number;
+  /** One entry per store read, in the order the stores were discovered. */
+  stores: AgentStateStore[];
+  /**
+   * Why there is less here than the reader expected — no store found on the
+   * page, or one held somewhere DevFlow cannot see. Absent when there is
+   * nothing to explain.
+   */
+  note?: string;
+}
+
+/** One store, as the page agent read it. */
+export interface AgentStateStore {
+  id: string;
+  kind: StateStoreKind;
+  label?: string;
+  /** Component ids observed reading this store on this sample. */
+  subscribers?: string[];
+  /** Bounded snapshots — see `core/state/snapshot.ts`. `null` when the read threw. */
+  before: unknown;
+  after: unknown;
+  /** Either snapshot hit a depth, width or string cap. */
+  bounded?: true;
+}
+
+/**
  * Script URLs seen in the page, as a delta.
  *
  * react-source-locator asks DevTools for the page's resources. DevFlow has no
@@ -534,6 +596,7 @@ export type AgentMessage =
   | AgentNetworkMessage
   | AgentReactMessage
   | AgentReactMetaMessage
+  | AgentStateMessage
   | AgentScriptsMessage;
 
 // ── Content script → injected agent ──────────────────────────────────────────
@@ -605,6 +668,20 @@ export interface AgentConfig {
   maxFiberWalk: number;
   /** `react.prewarmTtlMs` — how long a chain walked on pointerdown stays usable. */
   prewarmTtlMs: number;
+  /** `recording.state` — whether the app's stores are sampled around interactions. */
+  captureState: boolean;
+  /** `recording.stateSettleMs` — how long after an interaction the second sample is taken. */
+  stateSettleMs: number;
+  /** `recording.stateMaxDepth` — how deep into a store a snapshot goes. */
+  stateMaxDepth: number;
+  /** `recording.stateMaxKeys` — keys kept from one object in a snapshot. */
+  stateMaxKeys: number;
+  /** `recording.stateMaxEntries` — entries kept from one array in a snapshot. */
+  stateMaxEntries: number;
+  /** `recording.stateStringCap` — characters kept from one string in a snapshot. */
+  stateStringCap: number;
+  /** `recording.stateMaxStores` — stores read per recording. */
+  stateMaxStores: number;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

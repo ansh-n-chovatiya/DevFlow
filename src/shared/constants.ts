@@ -423,6 +423,74 @@ export const DOM_DELTA_MS = 700;
 /** Visible text worth keeping from one region. Two lines of prose, roughly. */
 export const CONTAINER_TEXT_CAP = 240;
 
+// ── Application state ────────────────────────────────────────────────────────
+//
+// State is read by *sampling*, not by subscribing: the page's stores are read
+// once when an interaction is dispatched and once after it settles, and nothing
+// is patched, wrapped or defined on the page in between. The caps below are
+// therefore two budgets rather than one — how much of a store is worth looking
+// at, and how much of the difference between two looks is worth writing down.
+
+/**
+ * How long to let the app settle before reading its stores back.
+ *
+ * The same reasoning as `DOM_DELTA_MS`, and deliberately the same number: a
+ * click's effect on the state and its effect on the screen arrive together, and
+ * two settle delays that disagree would produce a step whose visible change and
+ * whose state change describe different moments.
+ */
+export const STATE_SETTLE_MS = 700;
+
+/**
+ * How deep into a store a snapshot goes.
+ *
+ * A normalised Redux store is `entities.users.byId.<id>.profile.address` before
+ * it is interesting, which is six. Below that is where an app keeps the things
+ * it did not mean to put in a store — a whole API response, a DOM node, a
+ * Date-keyed cache — and where the cost of a snapshot stops being bounded by
+ * anything the app promised.
+ */
+export const STATE_MAX_DEPTH = 6;
+
+/**
+ * Keys kept from one object, and entries kept from one array.
+ *
+ * Separate numbers because they fail differently. Forty keys is more than any
+ * hand-written slice has and fewer than a normalised `byId` map; twenty entries
+ * is enough to see a list's shape and its head, which is what a diff of it
+ * needs, and a list longer than that changes by its length far more often than
+ * by its two-hundredth element.
+ */
+export const STATE_MAX_KEYS = 40;
+export const STATE_MAX_ENTRIES = 20;
+
+/** Characters kept from one string in a snapshot. */
+export const STATE_STRING_CAP = 200;
+
+/**
+ * Stores read per recording.
+ *
+ * An app with more contexts than this has them, and DevFlow reads the eight it
+ * saw most recently rather than all of them, because the alternative is a
+ * recording whose size is set by how many providers the app happens to wrap its
+ * tree in.
+ */
+export const STATE_MAX_STORES = 8;
+
+/**
+ * Operations one store's patch may carry for one step.
+ *
+ * Over budget, the patch is re-cut at a shallower path — never trimmed. See
+ * `StepStateDelta.collapsed` for why a patch with operations removed from it is
+ * not a patch.
+ */
+export const STATE_MAX_PATCH_OPS = 40;
+
+/** Whether the app's stores are sampled around each interaction at all. */
+export const CAPTURE_STATE = true;
+
+
+
 /**
  * How much of a response body a *document* is worth, and how many console lines
  * ride along with a step.

@@ -21,9 +21,18 @@ import type { RecordingSettings } from './fields.js';
  * The agent-relevant subset of the settings a recording is frozen at.
  *
  * `RecordingSettings`, not `Settings`: every field here is one the agent reads
- * while capturing, so all nine are in the freeze, and taking them from the
- * live object would push a body cap into the page that the recording it is
+ * while capturing, so every one of them is in the freeze, and taking them from
+ * the live object would push a body cap into the page that the recording it is
  * capturing for was never started under.
+ *
+ * The seven `recording.state*` entries are the state sampler's, and they cross
+ * for the same reason the `react.*` ones do: the stores are read off the page's
+ * own fibers, in the page's own realm, and nothing in the isolated world can
+ * see them. The eighth — `recording.statePatchOps` — deliberately does not
+ * cross. It budgets the *diff*, which is computed on the isolated side out of
+ * the two snapshots the agent sends back, and a field that does not need to
+ * cross should not: this channel is `window.postMessage`, and the page can read
+ * every value on it.
  *
  * The three `react.*` entries are Phase 6's, and they are here rather than in the
  * content script because the fiber walk happens in the MAIN world — it is the
@@ -43,5 +52,12 @@ export function toAgentConfig(settings: RecordingSettings): AgentConfig {
     maxComponentChain: settings['react.maxComponentChain'],
     maxFiberWalk: settings['react.maxFiberWalk'],
     prewarmTtlMs: settings['react.prewarmTtlMs'],
+    captureState: settings['recording.state'],
+    stateSettleMs: settings['recording.stateSettleMs'],
+    stateMaxDepth: settings['recording.stateMaxDepth'],
+    stateMaxKeys: settings['recording.stateMaxKeys'],
+    stateMaxEntries: settings['recording.stateMaxEntries'],
+    stateStringCap: settings['recording.stateStringCap'],
+    stateMaxStores: settings['recording.stateMaxStores'],
   };
 }

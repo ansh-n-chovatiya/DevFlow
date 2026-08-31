@@ -162,3 +162,39 @@ export function credentialParams(url: string): readonly string[] {
   if (parsed.hash) scan(parsed.hash.slice(1), found, seen);
   return found;
 }
+
+/**
+ * Property names in an application store whose value must not be recorded.
+ *
+ * A wider net than `SECRET_PARAM` above, and deliberately so. A URL parameter is
+ * written by whoever designed the endpoint and its vocabulary is small; a store
+ * key is written by whoever wrote the app, and the same secret is `password`,
+ * `pwd`, `userPassword` and `password_confirmation` in four codebases. So this
+ * matches as a *substring* where the parameter rule matches whole words, and
+ * accepts the false positives that come with it: a masked `passwordPolicy` costs
+ * a reader one field they could have had, and an unmasked `userPassword` costs
+ * them a credential in a context window.
+ *
+ * Personal data is here as well as credentials, which the URL rule has no reason
+ * to carry. A store is where an app keeps the signed-in user, and `email`,
+ * `phone` and `ssn` in a recording sent to a model is the leak the NFR names
+ * even though none of them is a secret in the authentication sense.
+ *
+ * Deliberately not here: `key` and `id` on their own. Half the objects an app
+ * stores have one, they are almost never the credential kind of key, and a rule
+ * that masks every `id` masks the store.
+ */
+const SECRET_STORE_KEY =
+  /pass(word|wd|phrase)|secret|token|credential|apikey|api_key|authorization|auth_?header|bearer|session_?id|csrf|xsrf|private_?key|access_?key|signature|\bssn\b|social_?security|credit_?card|card_?number|\bcvv\b|\bcvc\b|\biban\b|email|phone|birth|address/i;
+
+/**
+ * Whether a store property's value is a credential or personal data.
+ *
+ * Passed to `core/state/snapshot.ts` as its `secretKey` predicate. Separate from
+ * the snapshot walk because *what counts as a secret* is a policy this file owns
+ * — it is where the URL rule already lives — and *how a value is masked* is the
+ * walk's. Neither should be able to change the other by accident.
+ */
+export function isSecretStateKey(key: string): boolean {
+  return typeof key === 'string' && SECRET_STORE_KEY.test(key);
+}

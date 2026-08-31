@@ -59,6 +59,41 @@
  * to tell. Where the name is ambiguous and the file unknown, nothing is guessed
  * — the observation gets its own provisional row and waits for a source to
  * arrive.
+ *
+ * ## Application state, and the one thing a subscriber list cannot say
+ *
+ * A recording that read the app's state carries two kinds of fact, observed at
+ * two different granularities. The patches are per *key*: a step that
+ * dispatched `addToCart` names `/cart/items/0`, and `cart` is the key that
+ * moved. The subscriber list is per *store*: a component is on it because its
+ * own fiber carried a dependency on the store, which says it reads the store
+ * and says nothing at all about which key of it.
+ *
+ * So `subscribes_to` runs component → **store**, and there is an
+ * `arkg_state_stores` node for it to point at. Crossing a store's subscribers
+ * with a store's keys is one line shorter and asserts a fact nobody observed: a
+ * component that reads `state.cart` would come out of the graph with an edge to
+ * `state.auth`, indistinguishable from an edge somebody actually saw. Keys hang
+ * off their store by `store_id`, so "which keys does the store this component
+ * reads have" is one query away — left as a hop because that is what it is.
+ *
+ * A state key node carries `frequency` and `change_count` and no percentiles.
+ * Nothing times a key, so `timing_p50`/`timing_p95` on one would be columns
+ * that are always NULL — the exact shape of the `git_sha` columns the audit
+ * called out, and the reason the roadmap's "properties on every node" line is
+ * deliberately not followed here. `frequency` counts the recordings a key was
+ * observed in; `change_count` counts the steps whose patch touched it, which is
+ * the question the node exists to answer and the one `frequency` cannot: a key
+ * present in every recording and never once written is not a hotspot.
+ *
+ * A key's id is **(store kind, store label, key name)** and never the
+ * `StateStoreRef.id` the recording minted. That id is documented stable for the
+ * life of *one recording*, so keying on it would file a fresh `cart` node every
+ * time anybody pressed Record and the counts would never rise above 1. The cost
+ * is that two unlabelled stores of the same kind — the page said nothing about
+ * either — are one node, and their keys pool. That is the right way round for
+ * the same reason the component join is: an over-merged node answers
+ * approximately, while a per-recording node answers nothing, twice.
  */
 
 import Database from 'better-sqlite3';
@@ -126,6 +161,35 @@ const DDL = `
     frequency INTEGER NOT NULL DEFAULT 1
   );
 
+  /*
+   * A store one or more recordings read, keyed by what survives a recording.
+   *
+   * change_count is steps in which the store moved at all, which is where an
+   * operation at the empty pointer — a replace of the whole store, naming no
+   * key — is counted, since there is no key it could honestly be charged to.
+   */
+  CREATE TABLE IF NOT EXISTS arkg_state_stores (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    label TEXT,
+    first_observed_at INTEGER NOT NULL,
+    last_observed_at INTEGER NOT NULL,
+    frequency INTEGER NOT NULL DEFAULT 1,
+    change_count INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS arkg_state_keys (
+    id TEXT PRIMARY KEY,
+    store_id TEXT NOT NULL,
+    store_kind TEXT NOT NULL,
+    store_label TEXT,
+    key_name TEXT NOT NULL,
+    first_observed_at INTEGER NOT NULL,
+    last_observed_at INTEGER NOT NULL,
+    frequency INTEGER NOT NULL DEFAULT 1,
+    change_count INTEGER NOT NULL DEFAULT 0
+  );
+
   CREATE TABLE IF NOT EXISTS arkg_named_flows (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -166,6 +230,9 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_arkg_components_identity ON arkg_components(display_name, source_file);
   CREATE INDEX IF NOT EXISTS idx_arkg_component_aliases_target ON arkg_component_aliases(component_id);
   CREATE INDEX IF NOT EXISTS idx_arkg_api_endpoints_last ON arkg_api_endpoints(last_observed_at);
+  CREATE INDEX IF NOT EXISTS idx_arkg_state_keys_store ON arkg_state_keys(store_id);
+  CREATE INDEX IF NOT EXISTS idx_arkg_state_keys_last ON arkg_state_keys(last_observed_at);
+  CREATE INDEX IF NOT EXISTS idx_arkg_state_stores_last ON arkg_state_stores(last_observed_at);
 `;
 
 // ── Identity ──────────────────────────────────────────────────────────────────
@@ -198,6 +265,50 @@ function endpointId(method, url) {
     .update(`${method.toUpperCase()}|${pattern}`)
     .digest('hex')
     .slice(0, 16);
+}
+
+/**
+ * Stable id for a store, and for one top-level key of one store.
+ *
+ * Keyed on what outlives a recording — the kind and the label the page gave it
+ * — because `StateStoreRef.id` does not: it is stable for the life of one
+ * recording only, and a node keyed by it would be a new node per Send. A store
+ * the page never named has an empty label, so every unlabelled store of one
+ * kind is one node; see the header for why that is the tolerable direction.
+ */
+function stateStoreId(kind, label) {
+  return crypto.createHash('sha256').update(`state|${kind}|${label ?? ''}`).digest('hex').slice(0, 16);
+}
+
+function stateKeyId(kind, label, key) {
+  return crypto
+    .createHash('sha256')
+    .update(`state-key|${kind}|${label ?? ''}|${key}`)
+    .digest('hex')
+    .slice(0, 16);
+}
+
+/**
+ * The state key one patch operation touched, or null when it names none.
+ *
+ * RFC 6901: the first segment of `/cart/items/0` is the key, and `~1` and `~0`
+ * are `/` and `~` written so a segment can contain them. The two replacements
+ * are ordered and the order is the whole correctness of this function — `~0`
+ * first turns the escaped literal `~01` into `~1` and then into `/`, inventing
+ * a key separator the app never had. `~1` first is the only order that
+ * round-trips.
+ *
+ * Two paths name no key. The empty pointer `""` replaced the entire store, so
+ * every key changed and none is named; charging it to the keys already on file
+ * would credit keys it may have deleted and miss the ones it added, so it is
+ * counted on the store instead and on no key. A path that is not a pointer at
+ * all — no leading `/` — is not understood, and a guess about it would be
+ * indistinguishable in the graph from an observation.
+ */
+function pointerHead(path) {
+  if (typeof path !== 'string' || !path.startsWith('/')) return null;
+  const segment = path.slice(1).split('/')[0] ?? '';
+  return segment.replace(/~1/g, '/').replace(/~0/g, '~');
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -786,9 +897,18 @@ export function ingestFlow(flowJson) {
     return total + consoleFails + netFails;
   }, 0);
 
+  /*
+   * The state block joins the hash only when there is one. A flow that carries
+   * no state stringifies to exactly the bytes it did before this existed, so
+   * every recording already in somebody's database keeps the hash it was stored
+   * under and a re-send of it is still a re-send. The step deltas are inside
+   * `steps` and were always hashed; what this adds is the store list, so a
+   * recording re-sent after the page revealed another subscriber counts as the
+   * new evidence it is.
+   */
   const contentHash = crypto
     .createHash('sha256')
-    .update(JSON.stringify({ steps, components }))
+    .update(JSON.stringify({ steps, components, ...(flowJson.state ? { state: flowJson.state } : {}) }))
     .digest('hex')
     .slice(0, 32);
 
@@ -959,7 +1079,131 @@ export function ingestFlow(flowJson) {
         if (from !== to) upsertEdge('renders', 'component', from, 'component', to, flowId, now);
       }
     }
+
+    // Inside the guard above, and it has to be: `change_count` is a count of
+    // steps that changed something, and a second Send of one recording is not a
+    // second time the application changed anything.
+    ingestState(flowJson, steps, resolvedNode, flowId, now);
   })();
+}
+
+// ── Application state ─────────────────────────────────────────────────────────
+
+/**
+ * Write the stores, the state keys and the subscribes_to edges of one flow.
+ *
+ * A no-op unless the recording actually read state: `state` absent is every
+ * flow recorded before this existed, and `read: false` is a recording that
+ * could not read state — a page with no React, capture switched off, no store
+ * recognised. None of the three is evidence of anything, and re-ingesting one
+ * must leave the graph exactly as it was.
+ *
+ * `resolveComponent` maps a component id as the flow wrote it onto the row it
+ * landed on, which is the same indirection the `calls` and `renders` edges go
+ * through: a subscriber id written straight into an edge points at nothing the
+ * moment that component's row is merged into another.
+ */
+function ingestState(flowJson, steps, resolveComponent, flowId, now) {
+  const state = flowJson.state;
+  if (!state || state.read !== true) return;
+  const stores = Array.isArray(state.stores) ? state.stores : [];
+  if (!stores.length) return;
+
+  /** The recording's own store id → the node it stands for, for this flow only. */
+  const nodeForStore = new Map();
+  for (const store of stores) {
+    if (!store || typeof store.id !== 'string') continue;
+    const kind = typeof store.kind === 'string' ? store.kind : '';
+    const label = typeof store.label === 'string' ? store.label : null;
+    nodeForStore.set(store.id, { id: stateStoreId(kind, label), kind, label, store });
+  }
+
+  /*
+   * Counted before anything is written, because both counts are per *flow*, not
+   * per operation: a store seen in forty steps of one recording is one
+   * observation of that store, and a key touched three times in one step is one
+   * step in which it changed.
+   */
+  const storeChanges = new Map();
+  const keyChanges = new Map();
+
+  for (const step of steps) {
+    for (const delta of step.state ?? []) {
+      const node = delta && nodeForStore.get(delta.store);
+      // A delta naming a store the flow never described is unreadable: there is
+      // no kind and no label to key it by, so there is no node to charge it to.
+      if (!node) continue;
+      const ops = Array.isArray(delta.patch) ? delta.patch : [];
+      if (!ops.length) continue;
+
+      storeChanges.set(node.id, (storeChanges.get(node.id) ?? 0) + 1);
+
+      const touched = new Set();
+      for (const op of ops) {
+        const key = pointerHead(op?.path);
+        if (key !== null) touched.add(key);
+      }
+      for (const key of touched) {
+        const id = stateKeyId(node.kind, node.label, key);
+        const seen = keyChanges.get(id);
+        if (seen) seen.changes += 1;
+        else keyChanges.set(id, { node, key, changes: 1 });
+      }
+    }
+  }
+
+  const upsertStore = sql(`
+    INSERT INTO arkg_state_stores (id, kind, label, first_observed_at, last_observed_at, frequency, change_count)
+    VALUES (?, ?, ?, ?, ?, 1, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      last_observed_at = excluded.last_observed_at,
+      frequency = frequency + 1,
+      change_count = change_count + excluded.change_count
+  `);
+  const upsertKey = sql(`
+    INSERT INTO arkg_state_keys (id, store_id, store_kind, store_label, key_name, first_observed_at, last_observed_at, frequency, change_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      last_observed_at = excluded.last_observed_at,
+      frequency = frequency + 1,
+      change_count = change_count + excluded.change_count
+  `);
+
+  const written = new Set();
+  for (const node of nodeForStore.values()) {
+    // One recording may describe the same store twice — two contexts with one
+    // displayName are one node here — and that is one observation of it.
+    if (written.has(node.id)) continue;
+    written.add(node.id);
+    upsertStore.run(node.id, node.kind, node.label, now, now, storeChanges.get(node.id) ?? 0);
+  }
+
+  for (const [id, { node, key, changes }] of keyChanges) {
+    upsertKey.run(id, node.id, node.kind, node.label, key, now, now, changes);
+  }
+
+  /*
+   * subscribes_to is component → store, never component → key. `subscribers` is
+   * a property of the store — a component is on it because its fiber depended
+   * on the store — so an edge to one of the store's keys would be arithmetic
+   * presented as observation. See the header.
+   */
+  // Kept across the whole loop, not per store: one recording naming a
+  // component twice — on one store listed twice, or under two ids that turned
+  // out to be one row — saw it read that store once.
+  const drawn = new Set();
+  for (const node of nodeForStore.values()) {
+    const subscribers = Array.isArray(node.store.subscribers) ? node.store.subscribers : [];
+    for (const sub of subscribers) {
+      if (typeof sub !== 'string') continue;
+      const from = resolveComponent(sub);
+      // An edge from a component the graph has no row for is unreachable from
+      // `getComponent`, which is the only way anybody reads these.
+      if (!from || !componentRow(from) || drawn.has(`${node.id}|${from}`)) continue;
+      drawn.add(`${node.id}|${from}`);
+      upsertEdge('subscribes_to', 'component', from, 'state_store', node.id, flowId, now);
+    }
+  }
 }
 
 /**
@@ -1125,6 +1369,35 @@ export function getComponentByName(name) {
 }
 
 /**
+ * The state keys observed since sinceMs, busiest first.
+ *
+ * Ordered by `change_count` rather than `frequency` because the question a
+ * state key is asked is which parts of the store actually move: a key present
+ * in every recording and never written is the least interesting row in the
+ * table, and `frequency` alone would put it at the top.
+ *
+ * `storeId` is here so a caller holding a `subscribes_to` edge — which points
+ * at a store, because that is the granularity a subscriber was observed at —
+ * can find the keys of the store it points at without a second lookup.
+ */
+export function getStateKeys(sinceMs = 0) {
+  if (!db) return [];
+  return sql(`
+    SELECT * FROM arkg_state_keys WHERE last_observed_at >= ?
+    ORDER BY change_count DESC, frequency DESC, key_name ASC
+  `).all(sinceMs).map((row) => ({
+    id: row.id,
+    key: row.key_name,
+    storeId: row.store_id,
+    storeKind: row.store_kind,
+    storeLabel: row.store_label,
+    frequency: row.frequency,
+    changeCount: row.change_count,
+    lastObservedAt: row.last_observed_at,
+  }));
+}
+
+/**
  * All named flows in which this component appeared (via an edge), since sinceMs
  * (epoch milliseconds, 0 = all history).
  */
@@ -1272,11 +1545,35 @@ export function getAppArchitecture() {
     if (edges.length) callEdges.set(comp.id, edges);
   }
 
+  /*
+   * The state keys are an *addition* to this answer, so they are absent from it
+   * entirely until something has been observed — a graph with no state reads
+   * exactly as it read before the column existed, and a caller written against
+   * that shape cannot tell this changed. Eight, because the budget here is
+   * <500 tokens and the twenty components and ten endpoints above already spend
+   * most of it; the busiest keys are the ones a bounded summary is for, and
+   * `getStateKeys` is where the rest of them live.
+   */
+  const topStateKeys = sql(`
+    SELECT key_name, store_kind, store_label, frequency, change_count FROM arkg_state_keys
+    ORDER BY change_count DESC, frequency DESC, key_name ASC LIMIT 8
+  `).all();
+
   return {
     totalFlows,
     totalComponents,
     totalEndpoints,
     lastSeen: lastSeenAt ? new Date(lastSeenAt).toISOString().slice(0, 10) : null,
+    ...(topStateKeys.length
+      ? {
+          topStateKeys: topStateKeys.map((k) => ({
+            key: k.key_name,
+            store: k.store_label ? `${k.store_kind} ${k.store_label}` : k.store_kind,
+            frequency: k.frequency,
+            changeCount: k.change_count,
+          })),
+        }
+      : {}),
     topComponents: topComponents.map((c) => ({
       id: c.id,
       name: c.display_name,
@@ -1361,10 +1658,13 @@ export function pruneOldObservations(retentionDays) {
     const compIds = ids('arkg_components');
     const epIds = ids('arkg_api_endpoints');
     const fileIds = ids('arkg_source_files');
+    const storeIds = ids('arkg_state_stores');
+    const keyIds = ids('arkg_state_keys');
 
     deleteEdgesFor('component', compIds);
     deleteEdgesFor('api_endpoint', epIds);
     deleteEdgesFor('source_file', fileIds);
+    deleteEdgesFor('state_store', storeIds);
 
     // An alias to a node that no longer exists resolves to nothing, which reads
     // as "never observed" — the same answer, one lookup later. Dropped with the
@@ -1379,9 +1679,14 @@ export function pruneOldObservations(retentionDays) {
     deleteNodes('arkg_components', compIds);
     deleteNodes('arkg_api_endpoints', epIds);
     deleteNodes('arkg_source_files', fileIds);
+    deleteNodes('arkg_state_stores', storeIds);
+    deleteNodes('arkg_state_keys', keyIds);
 
     sql('DELETE FROM arkg_named_flows WHERE last_observed_at < ?').run(cutoff);
 
+    // The count is components and endpoints, as it has always been: it is
+    // reported to a reader as how much of the graph went stale, and adding two
+    // node types to it would move a number nobody changed the retention of.
     return compIds.length + epIds.length;
   })();
 }

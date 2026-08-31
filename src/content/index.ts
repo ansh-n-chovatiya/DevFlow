@@ -46,6 +46,8 @@ import { stepKey } from '../core/flow/index.js';
 import {
   sendToWorker,
   type AgentMessage,
+  type AgentStateMessage,
+  type AgentStateStore,
   type CapturedComponent,
   type ContentRequest,
 } from '../shared/messages.js';
@@ -55,7 +57,10 @@ import type {
   DraftStep,
   NetworkCall,
   PickResult,
+  StateStoreRef,
+  StepStateDelta,
 } from '../shared/types.js';
+import { diff } from '../core/state/patch.js';
 /*
  * Type-only, so nothing of the agent is bundled into the content script — an
  * ordinary import would pull `injected/agent.ts` and its console, fetch and XHR
@@ -87,6 +92,8 @@ function clearBuffers(): void {
   pendingLogs = [];
   pendingNetworkCalls = [];
   reactChains.clear();
+  stepByEventTime.clear();
+  flowStores.clear();
 }
 
 // ── React component chains ───────────────────────────────────────────────────
@@ -163,6 +170,107 @@ function syncAgent(): void {
   postControl(isRecording && !isPaused && captureReact, isPicking);
 }
 
+// ── Application state ────────────────────────────────────────────────────────
+
+/**
+ * Which step claimed which interaction, so a sample that arrives afterwards can
+ * find it.
+ *
+ * The chain buffer cannot do this job. It resolves *before* the step is saved —
+ * `requestScreenshotAndSave` awaits it — whereas a state sample is deliberately
+ * late: it is taken `recording.stateSettleMs` after the interaction, which is
+ * long after the step has gone to the worker. So the direction is reversed. The
+ * step records the key it was saved under against its `eventTime`, and the
+ * sample, when it lands, looks the key up and sends a `STEP_STATE_DELTA` — the
+ * same arrangement `STEP_DOM_DELTA` already uses, for the same reason.
+ *
+ * Bounded, and evicted oldest-first: an interaction the recorder chose not to
+ * make a step of — a click on a `<select>` — leaves an entry nothing will ever
+ * claim, and an unbounded map of them is a leak that grows with the recording.
+ */
+const stepByEventTime = new Map<number, string>();
+
+/** Interactions remembered while waiting for their settled sample. */
+const STEP_KEY_MEMORY = 32;
+
+function rememberStep(eventTime: number, key: string): void {
+  stepByEventTime.set(eventTime, key);
+  while (stepByEventTime.size > STEP_KEY_MEMORY) {
+    const oldest = stepByEventTime.keys().next();
+    if (oldest.done) break;
+    stepByEventTime.delete(oldest.value);
+  }
+}
+
+/**
+ * The stores this recording has already named, so each is described once.
+ *
+ * `StateStoreRef` goes on the flow and `StepStateDelta.store` indexes it, which
+ * only pays for itself if a store forty steps touched is described once rather
+ * than forty times. The worker is the writer; this decides what is new.
+ */
+const flowStores = new Map<string, string>();
+
+/** A store's description, as it would be written down, for the seen-before test. */
+function storeFingerprint(store: AgentStateStore): string {
+  return `${store.kind}|${store.label ?? ''}|${(store.subscribers ?? []).join(',')}`;
+}
+
+/**
+ * Turn one settled sample into the patches a step carries.
+ *
+ * The diff happens here rather than in the page for one reason: it is a
+ * bounded-budget decision, `core/state/patch.ts` is pure and tested, and the
+ * MAIN world is the one context DevFlow does not control and cannot test
+ * without a browser. The agent sends two snapshots; this decides what they mean.
+ */
+function onStateSample(data: AgentStateMessage): void {
+  const key = stepByEventTime.get(data.eventTime);
+  // No step claimed this interaction — a click the recorder dropped, or one
+  // whose step was deleted in the review tab while the app was still settling.
+  if (!key) return;
+  stepByEventTime.delete(data.eventTime);
+
+  const budget = { maxOps: frozen['recording.statePatchOps'] };
+  const deltas: StepStateDelta[] = [];
+  const stores: StateStoreRef[] = [];
+
+  for (const store of data.stores) {
+    const fingerprint = storeFingerprint(store);
+    if (flowStores.get(store.id) !== fingerprint) {
+      flowStores.set(store.id, fingerprint);
+      stores.push({
+        id: store.id,
+        kind: store.kind,
+        ...(store.label ? { label: store.label } : {}),
+        ...(store.subscribers?.length ? { subscribers: store.subscribers } : {}),
+      });
+    }
+
+    const { ops, collapsed } = diff(store.before, store.after, budget);
+    // A store that did not move carries nothing at all. An empty patch on every
+    // store on every step is the difference between a state feature that is
+    // worth having and one that doubles the size of a recording to say nothing.
+    if (!ops.length) continue;
+
+    deltas.push({
+      store: store.id,
+      patch: ops,
+      ...(collapsed ? { collapsed } : {}),
+      ...(store.bounded ? { bounded: true as const } : {}),
+    });
+  }
+
+  if (!deltas.length && !stores.length) return;
+
+  void sendToWorker({
+    type: 'STEP_STATE_DELTA',
+    key,
+    deltas,
+    ...(stores.length ? { stores } : {}),
+  });
+}
+
 // ── Agent bridge ─────────────────────────────────────────────────────────────
 
 window.addEventListener('message', (event: MessageEvent<AgentMessage | AgentQueryReply>) => {
@@ -215,6 +323,8 @@ window.addEventListener('message', (event: MessageEvent<AgentMessage | AgentQuer
     // this — the agent already sends each URL once, and the worker is the only
     // thing that has to remember them across a page it may outlive.
     void sendToWorker({ type: 'REACT_SCRIPTS', urls: data.urls, pageUrl: location.href });
+  } else if (data.kind === 'state') {
+    onStateSample(data);
   } else if (data.kind === 'react-meta') {
     void sendToWorker({
       type: 'REACT_META',
@@ -884,6 +994,12 @@ function requestScreenshotAndSave(step: DraftStep, eventTime?: number, el?: Elem
   // Only for steps with an element: a navigation has no region to watch, and
   // the page it landed on is a different document anyway.
   if (el && step.element) watchDomDelta(el, stepKey(step));
+
+  // Every step with an originating interaction, element or not: a click that
+  // dispatched an action is a step whose state moved whether or not there was a
+  // region worth reading back. The agent's sample lands a settle delay from now
+  // and finds the step by this key — see `stepByEventTime`.
+  if (eventTime !== undefined) rememberStep(eventTime, stepKey(step));
 
   void (async () => {
     let components: CapturedComponent[] | undefined;

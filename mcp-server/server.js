@@ -1036,9 +1036,24 @@ async function saveFlow(flow) {
     schemaVersion: flow.schemaVersion ?? 1,
   };
 
-  // Additive, and absent entirely when the page was not React — which is also
-  // how every flow recorded before this existed reads.
-  const data = { ...meta, steps: stepsClean, ...(flow.react ? { react: flow.react } : {}) };
+  /*
+   * Additive, and absent entirely when the page was not React — which is also
+   * how every flow recorded before this existed reads. `state` is here on the
+   * same terms.
+   *
+   * Both are listed by name rather than spread from `flow`, so a field the
+   * sender invents cannot land in `flow.json` and be answered for. The cost of
+   * that is the failure this line already had once: `state` was read by
+   * `get_state_patch` and written by nobody, so every real recording arrived
+   * with its stores intact and lost them here, and only a fixture that had
+   * never been through this function could tell you otherwise.
+   */
+  const data = {
+    ...meta,
+    steps: stepsClean,
+    ...(flow.react ? { react: flow.react } : {}),
+    ...(flow.state ? { state: flow.state } : {}),
+  };
 
   // Awaited, not fired and forgotten: the POST response tells the extension the
   // flow is readable, and a tool call can arrive immediately after it.
@@ -2191,6 +2206,157 @@ async function resolveSource(root, candidate) {
   return { file: real, root: rootReal };
 }
 
+// ── State ──────────────────────────────────────────────────────────────────
+
+/*
+ * `get_state_patch` and the four different nothings behind it.
+ *
+ * DevFlow does not watch a store. It reads each one twice — once when the
+ * interaction is dispatched and once `recording.stateSettleMs` later — and
+ * diffs the two, having patched, wrapped and defined nothing on the page in
+ * between. Everything this tool may claim follows from that: it knows the two
+ * endpoints and nothing about the path between them, so a value that changed
+ * and changed back is a value that did not change, and the tool has to say so
+ * rather than let a reader infer a timeline it never had.
+ *
+ * The harder failure is the one that is not about accuracy at all. "State was
+ * never captured", "no store was recognised", "this step moved nothing" and
+ * "here is the patch" arrive as the same absence if the code is written the
+ * obvious way, and a reader with no way to tell them apart picks the worst
+ * reading — usually that the app did nothing, which is the one answer that
+ * cannot be checked. So each of the four is a different response with a
+ * different first sentence, and none of them is an empty list.
+ */
+
+/**
+ * How much of one operation's value is worth printing before it stops being
+ * evidence and starts being the response.
+ *
+ * A `replace` at `/` carries the whole store, and one of those is a bigger
+ * document than every other tool here returns. Cutting the value mid-JSON is
+ * the silent truncation this file exists to refuse, and dropping the operation
+ * leaves a patch with a hole in it — so an over-large value is replaced by a
+ * sketch of its shape under a *different key*, which no reader and no library
+ * can mistake for the value itself.
+ */
+const STATE_VALUE_CHARS = 240;
+
+/** `redux "cart" (#s1)` — a store in the words the recording stored it under. */
+const storeName = (ref) =>
+  `${ref.kind ?? 'store'}${ref.label ? ` "${ref.label}"` : ''} (#${ref.id})`;
+
+/** What a value is, when what it is has to stand in for what it was. */
+function sketchValue(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return `array of ${value.length}`;
+  if (typeof value === 'object') {
+    const keys = Object.keys(value);
+    const shown = keys.slice(0, 6);
+    return (
+      `object, ${keys.length} key${keys.length === 1 ? '' : 's'}` +
+      (shown.length ? `: ${shown.join(', ')}${keys.length > shown.length ? ', …' : ''}` : '')
+    );
+  }
+  if (typeof value === 'string') return `string of ${value.length} characters`;
+  return typeof value;
+}
+
+/**
+ * One operation, printed whole or printed as a shape.
+ *
+ * `valueOmitted` rather than a shortened `value`: an operation carrying a
+ * truncated value is a valid-looking patch operation that writes the wrong
+ * thing, which is worse than one that obviously cannot be applied. The key
+ * names what happened to it, and `sketched` is what makes the response say so
+ * out loud rather than leaving the reader to notice a key they were not
+ * expecting.
+ */
+function renderOp(op) {
+  const path = typeof op?.path === 'string' ? op.path : '';
+  const kind = op?.op;
+
+  if (kind === 'remove' || !(op && 'value' in op)) {
+    return { text: JSON.stringify({ op: kind, path }), sketched: false };
+  }
+
+  const encoded = JSON.stringify(op.value);
+  if (typeof encoded === 'string' && encoded.length <= STATE_VALUE_CHARS) {
+    return { text: JSON.stringify({ op: kind, path, value: op.value }), sketched: false };
+  }
+
+  return {
+    text: JSON.stringify({
+      op: kind,
+      path,
+      valueOmitted: `${sketchValue(op.value)}, ${typeof encoded === 'string' ? encoded.length : 0} characters as JSON`,
+    }),
+    sketched: true,
+  };
+}
+
+/** The caveat that outranks every number below it, said once per bounded store. */
+const BOUNDED_NOTE =
+  'Snapshot bounded: this store was cut at DevFlow\'s depth, width or string cap before the two ' +
+  'samples were compared, so the patch describes the bounded view of it and not the store. ' +
+  'Anything below the cut reads as unchanged whether it changed or not.';
+
+/** What `collapsed` means, in the words it does not mean. */
+const collapsedNote = (count) =>
+  `${count} finer operation${count === 1 ? ' was' : 's were'} folded into coarser replaces to fit the ` +
+  'operation budget. Nothing was dropped and the patch below still applies exactly — it is less ' +
+  'specific about where inside those paths the change was, not missing any of it.';
+
+/**
+ * One store's movement across one step, cut on an operation boundary.
+ *
+ * `budget` is `Infinity` for every block but the first one on an over-budget
+ * response, where it is the room left. A prefix of a patch does not reconstruct
+ * the after state, so the line that reports the cut says that rather than
+ * counting the loss and leaving the reader to assume the rest still applies.
+ */
+function stateBlock(entry, budget = Infinity) {
+  const label = entry.ref
+    ? storeName(entry.ref)
+    : `#${entry.delta.store} — a store this recording does not list, so nothing is known about it`;
+  const head = [`### step ${entry.number} · ${label} — ${entry.ops.length} operation${entry.ops.length === 1 ? '' : 's'}`];
+
+  if (entry.delta.bounded === true) head.push(BOUNDED_NOTE);
+  const collapsed = Number(entry.delta.collapsed);
+  if (Number.isFinite(collapsed) && collapsed > 0) head.push(collapsedNote(collapsed));
+
+  const rendered = entry.ops.map(renderOp);
+  // Room for the two lines this function may still have to add about itself.
+  let used = estimateTokens(head.join('\n')) + 80;
+  const kept = [];
+  for (const op of rendered) {
+    const cost = estimateTokens(`  ${op.text},\n`);
+    if (kept.length > 0 && used + cost > budget) break;
+    kept.push(op);
+    used += cost;
+  }
+
+  const sketched = kept.filter((op) => op.sketched).length;
+  if (sketched) {
+    head.push(
+      `${sketched} of the operations below carr${sketched === 1 ? 'ies' : 'y'} a value larger than ` +
+        `${STATE_VALUE_CHARS} characters, so ${sketched === 1 ? 'its' : 'their'} "value" is replaced by a ` +
+        '"valueOmitted" sketch of what it was. Those operations are not applicable as printed.',
+    );
+  }
+
+  const body = kept.map((op, i) => `  ${op.text}${i < kept.length - 1 ? ',' : ''}`);
+  const dropped = rendered.length - kept.length;
+  const tail = dropped
+    ? [
+        `… ${dropped} of ${rendered.length} operations omitted — this one store on this one step already ` +
+          'fills the response budget. What is printed is a prefix of the patch and does not reconstruct ' +
+          'the state the app ended the step in.',
+      ]
+    : [];
+
+  return [...head, '[', ...body, ']', ...tail];
+}
+
 // ── MCP server (server → Claude) ───────────────────────────────────────────
 
 const mcpServer = new Server({ name: 'devflow', version: VERSION }, { capabilities: { tools: {} } });
@@ -2354,6 +2520,46 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: 'Project root to read under, if it is not the directory this server was started in.',
           },
         },
+      },
+    },
+    {
+      name: 'get_state_patch',
+      description:
+        'What the app\'s own state did across one step, or a range of steps, as an RFC 6902 JSON Patch. ' +
+        'DevFlow samples state, it does not watch it: each store is read once when the interaction is ' +
+        'dispatched and once after the app settles, with nothing patched, wrapped or defined on the page ' +
+        'in between — so a value that changed and changed back between those two reads shows no change at ' +
+        'all, and nothing here says anything about the order things moved in within a step. Redux, ' +
+        'Zustand, React Query and React context are the four kinds of store it recognises. The operations ' +
+        'apply to the bounded snapshot DevFlow took of a store, not to the live store; within one store ' +
+        'the per-step patches concatenate in step order and the concatenation is itself a valid patch, and ' +
+        'across stores they do not, because each store is a separate document. Says which of "state was ' +
+        'never captured", "no store was recognised" and "no store moved" it is, because those are three ' +
+        'different answers and only the last is about the application.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+          step: {
+            type: 'number',
+            description:
+              'Step number, 1-based, as the other tools report it — one step. Use "from" and "to" for a range instead; passing both is refused.',
+          },
+          from: {
+            type: 'number',
+            description: 'First step of a range, 1-based, as get_flow uses it. Defaults to 1.',
+          },
+          to: {
+            type: 'number',
+            description: 'Last step of the range, 1-based and inclusive. Defaults to the last step of the flow.',
+          },
+          store: {
+            type: 'string',
+            description:
+              'Only this store: an id from the roster this tool prints (the leading # is optional), or the label the page gave it. Omit for every store that moved.',
+          },
+        },
+        required: ['id'],
       },
     },
     {
@@ -3512,6 +3718,289 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       );
     }
 
+    case 'get_state_patch': {
+      let flow;
+      try {
+        flow = await readFlow(args.id);
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+
+      const render = renderingFor(flow.json);
+      const name = flow.json.name;
+      const total = flow.json.steps.length;
+
+      /*
+       * The step arguments are settled before the state ones, so a reader who
+       * mistyped a step number is told that rather than told the recording has
+       * no state — which would be true of a flow that does have state, and
+       * would send them to the settings page to fix a typo.
+       */
+      const noStep = (asked) =>
+        failure(
+          `"${name}" has no step ${asked}. ` +
+            (total
+              ? `It has ${total} step${total === 1 ? '' : 's'}, numbered 1 to ${total}.`
+              : 'It has no steps at all.'),
+        );
+
+      const given = (value) => value !== undefined && value !== null;
+      if (given(args.step) && (given(args.from) || given(args.to))) {
+        return failure(
+          'get_state_patch takes either "step" for one step or "from" and "to" for a range, not both. ' +
+            `Pass {"id":"${flow.json.id}","step":${args.step}} for that one step, or drop "step" for the range.`,
+        );
+      }
+
+      let first;
+      let last;
+      if (given(args.step)) {
+        first = Math.trunc(Number(args.step));
+        if (!Number.isFinite(first) || !flow.json.steps[first - 1]) return noStep(args.step);
+        last = first;
+      } else {
+        first = given(args.from) ? Math.trunc(Number(args.from)) : 1;
+        last = given(args.to) ? Math.trunc(Number(args.to)) : total;
+        if (!Number.isFinite(first) || !flow.json.steps[first - 1]) return noStep(given(args.from) ? args.from : 1);
+        if (!Number.isFinite(last) || !flow.json.steps[last - 1]) return noStep(args.to);
+        /*
+         * Refused rather than sorted. A patch means something because it is in
+         * the order the app moved in, so a reversed range names a sequence that
+         * never happened — and quietly reversing it back hands the reader a
+         * correct answer to a question they did not ask, which they then trust
+         * the next time they get it wrong in a way that cannot be repaired.
+         */
+        if (first > last) {
+          return failure(
+            `That range runs backwards: "from" is step ${first} and "to" is step ${last}. These patches ` +
+              'concatenate in step order and describe a sequence, so a reversed range would describe ' +
+              `something that never happened. Pass {"id":"${flow.json.id}","from":${last},"to":${first}}.`,
+          );
+        }
+      }
+
+      const turnOn =
+        'Switch "recording.state" on in the DevFlow extension\'s settings and record the journey again.';
+
+      const state = flow.json.state;
+      if (!state || typeof state !== 'object' || Array.isArray(state)) {
+        return text(
+          `"${name}" carries no application state at all — it was recorded by a build of DevFlow that ` +
+            'did not read the app\'s stores, so this is the absence of data and not the absence of ' +
+            `change. Nothing was looked at. ${turnOn}`,
+        );
+      }
+
+      if (state.read !== true) {
+        return text(
+          `State capture was switched off when "${name}" was recorded, so no store was read at any ` +
+            'point in it. This is the absence of data and not the absence of change — nothing was ' +
+            `looked at. ${turnOn}` +
+            (typeof state.note === 'string' && state.note ? `\n\nThe recording's own note: ${state.note}` : ''),
+        );
+      }
+
+      const stores = Array.isArray(state.stores) ? state.stores : [];
+      if (!stores.length) {
+        return text(
+          `State capture ran while "${name}" was recorded and recognised no store on that page.\n\n` +
+            (typeof state.note === 'string' && state.note
+              ? `The recording's own note: ${state.note}\n\n`
+              : 'The recording left no note saying why.\n\n') +
+            'DevFlow reads Redux, Zustand, React Query and React context; an application holding its ' +
+            'state anywhere else reads from here as holding none. This is not "nothing changed" — there ' +
+            'was nothing to watch.',
+        );
+      }
+
+      const wanted = typeof args.store === 'string' ? args.store.trim().replace(/^#/, '') : '';
+      let only = null;
+      if (wanted) {
+        only =
+          stores.find((store) => store.id === wanted) ??
+          stores.find((store) => store.label === wanted) ??
+          null;
+        /*
+         * A refusal, not an empty patch. "That store is not in this recording"
+         * and "that store did not move" are the two answers a filter can give,
+         * and returning the second for the first is the mistake this whole tool
+         * is organised around not making.
+         */
+        if (!only) {
+          return failure(
+            `"${name}" read no store called "${args.store}". It read ${stores.length}: ` +
+              `${stores.map(storeName).join(' · ')}. Answering with an empty patch would have read as ` +
+              '"that store did not move", which is a different thing.',
+          );
+        }
+      }
+
+      const byId = new Map(stores.map((store) => [store.id, store]));
+      /** One store's movement on one step, in step order, deltas kept in stored order. */
+      const entries = [];
+      for (let number = first; number <= last; number++) {
+        const deltas = flow.json.steps[number - 1]?.state;
+        if (!Array.isArray(deltas)) continue;
+        for (const delta of deltas) {
+          if (only && delta?.store !== only.id) continue;
+          const ops = Array.isArray(delta?.patch) ? delta.patch : [];
+          if (!ops.length) continue;
+          entries.push({ number, delta, ops, ref: byId.get(delta.store) ?? null });
+        }
+      }
+
+      const where = first === last ? `step ${first}` : `steps ${first}–${last}`;
+      const heading =
+        first === last
+          ? `## State on step ${first} of ${total} — ${name}${flow.json.steps[first - 1].action ? `\n${flow.json.steps[first - 1].action}` : ''}`
+          : `## State across steps ${first}–${last} of ${total} — ${name}`;
+
+      if (!entries.length) {
+        return text(
+          `${heading}\n\n` +
+            (only
+              ? `${storeName(only)} did not move on ${where}.`
+              : `No store moved on ${where}.`) +
+            ` State capture ran and read ${stores.length} store${stores.length === 1 ? '' : 's'}: ` +
+            `${stores.map(storeName).join(' · ')}.\n\n` +
+            'What that means exactly: the sample taken when each interaction was dispatched and the one ' +
+            'taken after the app settled were identical. A store that changed and changed back between ' +
+            'those two reads looks the same from here, so this is "the two samples matched", not ' +
+            '"nothing happened".',
+        );
+      }
+
+      /*
+       * The roster is not decoration: it is what makes "did not move" readable
+       * as a fact about a store rather than as the shape of the response. It is
+       * dropped from the budget last, along with the caveat, because both of
+       * them qualify every number underneath.
+       */
+      const components = flow.json.react?.components ?? {};
+      const movedIn = (id) => new Set(entries.filter((e) => e.delta.store === id).map((e) => e.number)).size;
+      const listed = only ? [only] : stores;
+      const roster = listed.map((store) => {
+        const count = movedIn(store.id);
+        const subscribers = (store.subscribers ?? [])
+          .map((id) => components[id]?.name)
+          .filter(Boolean);
+        const read = subscribers.length
+          ? `  read by ${subscribers.slice(0, 4).join(', ')}${subscribers.length > 4 ? ` (+${subscribers.length - 4} more)` : ''}`
+          : '';
+        return `  ${storeName(store)} — ${count ? `moved on ${count} of these steps` : 'did not move'}${read}`;
+      });
+      const filtered = only
+        ? [
+            `Filtered to this store. "${name}" also read ${stores.length - 1} other` +
+              `${stores.length - 1 === 1 ? '' : 's'} — ` +
+              `${stores.filter((store) => store.id !== only.id).map(storeName).join(' · ')} — and this ` +
+              'response says nothing at all about them.',
+          ]
+        : [];
+
+      const caveat =
+        'These operate on the snapshot DevFlow took of each store — a JSON copy read off the page under ' +
+        'its depth, width and string caps — and not on the live store. Within one store the blocks below ' +
+        'concatenate in the order printed and the concatenation is itself a valid RFC 6902 patch: ' +
+        'applying it to that store\'s snapshot at the start of this range yields its snapshot at the end. ' +
+        'Across stores they do not concatenate, because each store is a separate document.';
+
+      const preamble = [heading, '', 'Stores read:', ...roster, ...filtered, '', caveat].join('\n');
+
+      /*
+       * Cut on a step boundary, like `get_flow` and `get_flow_errors`, so the
+       * "from" this response names resumes exactly where it stopped rather than
+       * halfway through a step whose other stores were already printed.
+       */
+      const steps = [];
+      for (const entry of entries) {
+        const at = steps[steps.length - 1];
+        if (at && at.number === entry.number) at.entries.push(entry);
+        else steps.push({ number: entry.number, entries: [entry] });
+      }
+
+      const budget = render.maxTokens;
+      // Room reserved for the sentence that reports the cut — an accounting
+      // that overruns to say it has cut nothing is not an accounting.
+      let used = estimateTokens(preamble) + 80;
+      const blocks = [];
+      let stopped = null;
+      let partial = false;
+
+      for (const group of steps) {
+        const rendered = group.entries.map((entry) => stateBlock(entry).join('\n'));
+        const cost = rendered.reduce((sum, block) => sum + estimateTokens(block) + 1, 0);
+
+        if (used + cost <= budget) {
+          blocks.push(...rendered);
+          used += cost;
+          continue;
+        }
+
+        if (blocks.length) {
+          stopped = group.number;
+          break;
+        }
+
+        /*
+         * The first step is always answered, shrunk as far as it has to be, for
+         * the reason `get_flow` always returns its first step: a reader who
+         * asked a direct question and got an empty document has no smaller
+         * question to ask next.
+         */
+        partial = true;
+        for (const entry of group.entries) {
+          const whole = stateBlock(entry).join('\n');
+          const remaining = budget - used;
+          if (estimateTokens(whole) <= remaining) {
+            blocks.push(whole);
+            used += estimateTokens(whole) + 1;
+            continue;
+          }
+          // The very first block is shrunk rather than dropped; anything after
+          // it stops the loop, and the sentence below names the step it was on.
+          if (blocks.length === 0) {
+            const fitted = stateBlock(entry, Math.max(200, remaining)).join('\n');
+            blocks.push(fitted);
+            used += estimateTokens(fitted) + 1;
+          }
+          break;
+        }
+        stopped = steps[1]?.number ?? null;
+        break;
+      }
+
+      /*
+       * Three different cuts and three different sentences, because the reader
+       * has to know whether what is above is a whole prefix of the range, a
+       * partial prefix of one step, or both. "Some of it is missing" is the
+       * answer that lets a model treat an incomplete patch as a complete one.
+       */
+      const rest = (at) =>
+        `get_state_patch({"id":"${flow.json.id}","from":${at},"to":${last}}${only ? `,"store":"${only.id}"` : ''})`;
+      const budgetLine = `The response budget is ${budget} tokens ("mcp.maxTokens").`;
+
+      let cut = '';
+      if (partial && stopped !== null) {
+        cut =
+          `\n\nCut to fit the response budget. Step ${first} did not fit whole — what is above is a prefix ` +
+          `of it — and nothing from step ${stopped} onwards is here at all. ${budgetLine} The rest of the ` +
+          `range is at ${rest(stopped)}; a "store" narrows step ${first} enough to see the remainder of it.`;
+      } else if (partial) {
+        cut =
+          `\n\nCut to fit the response budget. Step ${first} on its own does not fit, so what is above is a ` +
+          'prefix of its patch and does not reconstruct the state that step ended in. ' +
+          budgetLine;
+      } else if (stopped !== null) {
+        cut =
+          `\n\nCut to fit the response budget. Stopped at step ${stopped} — the blocks above already fill ` +
+          `this response, and every step from ${stopped} to ${last} is missing from it. ${budgetLine} The ` +
+          `rest of the range is at ${rest(stopped)}.`;
+      }
+
+      return text(`${preamble}\n\n${blocks.join('\n\n')}${cut}`);
+    }
+
     /*
      * The three graph tools.
      *
@@ -3570,11 +4059,31 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
       }
 
+      /*
+       * State keys, and the two numbers that are not the same question.
+       *
+       * `frequency` is how many recordings held this key at all; `changeCount`
+       * is how many steps across them actually wrote to it. A key present in
+       * every recording and never written is the least interesting row in the
+       * graph, and a summary that printed only "seen" could not tell it from
+       * the one the bug is in. Absent entirely on a graph with no state, which
+       * is how every graph built before this reads.
+       */
+      if (arch.topStateKeys?.length) {
+        lines.push('', 'State keys, most changed first — key, store, steps that changed it, recordings seen in:');
+        for (const key of arch.topStateKeys) {
+          lines.push(`  ${key.key}  ${key.store}  ${key.changeCount} changed  ${key.frequency} seen`);
+        }
+      }
+
       // The drill-down, named: a summary that does not say what to ask next is
       // read as the whole of what is known.
       lines.push(
         '',
-        'get_component_history takes a name or an id from above; get_anomalies says what has moved recently.',
+        'get_component_history takes a name or an id from above; get_anomalies says what has moved recently.' +
+          (arch.topStateKeys?.length
+            ? ' get_state_patch shows what one step did to a store, in the recording it did it in.'
+            : ''),
       );
       return text(lines.join('\n'));
     }

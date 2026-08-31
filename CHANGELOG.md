@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+**DevFlow records what the app's own state did, by reading it rather than by
+becoming part of it.** Every step now carries the difference between what the
+page's stores held when the interaction was dispatched and what they held once
+it had settled, as an RFC 6902 JSON Patch, and `get_state_patch` hands that to
+Claude Code. Redux, TanStack Query, Zustand behind a provider, and the app's own
+React contexts are the four it recognises.
+
+**Nothing is patched, wrapped or defined on the page to do it.** The stores are
+*sampled* off the fibers React already keeps — twice per step, and never at all
+while nothing is recording. The previous attempt at this feature assigned
+`window.__REDUX_DEVTOOLS_EXTENSION__` a non-callable object when the real
+extension was absent, so the classic
+`__REDUX_DEVTOOLS_EXTENSION__ && __REDUX_DEVTOOLS_EXTENSION__()` enhancer threw
+at boot on every page with Redux on it, recording or not. Sampling has no such
+failure mode to get wrong: there is no global to restore and no restore path to
+miss, which the tests assert directly rather than by inspection.
+
+The cost of sampling is stated where it is read rather than left to be
+discovered: a store that changed and changed back between the two samples shows
+no change at all, and nothing here says anything about the order things moved in
+within one step.
+
+**A patch that would not fit its budget is re-cut, never trimmed.** Cutting
+operations out of an RFC 6902 patch produces something that still looks like a
+patch and no longer reconstructs the state the app ended the step in — a reader
+who applies it gets a state that never existed, with nothing saying so. Over
+budget, the patch is re-emitted at a shallower path instead: fewer, coarser
+`replace`s that still apply exactly, with the step recording how much detail
+that cost.
+
+**Where DevFlow could not see, it says so.** "State capture was off", "capture
+ran and recognised no store on that page", and "no store moved on this step" are
+three different answers and the tool gives three different ones, because absence
+of data and absence of change look identical otherwise and a reader with no way
+to tell picks the worst of them. A store held in a module rather than a provider
+— a Zustand store created with `create()` outside any context — is not read, and
+the recording says that in as many words instead of leaving the gap.
+
+**A store's keys and its readers are now in the knowledge graph.** `state_keys`
+nodes count how often each top-level key of each store actually changed, not
+merely that it was seen; `subscribes_to` edges join a component to a store it
+was *observed* reading — its own fiber carried the context dependency. Being
+rendered underneath a provider is not reading it, is true of nearly every
+component in an app, and is never counted.
+
+**Secrets in a store are masked where the snapshot is taken**, before the value
+is walked, so a masked object never costs the depth budget and its getters are
+never called. The mask is stable, so a rotated token diffs as unchanged rather
+than as a change whose value is a credential.
+
+Eight settings under `recording.` govern all of it — whether to sample at all,
+how long to let the app settle, and the five caps that bound a snapshot and its
+patch. Each says what moving it costs.
+
 **Three tools that let Claude look at a recording without reading all of it.**
 `get_flow_summary` answers the question you actually have first — is this the
 flow, and did it break — in under 400 tokens, which is about a fiftieth of
