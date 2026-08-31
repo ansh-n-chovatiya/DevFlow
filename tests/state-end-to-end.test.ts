@@ -45,6 +45,13 @@ function payload(id: string) {
     name: `Recording ${id}`,
     timestamp: BASE,
     startUrl: 'https://shop.example.com/cart',
+    react: {
+      detected: true,
+      build: 'development',
+      components: {
+        cmp_badge: { name: 'CartBadge', status: 'resolved', source: 'src/CartBadge.tsx', line: 4 },
+      },
+    },
     state: {
       read: true,
       stores: [
@@ -59,7 +66,11 @@ function payload(id: string) {
         timestamp: BASE + 1000,
         action: 'Clicked "Add to cart"',
         stepNumber: 1,
-        element: { tag: 'button', cssSelector: 'button.add' },
+        element: {
+          tag: 'button',
+          cssSelector: 'button.add',
+          react: { chain: ['cmp_badge'], owner: 'cmp_badge' },
+        },
         consoleLogs: [],
         networkCalls: [],
         state: [
@@ -152,6 +163,32 @@ describe('and the tool answers from it', () => {
     // operations *were* dropped, which tells a reader the patch has holes.
     expect(answer).toMatch(/nothing was dropped/i);
     expect(answer).not.toMatch(/operations were dropped/i);
+  });
+
+  it('shows a component the stores it was observed reading', async () => {
+    const answer = await server.call('get_component_history', { componentId: 'CartBadge' });
+
+    /*
+     * `getComponent` has returned a component's edges since the graph was
+     * built and no tool printed one, so a `subscribes_to` edge was reachable
+     * only by opening the database by hand — which from outside is the same
+     * thing as never having written it. This is the assertion that the write
+     * and the reader are one deliverable.
+     */
+    expect(answer).toMatch(/Reads these stores/);
+    expect(answer).toMatch(/observed/);
+    expect(answer).toMatch(/state_store/);
+  });
+
+  it('answers the same whether the component is named or hashed', async () => {
+    const byName = await server.call('get_component_history', { componentId: 'CartBadge' });
+    const byId = await server.call('get_component_history', { componentId: '#cmp_badge' });
+
+    // Both lookups go through `getComponent`, so both carry the edges. The
+    // assertion is that they still do — an answer that depends on which of two
+    // equivalent arguments the caller happened to type is a difference nobody
+    // can see the reason for.
+    expect(byId).toBe(byName);
   });
 
   it('reaches the knowledge graph, and the graph says so out loud', async () => {

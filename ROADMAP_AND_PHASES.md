@@ -60,7 +60,8 @@ Nothing below is ticked on the strength of that branch.
   - [ ] Nodes: `git_commits` (needs Phase 3)
   - [x] Edges: `renders`, `calls`, `maps_to`
   - [x] Edges: `subscribes_to` — component → **store**, not component → key. `subscribers` is observed per store (a component is on the list because its own fiber carried the context dependency); crossing it with the store's keys would give a component that reads `state.cart` an edge to `state.auth`, indistinguishable in the graph from one somebody saw. The hop from store to key is left as a hop, because that is what it is.
-  - [ ] Edges: `changed_in` (needs Phase 3), `caused_by` (needs 1.3)
+  - [~] Edges: `caused_by` — **written, and deliberately not ticked.** `ingestCausal` and the `caused_by:<basis>:<confidence>` edge type are on `main` and the ARKG suites are green, but the work landed without its author's report: the session was held before it delivered the account of which causal links it found a *stable* node projection for, and the red-check pass on its tests was never confirmed. An in-recording ref like `net:3.1` means nothing in a graph that accumulates across recordings, so an invented node is exactly what would hide here. **Audit before ticking.**
+  - [ ] Edges: `changed_in` (needs Phase 3)
   - [x] Properties on every node/edge: `timing_p50`, `timing_p95`, `frequency`, `failure_rate`, `last_observed_at`
   - [ ] `git_sha` — columns exist and are always NULL; nothing writes them until Phase 3. The `state_keys` and `arkg_state_stores` tables deliberately have no `timing_p50`/`timing_p95` columns for the same reason: nothing times a state key, and a column that is always NULL is exactly what this line is complaining about.
 - [x] **Observation Ingestion Pipeline:**
@@ -72,7 +73,7 @@ Nothing below is ticked on the strength of that branch.
   - `arkg.getComponent(id)` → full node with all edges
   - `arkg.getComponentHistory(id, since)` → all observations since a date
   - `arkg.getBlastRadius(sourceFile, lineRange)` → all components with runtime dependency on that range
-- [~] **`arkg.getAnomalies(since)`** — ships as fixed thresholds (failure rate, p95/p50 spread), *not* the >2σ-from-baseline test this document specifies. Honest about what it measures; revisit once there is enough history for a real baseline.
+- [~] **`arkg.getAnomalies(since)`** — the >2σ-from-baseline test is **written and not ticked**, on the same terms as `caused_by` above. A σ over each entity's own timing window is on `main` and the suites are green; what is missing is the author's account of what it concluded could *not* be done honestly — failure rate has no per-entity distribution, only a rolling scalar, and a threshold presented as a baseline is the exact failure this line was raised against. **Audit before ticking.**
 - [x] **MCP Tools for ARKG:** `get_app_architecture`, `get_component_history`, `get_anomalies`
 
 ---
@@ -112,8 +113,8 @@ Nothing below is ticked on the strength of that branch.
 - [x] **RFC 6902 state deltas and `get_state_patch`,** moved here from Work Stream 1.5. The differ is pure and tested (`src/core/state/`); the budget question the deferral named is answered by **collapsing, never trimming** — an over-budget patch is re-cut at a shallower path so it stays applicable exactly, because a patch with operations removed no longer reconstructs the state and says nothing about it. The tool distinguishes "capture was off", "no store was recognised" and "no store moved", because those are three answers and only the last is about the application.
 
 ### Work Stream 1.3: Causal Threading in the Flow Recorder
-- [ ] **Causal DAG Construction:** `causedBy` does not exist in `src/shared/types.ts`. Not started.
-- [ ] **Causal Query MCP Tool:** `get_causal_chain`, `get_effects_of`
+- [x] **Causal DAG Construction** — `src/core/causal/index.ts`, pure and tested. **Derived from the recording, not stored**, and deliberately: every fact it uses is already in the flow, so a stored copy would be a second thing to keep in sync and would not exist on the recordings already on people's disks. Derived, every flow ever made gets the analysis and a rule improved later reaches all of them. That is why there is still no `causedBy` field in `src/shared/types.ts` and why its absence is not the gap it looks like — Work Stream 2.1's "all events carry `causedBy`" is a decision to *stamp* the derivation at capture time, which is a different item and stays open.
+- [x] **Causal Query MCP Tools:** `get_causal_chain`, `get_effects_of` — the same graph walked in both directions, each link carrying the evidence it rests on. Four bases, **named rather than scored**: `echoed` (a value the response carried appears in what the store was written with), `named` (the log line contains the request's path), `attributed` (containment only — the recorder filed both under one step, and a poll on a timer lands there too), `followed` (ordering after a failed call, and nothing else). A number implies a precision this evidence does not have and cannot be argued with; a sentence naming what was seen can.
 
 ### Work Stream 1.4: The "Why Did This Render?" Engine
 > Reverted in full. The `v3.2.0` attempt walked the entire fiber tree recursively
@@ -148,7 +149,7 @@ Nothing below is ticked on the strength of that branch.
 - [~] **Unified Event Chronicle:**
   - [x] Timestamped user events (click, input, navigate), network with request/response payloads, console output and uncaught exceptions — all attributed to the step that caused them.
   - [ ] DOM MutationObserver deltas and periodic layout snapshots. *The reverted attempt pushed every mutation on the whole document, unbounded and unthrottled, into an array with no cap — this needs a budget before it needs an implementation.*
-  - [ ] All events carry `causedBy` references (blocked on Work Stream 1.3).
+  - [ ] All events carry `causedBy` references. **Unblocked** — 1.3 built the graph — but not built, and the item is now a narrower one than it was: the chain is *derived* at read time, so what is left is the decision to stamp it onto the events at capture. That is worth doing only if something needs it before the flow reaches a reader, and nothing does yet.
 - [~] **Export to Resilient E2E Tests (Interaction-to-Test Compiler):**
   - [x] 1-click export of a recorded flow to Playwright and Cypress from the flow review screen.
   - [x] Resilient selector hierarchy: aria-label → role+name → text → CSS selector (flagged as fragile).

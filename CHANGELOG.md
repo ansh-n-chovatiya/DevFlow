@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+**DevFlow can say what led to a failure, and what each link in that chain is
+actually worth.** `get_causal_chain` walks backwards from a console error, a
+request or a state change to the interaction it came from; `get_effects_of`
+walks the same graph the other way. The roadmap's acceptance case — a click that
+triggers a fetch that logs an error — is one chain, readable from either end.
+
+**Every link states its evidence, because a guessed edge presented as a known
+one is worse than no edge.** There are four bases and they are named, not
+scored: `echoed` means a value the response carried turned up in what the store
+was written with; `named` means the log line contains the request's own path;
+`attributed` means only that the recorder filed both under the same step —
+containment, and a background poll on a timer lands in exactly the same place;
+`followed` means only that something came after a call that failed. A number
+like `0.8` implies a precision this evidence does not have and cannot be argued
+with. "The log line contains the request URL" can.
+
+**The graph is derived from the recording each time it is asked for, and never
+stored.** Every fact it uses is already in the flow, so a stored copy would be a
+second thing to keep in sync — and it would not exist on the recordings already
+on people's disks. Derived, every flow ever made gets the analysis, and a rule
+improved in a later release reaches all of them rather than only the ones
+recorded afterwards.
+
+**Event refs count from one.** `net:3.1` is the first request of step 3, not the
+second. Every other number either a person or a model sees in this project
+counts from one — the step numbers, the range a tool takes, the line a component
+was written on — and `net:3.0` beside "step 3" is the same one-character
+misreading the `Pos0`/`Pos1` types exist to make impossible. A ref is a string
+and has no type to catch it, so it has a test instead.
+
+**The knowledge graph gained `caused_by` edges and a real anomaly baseline** —
+both written, both green, and both recorded in the roadmap as *unverified*.
+They landed without their author's account of the two judgement calls that
+decide whether they are honest: which causal links have a node identity stable
+across recordings, and what part of the >2σ specification a rolling failure-rate
+scalar genuinely cannot support. Working code is not the same as audited code,
+and the roadmap says which this is.
+
+**A component's edges are finally printed.** The graph has always returned them
+and no tool ever showed one, so the endpoints a component calls and the stores
+it was observed reading were reachable only by opening the database by hand —
+which, from outside, is the same thing as never having written them.
+
 **DevFlow records what the app's own state did, by reading it rather than by
 becoming part of it.** Every step now carries the difference between what the
 page's stores held when the interaction was dispatched and what they held once

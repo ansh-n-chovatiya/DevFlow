@@ -94,10 +94,108 @@
  * either — are one node, and their keys pool. That is the right way round for
  * the same reason the component join is: an over-merged node answers
  * approximately, while a per-recording node answers nothing, twice.
+ *
+ * ## What a baseline can be here, and what it cannot
+ *
+ * `getAnomalies` used to compare an entity to a constant — 10% failures, a p95
+ * three times the p50 — and a constant is not a baseline. It says the same
+ * thing about an endpoint that has always taken 8ms and one that has always
+ * taken 800ms. The test the roadmap asked for is whether an entity is outside
+ * its *own* past, and the one distribution this graph holds is `timing_samples`:
+ * the recency-biased window `updateTimingStats` keeps per node. So the σ test is
+ * over that window and over nothing else — the mean and the population σ of the
+ * window, against the window's own p95. Population σ rather than sample σ
+ * because the window is not a sample of something wider: the question is
+ * whether one number of this window sits outside this window's spread, and at
+ * thirty samples the two differ by under two per cent regardless.
+ *
+ * Against a well-behaved distribution a p95 lands near μ + 1.64σ, so 2σ is the
+ * point where the tail is heavier than the body predicts. That is the same
+ * "occasional severe spike" the p95/p50 rule was reaching for, said against the
+ * entity's history instead of against a number chosen here. It is deliberately
+ * deaf to a lone outlier: a p95 ignores the top five per cent of its window, so
+ * this fires when the slow tail is *broad*, not when one call once took a
+ * second.
+ *
+ * A σ of zero is an entity that did the identical thing every time it was
+ * observed. Every deviation from a distribution with no width is infinite, and
+ * reporting them would make the steadiest endpoint in the graph the loudest row
+ * in the answer. Nothing has moved, so nothing is reported.
+ *
+ * **Failure rate stays a threshold, and is labelled one.** A σ test needs a
+ * distribution, and what the graph holds per entity is a single rolling rate —
+ * one scalar, not a sample of past rates. There is no honest σ to take of it,
+ * so the 10% and 5% thresholds stay, every anomaly carries `basis: 'threshold'`
+ * or `basis: 'baseline'` so a reader can tell which it is holding, and the
+ * failure-rate `detail` says in words that it is a threshold. Turning it into a
+ * baseline means storing a per-flow failure history per entity — a new table
+ * and a new retention question — and it is left undone rather than done badly.
+ *
+ * "Not enough observations" is not "nothing is wrong", and one empty array
+ * cannot tell a caller which of the two it was handed. `getAnomalyReport` is
+ * the shape that can: `examined` is how many entities had the observations to
+ * be judged and `tooNew` is how many were in the window and short of them.
+ * `getAnomalies` stays the array it always was, so nothing that reads it has to
+ * change to keep working.
+ *
+ * ## Causality, and which links survive the recording they were found in
+ *
+ * `buildCausalGraph` links *events*: in this recording `net:3.1` caused
+ * `log:3.2`. Those refs mean nothing in a graph that accumulates across
+ * recordings — the same fault as `StateStoreRef.id` — so an edge between two of
+ * them is a row that answers no question the second time anybody reads it. A
+ * causal link is therefore written only when both of its ends project onto a
+ * node this file already keys stably: a network event onto its `api_endpoint`,
+ * a state event onto its `state_store`, a step onto the component it was
+ * attributed to.
+ *
+ * A console entry projects onto nothing. Its identity is a message string, and
+ * there is no node type here that keys one; the nearest thing available would
+ * be a `console_message` node invented to give the link somewhere to land,
+ * which is the cross product this file refuses everywhere else. So every link
+ * with a `log:` end is dropped, and "a click caused a fetch that logged an
+ * error" reaches this graph as the click → fetch half alone. The whole chain
+ * lives in the recording, which is the one place its refs still mean something.
+ * Two of `core/causal`'s four bases — `named` and `followed` — only ever end on
+ * a console entry, so as that module stands today neither of them reaches this
+ * graph at all. That is a property of what is observable, not a rule here: a
+ * `named` link between two events that both project would be written the same
+ * as any other.
+ *
+ * The step → network link is dropped as well, and for the opposite reason: it
+ * projects onto the pair `calls` already joins, out of the same fact. An
+ * `attributed` link *is* the recorder having filed the call under the open step,
+ * which is the whole of what `calls` is built from, so a `caused_by` row beside
+ * it would be one observation counted twice under two names. What is left is
+ * the two pairs nothing else in this graph asserts: a component to the store
+ * its interaction moved, and an endpoint to the store its response was echoed
+ * into.
+ *
+ * `basis` and `confidence` ride inside the edge's `type` —
+ * `caused_by:named:high` — rather than in two columns beside it, because they
+ * are identity and not property. `upsertEdge` matches on (type, from, to), so a
+ * column would let a `followed`/`low` observation of a pair overwrite an
+ * `attributed`/`high` one and leave a guess wearing the evidence of an
+ * observation, which is precisely what Work Stream 1.3 was told not to ship. In
+ * the type they are part of the key instead: one row per pair *per kind of
+ * evidence*, each accumulating its own frequency, and no reader can hold the
+ * edge without also holding what it was built on.
  */
 
 import Database from 'better-sqlite3';
 import crypto from 'node:crypto';
+
+/*
+ * The causal builder is reached through the namespace and never by name.
+ *
+ * `core.js` is a build artefact, and an installed copy of this package can
+ * easily be older than the module the symbol comes from. A missing *named*
+ * import is a link error, which takes the whole server down at startup over a
+ * feature that is an addition to one query; a missing *property* costs a flow
+ * its causal edges, which is already what happens for a recording that has no
+ * causal links in it.
+ */
+import * as core from './core.js';
 
 /** The database, opened by `openArkg`. */
 let db = null;
@@ -1084,6 +1182,11 @@ export function ingestFlow(flowJson) {
     // steps that changed something, and a second Send of one recording is not a
     // second time the application changed anything.
     ingestState(flowJson, steps, resolvedNode, flowId, now);
+
+    // Inside it for the same reason. A causal edge's frequency is how many
+    // recordings showed one thing following from another; a re-send of one
+    // recording is not a second showing.
+    ingestCausal(flowJson, steps, resolvedNode, flowId, now);
   })();
 }
 
@@ -1206,6 +1309,198 @@ function ingestState(flowJson, steps, resolveComponent, flowId, now) {
   }
 }
 
+// ── Causality ─────────────────────────────────────────────────────────────────
+
+/**
+ * Basis and confidence are written into the edge type, so neither may contain
+ * the separator that would make the type unparseable — and a value this file
+ * has never heard of is kept rather than rejected, because a later basis in
+ * `core/causal` is still evidence and a whitelist frozen here would silently
+ * drop the links carrying it.
+ */
+const CAUSAL_TOKEN = /^[a-z]+$/;
+
+const CAUSAL_PREFIX = 'caused_by:';
+
+function causalType(basis, confidence) {
+  if (typeof basis !== 'string' || typeof confidence !== 'string') return null;
+  if (!CAUSAL_TOKEN.test(basis) || !CAUSAL_TOKEN.test(confidence)) return null;
+  return `${CAUSAL_PREFIX}${basis}:${confidence}`;
+}
+
+/**
+ * Where each ref's numbers point in the recording, worked out from the graph.
+ *
+ * None of the numbering in a ref is this file's to assume. A step is numbered
+ * `stepNumber ?? i + 1` by `core/causal`, so a recording whose steps carry
+ * their own numbers is numbered by the recording and not by the array; and the
+ * base the calls within a step are counted from is that module's business,
+ * which it has already changed once. Copying either rule here would be a second
+ * copy of somebody else's arithmetic, wrong the first time they touch it and
+ * silent when it goes wrong — the failure would be no causal edges, for ever,
+ * with every test still green.
+ *
+ * What is structural, and what this reads instead: the module emits exactly one
+ * event per step and exactly one per network call, in the recording's order for
+ * steps. So the step events in order *are* the steps in order, and a step's
+ * network indices, sorted, are a permutation of its calls' positions — the kth
+ * smallest index is `networkCalls[k]` whatever the module started counting
+ * from.
+ */
+function causalPositions(events) {
+  const steps = new Map();
+  const indices = new Map();
+
+  for (const event of events ?? []) {
+    if (event?.kind === 'step') {
+      if (!steps.has(event.step)) steps.set(event.step, steps.size);
+      continue;
+    }
+    if (event?.kind !== 'network') continue;
+    const parsed = core.parseEventRef(event.ref);
+    if (!parsed || typeof parsed.index !== 'number') continue;
+    const seen = indices.get(event.step) ?? new Set();
+    seen.add(parsed.index);
+    indices.set(event.step, seen);
+  }
+
+  const network = new Map();
+  for (const [step, seen] of indices) {
+    [...seen].sort((a, b) => a - b).forEach((value, rank) => network.set(`${step}.${value}`, rank));
+  }
+  return { steps, network };
+}
+
+/**
+ * The stable node one causal event ref stands for, or null when it has none.
+ *
+ * Every part of the ref is looked up in the recording rather than trusted: a
+ * ref naming a step, a call or a delta the flow does not contain yields null
+ * and its link is dropped, which is what keeps a change in the grammar from
+ * writing edges out of misread indices instead of writing none.
+ *
+ * The node must already exist. A causal edge is read back through
+ * `getCausalEdges` and `getComponent`, both of which resolve the far end, so an
+ * edge to a row that was never written is a row nobody can follow — and the
+ * component, endpoint and store writers have all run by the time this is
+ * called, so a miss here means the flow genuinely never described that node.
+ */
+function causalNode(ref, flowJson, steps, positions, resolveComponent) {
+  const parsed = core.parseEventRef(ref);
+  if (!parsed) return null;
+  const step = steps[positions.steps.get(parsed.step) ?? -1];
+  if (!step) return null;
+
+  if (parsed.kind === 'step') {
+    const owner = step.element?.react?.owner;
+    if (typeof owner !== 'string') return null;
+    const id = resolveComponent(owner);
+    return id && componentRow(id) ? { type: 'component', id } : null;
+  }
+
+  if (parsed.kind === 'network') {
+    const call = step.networkCalls?.[positions.network.get(`${parsed.step}.${parsed.index}`) ?? -1];
+    if (!call || typeof call.url !== 'string') return null;
+    const id = endpointId((call.method ?? 'GET').toUpperCase(), call.url);
+    return sql('SELECT id FROM arkg_api_endpoints WHERE id = ?').get(id) ? { type: 'api_endpoint', id } : null;
+  }
+
+  if (parsed.kind === 'state') {
+    /*
+     * A state ref's index is the store's id *and* the delta's position, joined
+     * by a character neither this file nor the store id gets a say in. The
+     * position is there so that two deltas for one store cannot collide, and it
+     * is of no use here — every delta of one store projects onto the one node —
+     * so the store is taken as the longest id the index begins with and the
+     * rest is left alone. Longest, because `s1` is a prefix of `s10`, and a
+     * shorter match would file one store's delta under another's node.
+     */
+    const index = String(parsed.index ?? '');
+    const stores = Array.isArray(flowJson.state?.stores) ? flowJson.state.stores : [];
+    let store = null;
+    for (const entry of stores) {
+      if (!entry || typeof entry.id !== 'string' || !index.startsWith(entry.id)) continue;
+      if (index.length > entry.id.length && /[\w-]/.test(index[entry.id.length])) continue;
+      if (!store || entry.id.length > store.id.length) store = entry;
+    }
+    if (!store) return null;
+
+    const id = stateStoreId(
+      typeof store.kind === 'string' ? store.kind : '',
+      typeof store.label === 'string' ? store.label : null,
+    );
+    return sql('SELECT id FROM arkg_state_stores WHERE id = ?').get(id) ? { type: 'state_store', id } : null;
+  }
+
+  // `console` lands here, and so does any kind the module gains later. Both are
+  // "no stable node", which is the one answer that cannot invent a row.
+  return null;
+}
+
+/**
+ * Write the `caused_by` edges of one flow.
+ *
+ * Read the type as a sentence, the way every other edge in this table reads:
+ * the `from` is the effect and the `to` is the cause, so `GET /api/cart
+ * caused_by CartButton`. `CausalLink` runs the other way — its `from` is the
+ * cause, as the DAG in VISION.md draws it — and it is turned round in the one
+ * line at the bottom of this function.
+ *
+ * Both symbols are required, not just the builder. `parseEventRef` is the
+ * module's own reader for its own syntax, and its header says why: a ref parsed
+ * in two places is a syntax that has already forked. So a bundle that ships one
+ * without the other writes no causal edges, which is the same thing a bundle
+ * that predates them both does, and neither costs the recording anything else.
+ *
+ * A builder that throws costs this flow its causal edges and nothing else. It
+ * runs inside the ingestion transaction, so letting the throw escape would roll
+ * back the components, the endpoints and the state of a recording that had
+ * those to give, over a link it could not work out.
+ */
+function ingestCausal(flowJson, steps, resolveComponent, flowId, now) {
+  if (typeof core.buildCausalGraph !== 'function' || typeof core.parseEventRef !== 'function') return;
+
+  let graph;
+  try {
+    graph = core.buildCausalGraph(flowJson);
+  } catch {
+    return;
+  }
+  const links = graph?.links;
+  if (!Array.isArray(links) || !links.length) return;
+
+  const positions = causalPositions(graph.events);
+
+  for (const link of links) {
+    const type = causalType(link?.basis, link?.confidence);
+    if (!type) continue;
+
+    const cause = causalNode(link.from, flowJson, steps, positions, resolveComponent);
+    const effect = causalNode(link.to, flowJson, steps, positions, resolveComponent);
+    if (!cause || !effect) continue;
+    // Two events of one recording that project onto one node — two calls to the
+    // same endpoint pattern, two deltas on one store. Whatever caused what, it
+    // was not this node causing itself.
+    if (cause.type === effect.type && cause.id === effect.id) continue;
+    /*
+     * The one pair this graph already draws, from the same fact.
+     *
+     * A component and an endpoint can only be linked by an `attributed` step →
+     * network link, and `attributed` is the recorder having filed the call
+     * under the open step — which is exactly what the `calls` edge above is
+     * built from, owner and all. Writing it again under a second name is one
+     * observation counted twice, and a reader adding the two frequencies gets a
+     * number the application never did.
+     */
+    if (
+      (cause.type === 'component' && effect.type === 'api_endpoint') ||
+      (cause.type === 'api_endpoint' && effect.type === 'component')
+    ) continue;
+
+    upsertEdge(type, effect.type, effect.id, cause.type, cause.id, flowId, now);
+  }
+}
+
 /**
  * Ingest a single component pick from the DevTools panel locator.
  *
@@ -1322,11 +1617,20 @@ function upsertEdge(type, fromType, fromId, toType, toId, flowId, now, timingMs 
 // ── Queries ───────────────────────────────────────────────────────────────────
 
 /**
- * Full component node with all edges that touch it.
+ * Full component node with the structural edges that touch it.
  *
  * The id is followed through the aliases first, so an id read out of a saved
  * flow, or out of an answer given before a merge, still lands on the row that
  * holds the observations it was asking about.
+ *
+ * `caused_by` is not in this list, and `getCausalEdges` is where it lives. Every
+ * other type here is one row per relation — a component maps to a file, calls
+ * an endpoint, subscribes to a store — while a causal edge is one row per
+ * *kind of evidence*, so a component with three sorts of evidence for one store
+ * would put three rows into a list whose readers are counting relations. The
+ * same argument the other way round is why they are keyed that way: see the
+ * header. A reader who wants them asks for them and gets the basis and the
+ * confidence named, rather than a type string to take apart.
  */
 export function getComponent(id) {
   if (!db) return null;
@@ -1335,8 +1639,9 @@ export function getComponent(id) {
   if (!comp) return null;
   const edges = sql(`
     SELECT * FROM arkg_edges
-    WHERE (from_node_type = 'component' AND from_node_id = ?)
-       OR (to_node_type = 'component' AND to_node_id = ?)
+    WHERE ((from_node_type = 'component' AND from_node_id = ?)
+       OR (to_node_type = 'component' AND to_node_id = ?))
+      AND type NOT LIKE '${CAUSAL_PREFIX}%'
   `).all(target, target);
   return { ...comp, edges };
 }
@@ -1398,6 +1703,41 @@ export function getStateKeys(sinceMs = 0) {
 }
 
 /**
+ * The causal edges touching one node, in both directions.
+ *
+ * `cause` and `effect` are named rather than left as `from` and `to` because
+ * the row stores the effect first — the type reads as a sentence — and a
+ * reader who guesses that wrong has the answer exactly backwards. `basis` and
+ * `confidence` come back off the type they are keyed by, so a `named` link and
+ * a `followed` one between the same pair are two rows here and never one.
+ *
+ * A component id is followed through the aliases, as everywhere else; the other
+ * node types have no aliases to follow.
+ */
+export function getCausalEdges(nodeType, nodeId) {
+  if (!db) return [];
+  const target = nodeType === 'component' ? canonicalId(nodeId) : nodeId;
+
+  return sql(`
+    SELECT * FROM arkg_edges
+    WHERE type LIKE '${CAUSAL_PREFIX}%'
+      AND ((from_node_type = ? AND from_node_id = ?) OR (to_node_type = ? AND to_node_id = ?))
+    ORDER BY frequency DESC, last_observed_at DESC
+  `).all(nodeType, target, nodeType, target).map((row) => {
+    const [, basis, confidence] = row.type.split(':');
+    return {
+      effect: { type: row.from_node_type, id: row.from_node_id },
+      cause: { type: row.to_node_type, id: row.to_node_id },
+      basis,
+      confidence,
+      frequency: row.frequency,
+      firstObservedAt: row.first_observed_at,
+      lastObservedAt: row.last_observed_at,
+    };
+  });
+}
+
+/**
  * All named flows in which this component appeared (via an edge), since sinceMs
  * (epoch milliseconds, 0 = all history).
  */
@@ -1419,62 +1759,154 @@ export function getComponentHistory(id, sinceMs = 0) {
     .filter(Boolean);
 }
 
+/** Nothing is judged until it has been observed this many times. */
+const MIN_OBSERVATIONS = 30;
+
+/** How far outside its own window a value has to sit before it is reported. */
+const SIGMA_THRESHOLD = 2;
+
 /**
- * Components and API endpoints deviating from their historical baseline.
+ * The fixed failure rates, and the reason they are still fixed.
  *
- * Requires >=30 observations per entity. sinceMs defaults to the last 24h.
+ * These are thresholds and the answer says so. The graph keeps one rolling
+ * failure rate per entity — `updateFailureRate` folds each observation into the
+ * previous number — which is a scalar, and a scalar has no spread to be two
+ * standard deviations outside of. Presenting a constant as a baseline would be
+ * the more dishonest of the two available mistakes.
+ */
+const FAILURE_THRESHOLD = { component: 0.1, api_endpoint: 0.05 };
+
+/**
+ * Mean, σ and p95 of one entity's own timing window, or null when it has none.
+ *
+ * The window is the entity's recent history — see `updateTimingStats` — and it
+ * is the only distribution in this database. p95 is recomputed from it rather
+ * than read off `timing_p95_ms` so that the sentence a reader is handed is
+ * internally consistent: one window, one mean, one σ, one p95 taken from the
+ * same numbers.
+ */
+function timingBaseline(samplesJson) {
+  let samples = [];
+  if (samplesJson) {
+    try {
+      const parsed = JSON.parse(samplesJson);
+      if (Array.isArray(parsed)) samples = parsed.filter((n) => typeof n === 'number' && Number.isFinite(n));
+    } catch { /* corrupt — no baseline, rather than a baseline of nothing */ }
+  }
+  if (samples.length < MIN_OBSERVATIONS) return null;
+
+  const mean = samples.reduce((total, n) => total + n, 0) / samples.length;
+  const variance = samples.reduce((total, n) => total + (n - mean) ** 2, 0) / samples.length;
+  const sorted = [...samples].sort((a, b) => a - b);
+  return { n: samples.length, mean, sigma: Math.sqrt(variance), p95: computePercentile(sorted, 0.95) };
+}
+
+/**
+ * The timing anomaly for one entity, or null.
+ *
+ * A σ of zero is the whole reason this returns null rather than dividing: the
+ * entity did the identical thing on every observation, so there is no width to
+ * be outside of and nothing has moved. Dividing would report every steady node
+ * in the graph at infinite deviation, which is the loudest possible way to say
+ * nothing happened.
+ */
+function timingAnomaly(entity, samplesJson) {
+  const base = timingBaseline(samplesJson);
+  if (!base || base.sigma === 0 || base.p95 === null) return null;
+
+  const deviation = (base.p95 - base.mean) / base.sigma;
+  if (deviation <= SIGMA_THRESHOLD) return null;
+
+  return {
+    ...entity,
+    issue: 'timing_spike',
+    basis: 'baseline',
+    value: base.p95,
+    detail:
+      `p95=${base.p95.toFixed(0)}ms is ${deviation.toFixed(1)}σ above its own baseline ` +
+      `(mean=${base.mean.toFixed(0)}ms, σ=${base.sigma.toFixed(0)}ms over ${base.n} recent observations)`,
+  };
+}
+
+function failureAnomaly(entity, rate, frequency, unit) {
+  const limit = FAILURE_THRESHOLD[entity.type];
+  if (!(rate > limit)) return null;
+  return {
+    ...entity,
+    issue: 'high_failure_rate',
+    basis: 'threshold',
+    value: rate,
+    detail:
+      `${(rate * 100).toFixed(1)}% failure rate over ${frequency} ${unit}, above a fixed ` +
+      `${(limit * 100).toFixed(0)}% threshold — a threshold and not a baseline, because the graph ` +
+      'keeps one rolling rate per entity and no distribution of rates to take a σ of',
+  };
+}
+
+/**
+ * What the graph found, and what it did not yet have enough to look at.
+ *
+ * The two are different answers and an array cannot hold both. `examined` is
+ * the entities that had `MIN_OBSERVATIONS` behind them and were judged;
+ * `tooNew` is the entities that were observed inside the window and were not
+ * judged at all. A caller holding `anomalies: []` reads `tooNew` to find out
+ * whether it was told that nothing is wrong or that nothing is known yet.
+ *
+ * `examined` counts entities that were judged, not entities that had a
+ * *baseline*: an entity can clear the observation bar on `frequency` and still
+ * carry no timing window — nothing timed it — in which case the failure
+ * threshold applied to it and the σ test had nothing to run on.
+ */
+export function getAnomalyReport(sinceMs = Date.now() - 24 * 60 * 60 * 1000) {
+  const empty = { minObservations: MIN_OBSERVATIONS, examined: 0, tooNew: 0, anomalies: [] };
+  if (!db) return empty;
+
+  const anomalies = [];
+  let examined = 0;
+  let tooNew = 0;
+
+  const partition = (table) => {
+    const rows = sql(`SELECT * FROM ${table} WHERE last_observed_at >= ?`).all(sinceMs);
+    const ready = rows.filter((row) => row.frequency >= MIN_OBSERVATIONS);
+    examined += ready.length;
+    tooNew += rows.length - ready.length;
+    return ready;
+  };
+
+  for (const comp of partition('arkg_components')) {
+    const entity = {
+      type: 'component',
+      id: comp.id,
+      name: comp.display_name,
+      source: comp.source_file,
+    };
+    const failure = failureAnomaly(entity, comp.failure_rate, comp.frequency, 'observations');
+    if (failure) anomalies.push(failure);
+    const timing = timingAnomaly(entity, comp.timing_samples);
+    if (timing) anomalies.push(timing);
+  }
+
+  for (const ep of partition('arkg_api_endpoints')) {
+    const entity = { type: 'api_endpoint', id: ep.id, name: `${ep.method} ${ep.url_pattern}` };
+    const failure = failureAnomaly(entity, ep.failure_rate, ep.frequency, 'calls');
+    if (failure) anomalies.push(failure);
+    const timing = timingAnomaly(entity, ep.timing_samples);
+    if (timing) anomalies.push(timing);
+  }
+
+  return { minObservations: MIN_OBSERVATIONS, examined, tooNew, anomalies };
+}
+
+/**
+ * Components and API endpoints outside their own recent history.
+ *
+ * The list `getAnomalyReport` found, and the shape every existing caller reads.
+ * Requires MIN_OBSERVATIONS observations of an entity before it says anything
+ * about it; `getAnomalyReport` is where "found nothing" and "had nothing to
+ * look at" are told apart. sinceMs defaults to the last 24h.
  */
 export function getAnomalies(sinceMs = Date.now() - 24 * 60 * 60 * 1000) {
-  if (!db) return [];
-  const anomalies = [];
-
-  const components = sql(`
-    SELECT * FROM arkg_components WHERE last_observed_at >= ? AND frequency >= 30
-  `).all(sinceMs);
-
-  for (const comp of components) {
-    if (comp.failure_rate > 0.1) {
-      anomalies.push({
-        type: 'component',
-        id: comp.id,
-        name: comp.display_name,
-        source: comp.source_file,
-        issue: 'high_failure_rate',
-        value: comp.failure_rate,
-        detail: `${(comp.failure_rate * 100).toFixed(1)}% failure rate over ${comp.frequency} observations`,
-      });
-    }
-  }
-
-  const endpoints = sql(`
-    SELECT * FROM arkg_api_endpoints WHERE last_observed_at >= ? AND frequency >= 30
-  `).all(sinceMs);
-
-  for (const ep of endpoints) {
-    if (ep.failure_rate > 0.05) {
-      anomalies.push({
-        type: 'api_endpoint',
-        id: ep.id,
-        name: `${ep.method} ${ep.url_pattern}`,
-        issue: 'high_failure_rate',
-        value: ep.failure_rate,
-        detail: `${(ep.failure_rate * 100).toFixed(1)}% failure rate over ${ep.frequency} calls`,
-      });
-    }
-    // High variance: p95 > 3x p50 indicates occasional severe spikes.
-    if (ep.timing_p50_ms && ep.timing_p95_ms && ep.timing_p95_ms > ep.timing_p50_ms * 3) {
-      anomalies.push({
-        type: 'api_endpoint',
-        id: ep.id,
-        name: `${ep.method} ${ep.url_pattern}`,
-        issue: 'timing_spike',
-        value: ep.timing_p95_ms,
-        detail: `p95=${ep.timing_p95_ms.toFixed(0)}ms vs p50=${ep.timing_p50_ms.toFixed(0)}ms (${(ep.timing_p95_ms / ep.timing_p50_ms).toFixed(1)}x spread)`,
-      });
-    }
-  }
-
-  return anomalies;
+  return getAnomalyReport(sinceMs).anomalies;
 }
 
 /**
