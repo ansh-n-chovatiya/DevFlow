@@ -57,6 +57,7 @@ import { mergeTrailing, stepKey, type Pending } from '../core/flow/index.js';
 import { mergeComponents } from '../core/react/table.js';
 import { mergeScripts } from '../features/react/inventory.js';
 import { clearResolverCaches, resolvePending } from '../features/react/resolver.js';
+import { ingestComponentPick } from '../features/arkg/ingest.js';
 
 /** Serialises captures so concurrent clicks never clobber each other's write. */
 let captureQueue: Promise<void> = Promise.resolve();
@@ -1318,13 +1319,28 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
        * a page it cannot reach and a user who changed their mind are the same
        * outcome — nothing was picked — and the difference is a sentence.
        */
-      void relayToTab<PickResult>(message.tabId, { type: 'START_PICK' }).then((answer) =>
-        sendResponse(
-          answer.ok
-            ? answer.value
-            : { kind: 'error', error: 'That page cannot be picked on. Reload it and try again.' },
-        ),
-      );
+      void relayToTab<PickResult>(message.tabId, { type: 'START_PICK' }).then((answer) => {
+        /*
+         * Answer the panel first, then tell the graph.
+         *
+         * The order is the whole of it: `sendResponse` is what un-freezes the
+         * surface the user is looking at, and `ingestComponentPick` reaches a
+         * socket. Even awaited-and-discarded, a send that ran first would put a
+         * loopback timeout between somebody's click and the card it produces.
+         *
+         * The picked component is the *innermost* entry of the ancestor chain —
+         * the same one `ui/locator/main.ts` locates the moment a pick lands.
+         * `ancestry[0]` is the root of the app, and recording it here would
+         * observe `App` every time anybody picked anything.
+         */
+        if (answer.ok) sendResponse(answer.value);
+        else sendResponse({ kind: 'error', error: 'That page cannot be picked on. Reload it and try again.' });
+
+        if (answer.ok && answer.value.kind === 'picked') {
+          const picked = answer.value.ancestry[answer.value.ancestry.length - 1];
+          if (picked) void ingestComponentPick(picked);
+        }
+      });
       return true;
     }
 

@@ -171,19 +171,39 @@ function bytesFor(parts: Parts, format: ExportFormat, options: ExportOptions): n
       return parts.base + react + network + logs + (options.images ? parts.screenshotsInline : 0);
     case 'json':
       return parts.base + react + network + logs;
+    case 'playwright':
+    case 'cypress':
+      /*
+       * A spec is the steps and the recorded responses, and nothing else.
+       *
+       * It has nowhere to put a screenshot and no use for a console log, and the
+       * component table does not travel — the one component name a script needs
+       * is already on the step, as a comment. So the figure moves with the
+       * Network calls switch and with nothing else, which is the truth.
+       */
+      return parts.base + network;
   }
+}
+
+/** The two formats that compile the flow instead of describing it. */
+function isScript(format: ExportFormat): boolean {
+  return format === 'playwright' || format === 'cypress';
 }
 
 const DESCRIPTION: Record<ExportFormat, string> = {
   zip: 'Markdown, JSON and screenshot files. Best for Claude — attach the folder.',
   markdown: 'One file, screenshots embedded. Readable anywhere.',
   json: 'Full selectors and timings. For replay and tooling.',
+  playwright: 'A runnable .spec.ts. Resilient selectors, recorded responses mocked.',
+  cypress: 'A runnable .cy.ts. Resilient selectors, recorded responses mocked.',
 };
 
 const FORMAT_ICON: Record<ExportFormat, IconName> = {
   zip: 'file-archive',
   markdown: 'file-text',
   json: 'braces',
+  playwright: 'file-code',
+  cypress: 'file-code',
 };
 
 /**
@@ -241,7 +261,9 @@ export function deriveExportView(input: ExportInput): ExportView {
   const { steps, format, options, busy, progress } = input;
   const parts = measure(steps, input.react);
 
-  const formats: FormatCard[] = (['zip', 'markdown', 'json'] as const).map((id) => ({
+  const formats: FormatCard[] = (
+    ['zip', 'markdown', 'json', 'playwright', 'cypress'] as const
+  ).map((id) => ({
     id,
     name: FORMAT_NAME[id],
     icon: FORMAT_ICON[id],
@@ -257,8 +279,11 @@ export function deriveExportView(input: ExportInput): ExportView {
       label: INCLUDE_LABEL.images,
       checked: options.images,
       bytes: format === 'markdown' ? parts.screenshotsInline : parts.screenshots,
-      ignored:
-        format === 'json' ? 'JSON records the step data; images ship with the ZIP.' : null,
+      ignored: isScript(format)
+        ? 'A test script has nowhere to put an image.'
+        : format === 'json'
+          ? 'JSON records the step data; images ship with the ZIP.'
+          : null,
     },
     {
       id: 'network',
@@ -272,7 +297,7 @@ export function deriveExportView(input: ExportInput): ExportView {
       label: INCLUDE_LABEL.logs,
       checked: options.logs,
       bytes: parts.logs,
-      ignored: null,
+      ignored: isScript(format) ? 'A test script replays the flow, it does not report it.' : null,
     },
     {
       id: 'react',
@@ -282,7 +307,11 @@ export function deriveExportView(input: ExportInput): ExportView {
       // Said here rather than by hiding the row: a switch that vanishes on some
       // flows is one nobody can find when they want it, and "this page was not
       // React" is a fact about the recording worth reading.
-      ignored: parts.react === 0 ? NO_REACT_NOTE : null,
+      ignored: isScript(format)
+        ? 'The script names the component in a comment; the source table stays behind.'
+        : parts.react === 0
+          ? NO_REACT_NOTE
+          : null,
     },
   ];
 

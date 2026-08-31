@@ -10,6 +10,8 @@
 import { exportToJSON } from '../../core/export/json.js';
 import { exportToMarkdown } from '../../core/export/markdown.js';
 import { createZip, dataUrlToBytes, type ZipEntry } from '../../core/export/zip.js';
+import { generateCypressTest } from '../../core/export/cypress.js';
+import { generatePlaywrightTest } from '../../core/export/playwright.js';
 import { flowHost, pad2, renumber } from '../../core/flow/index.js';
 import { err, ok, type Result } from '../../shared/result.js';
 import { flowError } from '../../shared/errors.js';
@@ -209,6 +211,19 @@ export async function exportFlow(input: ExportRequest): Promise<Result<string>> 
         limits,
       });
       downloadFile(filename, new Blob([markdown], { type: 'text/markdown' }));
+    } else if (format === 'playwright' || format === 'cypress') {
+      /*
+       * The compilers read the steps and nothing else.
+       *
+       * Not `options`: a spec has nowhere to put a screenshot and no use for a
+       * console log, and the recorded responses it does use are the ones the
+       * dialog prices under Network calls. `includedTable` is likewise unused —
+       * the component a step was attributed to reaches the script as a comment
+       * on the line, from the step's own `element.react`.
+       */
+      const script =
+        format === 'playwright' ? generatePlaywrightTest(steps, title) : generateCypressTest(steps, title);
+      downloadFile(filename, new Blob([script], { type: 'text/plain' }));
     } else {
       downloadFile(
         filename,

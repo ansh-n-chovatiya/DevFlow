@@ -75,6 +75,14 @@ const HOME = process.env.DEVFLOW_DIR
   ? path.resolve(process.env.DEVFLOW_DIR)
   : path.join(os.homedir(), '.devflow');
 const FLOWS_DIR = path.join(HOME, 'flows');
+/*
+ * The knowledge graph sits beside the flows rather than inside one, because
+ * what it holds is what every recording *together* says about an application —
+ * which components are hot, which endpoints fail, which files keep coming up.
+ * A per-flow file could not hold that, and a flow evicted by the retention
+ * sweep would take its share of the answer with it.
+ */
+const ARKG_DB = path.join(HOME, 'arkg.db');
 // The port is `mcp.port`, and it is settled below, once the settings layer that
 // decides it exists — see `HTTP_PORT`.
 
@@ -115,6 +123,44 @@ const MAX_BODY_BYTES = 512 * 1024 * 1024;
  * very file the value would be read from.
  */
 const MAX_CONFIG_BYTES = 64 * 1024;
+
+/**
+ * Cap on a POSTed component pick.
+ *
+ * `POST /arkg/ingest-component` carries a name, a path, a line and a flag. It
+ * gets its own ceiling for the same reason the other two have one — the body is
+ * read into memory on an unauthenticated loopback port, before anything has
+ * vouched for it — and a small one, because nothing legitimate sent there is
+ * large.
+ *
+ * Tier 3 — deliberately not configurable, exactly as `MAX_BODY_BYTES` and
+ * `MAX_CONFIG_BYTES` are not: a bound the POST can raise is not a bound.
+ */
+const MAX_PICK_BYTES = 64 * 1024;
+
+/**
+ * How long an observation stays in the knowledge graph.
+ *
+ * The graph is the one store here that grows without anyone asking it to: every
+ * flow and every pick adds rows, and nothing about a component nobody has
+ * touched since April is evidence about the app as it is now. Ninety days is
+ * generous on purpose — the anomaly baselines want months of history, not
+ * weeks — and it is the only thing keeping a year-old refactor from showing up
+ * as today's architecture.
+ *
+ * Not in the field table, and that is a gap rather than a decision. The key
+ * belongs beside `mcp.maxFlows`, which is machine-wide for exactly this reason;
+ * `docs/CONTRACTS.md` §3.6 enumerates the prefixes each settings concept owns
+ * and is frozen, so it cannot be added without amending the contract. Until
+ * then the number lives here with the environment as its only override — the
+ * state the retention caps themselves were in before Phase 5, and the reason
+ * this should not stay.
+ */
+const ARKG_RETENTION_ENV = Number(process.env.DEVFLOW_ARKG_RETENTION_DAYS);
+const ARKG_RETENTION_DAYS =
+  Number.isFinite(ARKG_RETENTION_ENV) && ARKG_RETENTION_ENV >= 1
+    ? Math.round(ARKG_RETENTION_ENV)
+    : 90;
 
 /**
  * How long a directory with no readable `meta.json` is left alone.
@@ -442,6 +488,54 @@ await fs.mkdir(FLOWS_DIR, { recursive: true });
 
 function log(message) {
   process.stderr.write(`DevFlow: ${message}\n`);
+}
+
+/**
+ * The knowledge graph, if this installation has one.
+ *
+ * Imported dynamically and opened inside a `try`, and both halves of that are
+ * load-bearing. `arkg.js` is not in the npm package's `files` list and its
+ * `better-sqlite3` is a compiled native addon, so there are two ordinary ways
+ * for this module to be unavailable on a machine where everything else works:
+ * the published tarball does not carry it, and a Node upgrade leaves the addon
+ * built against the wrong ABI. A static `import` turns either into a server
+ * that does not start at all — no flows, no tools, no `list_flows`, and a
+ * Claude session that reports the MCP server as failed.
+ *
+ * That trade is never worth taking. The graph is additive intelligence: it
+ * answers questions the recordings cannot, and every question the recordings
+ * *can* answer is answered without it. So a missing, corrupt or unbuildable
+ * database degrades to "no graph", is said once on stderr, and changes nothing
+ * else about this process.
+ */
+let arkg = null;
+try {
+  arkg = await import('./arkg.js');
+  arkg.openArkg(ARKG_DB);
+  log(`knowledge graph at ${ARKG_DB} — keeping ${ARKG_RETENTION_DAYS} days`);
+} catch (error) {
+  arkg = null;
+  log(`no knowledge graph (${error.message}) — flows and every other tool are unaffected`);
+}
+
+/**
+ * The one way this file talks to the graph.
+ *
+ * A single guarded call site rather than a `try` at each of the six, because
+ * "ARKG failure must never break the server" is only true if it is true
+ * everywhere, and the way that invariant dies is one unguarded call added later
+ * by somebody who did not know it was one. `fallback` is what the caller sees
+ * when there is no graph and when the graph threw, which are the same thing to
+ * everyone upstream.
+ */
+function arkgTry(what, run, fallback = null) {
+  if (!arkg) return fallback;
+  try {
+    return run(arkg);
+  } catch (error) {
+    log(`knowledge graph: ${what} failed (${error.message})`);
+    return fallback;
+  }
 }
 
 // ── Flow shape ─────────────────────────────────────────────────────────────
@@ -1121,6 +1215,18 @@ async function enforceRetention(keepId) {
   // Said out loud rather than done quietly: a store that silently drops the
   // oldest recording reads as one that lost it.
   for (const gone of evicted) log(`evicted "${gone.id}" (${gone.reason})`);
+
+  /*
+   * The graph ages out on the same sweep, and deliberately not on a timer of
+   * its own. A second schedule is a second thing to be wrong about — one that
+   * fires in a process nobody is talking to, deletes rows while a read is being
+   * rendered, and keeps a stdio server that should be idle awake. This sweep
+   * already runs exactly when there is new evidence to age the old against, and
+   * a graph nothing is being added to has nothing worth pruning.
+   */
+  const pruned = arkgTry('prune', (a) => a.pruneOldObservations(ARKG_RETENTION_DAYS), 0);
+  if (pruned) log(`knowledge graph: pruned ${pruned} node(s) older than ${ARKG_RETENTION_DAYS} days`);
+
   return evicted.map((gone) => gone.id);
 }
 
@@ -1477,6 +1583,21 @@ const httpServer = http.createServer(async (req, res) => {
       const meta = await saveFlow(flow);
       log(`saved "${meta.name}" — ${meta.stepCount} steps, ${meta.errorCount} with failures`);
 
+      /*
+       * Into the graph here rather than from the extension, and that is the
+       * whole reason there is no `/arkg/ingest` endpoint beside this one: the
+       * flow is already in this process, already parsed, already vouched for by
+       * the two checks above. A second POST carrying the same megabytes would
+       * be a second chance to disagree about what was recorded.
+       *
+       * It cannot fail the send. The recording is on disk and readable, which
+       * is the contract this endpoint answers for; an index over it that did not
+       * get built is a worse answer to a later question, not a lost recording,
+       * and an extension told the save failed would retry and store a second
+       * copy.
+       */
+      arkgTry('flow ingest', (a) => a.ingestFlow(flow));
+
       // Never allowed to fail the save: the flow is already on disk and readable,
       // and telling the extension otherwise would have it offer a retry that
       // stores a second copy.
@@ -1496,6 +1617,116 @@ const httpServer = http.createServer(async (req, res) => {
       );
     } catch (error) {
       log(`error saving flow: ${error.message}`);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  /*
+   * One component pick, on its way into the graph.
+   *
+   * The panel resolves a component the moment somebody clicks one, and that is
+   * evidence no flow will ever carry: most picks are made while reading code,
+   * not while recording. Without this the graph knows only the components that
+   * happened to appear in a recording somebody pressed Send on.
+   *
+   * ## What bounds it
+   *
+   * Another unauthenticated write on a loopback port that any page the user has
+   * open can reach, so it gets the receiver's guards — the same ones, for the
+   * same reasons, not by imitation:
+   *
+   *   - **Same caller rule.** `extensionOrigin`, as `POST /flows`, `POST
+   *     /config` and `DELETE /flows/:id`. A visited page's `fetch` always
+   *     carries an `Origin`, including a `no-cors` one, and no page can forge an
+   *     extension origin.
+   *   - **Its own ceiling.** `MAX_PICK_BYTES`, because the body is read into
+   *     memory before anything has vouched for it.
+   *   - **Four fields, taken by name.** The body is not handed on as it
+   *     arrived. `name` is required and everything else is read out of it one
+   *     key at a time, so a caller cannot reach a column this endpoint has no
+   *     business writing — and cannot key a row itself. `id` is dropped on
+   *     purpose: letting the sender name the node is how a pick lands on top of
+   *     a component the flow ingester keyed differently, and a graph whose
+   *     frequencies are the sum of two identities for one component is worse
+   *     than one that never saw the pick.
+   *
+   * Nothing in the body names a file this server opens — the path travels as a
+   * string into a column and is never resolved — so there is no traversal to
+   * guard against rather than a guard to get right.
+   */
+  if (req.method === 'POST' && req.url === '/arkg/ingest-component') {
+    if (!extensionOrigin(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({ error: 'Component picks may only be posted by the DevFlow extension.' }),
+      );
+      return;
+    }
+
+    try {
+      let body = '';
+      let bytes = 0;
+      for await (const chunk of req) {
+        bytes += chunk.length;
+        if (bytes > MAX_PICK_BYTES) {
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({ error: `A component pick may not exceed ${MAX_PICK_BYTES} bytes.` }),
+          );
+          req.destroy();
+          return;
+        }
+        body += chunk;
+      }
+
+      let sent;
+      try {
+        sent = JSON.parse(body);
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'A component pick must be a JSON object.' }));
+        return;
+      }
+
+      /*
+       * A name, or nothing. The graph keys a picked component by its name and
+       * the file it was found in; a body with no name would accumulate every
+       * anonymous observation onto one node and skew every frequency beside it.
+       */
+      const name = typeof sent?.name === 'string' ? sent.name.trim() : '';
+      if (!name) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing required field: name' }));
+        return;
+      }
+
+      const pick = {
+        name: name.slice(0, 256),
+        sourceFile: typeof sent.sourceFile === 'string' ? sent.sourceFile.slice(0, 1024) : null,
+        sourceLine: Number.isInteger(sent.sourceLine) && sent.sourceLine > 0 ? sent.sourceLine : null,
+        failed: sent.failed === true,
+        // Only a plausible duration: this feeds a percentile, and one absurd
+        // sample moves a p95 the anomaly detector then reports as a spike.
+        ...(Number.isFinite(sent.timingMs) && sent.timingMs >= 0 && sent.timingMs <= 600_000
+          ? { timingMs: sent.timingMs }
+          : {}),
+      };
+
+      // 200 whether or not the graph took it, and `stored` says which. A pick
+      // this server could not record is not a pick that failed: nobody is
+      // waiting on it, and an extension told otherwise would retry a write that
+      // has no reason to succeed the second time.
+      const stored = arkgTry('component ingest', (a) => {
+        a.ingestComponentPick(pick);
+        return true;
+      }) === true;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, stored }));
+    } catch (error) {
+      log(`error ingesting component pick: ${error.message}`);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error.message }));
     }
@@ -1629,6 +1860,45 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: 'get_app_architecture',
+      description:
+        'What every recording and every component pick together say about this application: the components seen most often, the endpoints each of them calls, how often those fail, and how long they take. This is the accumulated graph, not one recording — read it before opening a flow, to know whether the thing that just broke is usually reliable. Names the id each component is keyed by, for get_component_history.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'get_component_history',
+      description:
+        'Everything observed about one component: where it was resolved to, how often it has been seen, how often it failed, and every recorded flow it appears in. Takes a name as it is written in the code, or an id from get_app_architecture. Use it to tell a component that is failing now from one that has always failed.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          componentId: {
+            type: 'string',
+            description: 'A component name, or an id from get_app_architecture (the leading # is optional).',
+          },
+          since: {
+            type: 'number',
+            description: 'Only flows observed after this Unix time in milliseconds. Omit for all history.',
+          },
+        },
+        required: ['componentId'],
+      },
+    },
+    {
+      name: 'get_anomalies',
+      description:
+        'Components and endpoints failing or slowing beyond their own history — the graph saying what has changed, rather than what is true. Needs 30 observations of an entity before it will call anything unusual about it, so it reports nothing on a young graph rather than guessing. Defaults to the last 24 hours.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          since: {
+            type: 'number',
+            description: 'Look at observations after this Unix time in milliseconds. Defaults to the last 24 hours.',
+          },
+        },
+      },
+    },
   ],
 }));
 
@@ -1646,6 +1916,31 @@ const notFound = (id) => failure(`Flow "${id}" not found. Run list_flows to see 
  */
 const readFailure = (error, id) =>
   error instanceof UnsupportedFlow ? failure(error.message) : notFound(id);
+
+/*
+ * The graph's own strings.
+ *
+ * Two different nothings, and telling a reader the wrong one wastes their next
+ * move: an empty graph is fixed by sending a flow, and an absent one is not
+ * fixed by anything they can do from the browser. The archive's version
+ * answered both with "record and send a flow", which is advice that cannot work
+ * on the machine where the database would not open.
+ */
+const NO_GRAPH =
+  'This server has no knowledge graph: arkg.db could not be opened, and the reason was printed ' +
+  'on stderr when the server started. Nothing else is affected — get_flow, get_flow_errors and ' +
+  'get_flow_step answer from the recordings themselves.';
+
+const EMPTY_GRAPH =
+  'The knowledge graph is empty. It fills from two places, both of them the extension\'s: a flow ' +
+  'is added when it is sent to this server, and a component is added when it is picked in the ' +
+  'DevTools panel. Record a flow and press Send to Claude, then ask again.';
+
+/** A failure rate worth printing, as a whole percent. Nothing, when nothing failed. */
+const failPct = (rate) => (rate > 0 ? `  ${Math.round(rate * 100)}% fail` : '');
+
+/** A stored millisecond timestamp as a date. ISO, not a locale: this is read on a machine, by a model. */
+const day = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : 'unknown');
 
 /**
  * Rough token count. Four characters to a token is the usual estimate and is
@@ -2361,6 +2656,183 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
           ? failure(error.message)
           : failure('The most recent flow could not be read.');
       }
+    }
+
+    /*
+     * The three graph tools.
+     *
+     * Each opens with `if (!arkg)`, and that is not the same check `arkgTry`
+     * makes: a tool asked a question it structurally cannot answer says so as a
+     * failure, where a tool whose answer is genuinely "nothing yet" says that as
+     * text. Collapsing the two produces the worst reply of the set — an empty
+     * list that reads as "your app is fine".
+     */
+    case 'get_app_architecture': {
+      if (!arkg) return failure(NO_GRAPH);
+
+      const arch = arkgTry('architecture', (graph) => graph.getAppArchitecture());
+      if (!arch) return text(EMPTY_GRAPH);
+
+      const lines = [
+        `Knowledge graph — ${arch.totalFlows} flow${arch.totalFlows === 1 ? '' : 's'} observed` +
+          `${arch.lastSeen ? `, latest ${arch.lastSeen}` : ''}.`,
+      ];
+
+      if (arch.topComponents.length) {
+        lines.push('', 'Components, most seen first — name, times seen, failure rate, source, id:');
+        for (const component of arch.topComponents) {
+          lines.push(
+            `  ${component.name}  ${component.frequency}x${failPct(component.failureRate)}` +
+              `${component.source ? `  ${component.source}` : ''}  #${component.id}`,
+          );
+          for (const call of component.calls) {
+            lines.push(`      calls ${call.endpoint}  ${call.frequency}x${failPct(call.failureRate)}`);
+          }
+        }
+      }
+
+      if (arch.topEndpoints.length) {
+        lines.push('', 'Endpoints, most called first — route, times called, p50/p95, failure rate:');
+        for (const endpoint of arch.topEndpoints) {
+          const p50 = endpoint.timingP50Ms ? Math.round(endpoint.timingP50Ms) : null;
+          const p95 = endpoint.timingP95Ms ? Math.round(endpoint.timingP95Ms) : null;
+          lines.push(
+            `  ${endpoint.name}  ${endpoint.frequency}x` +
+              `${p50 ? `  ${p50}/${p95 ?? '—'}ms` : ''}${failPct(endpoint.failureRate)}`,
+          );
+        }
+      }
+
+      // The drill-down, named: a summary that does not say what to ask next is
+      // read as the whole of what is known.
+      lines.push(
+        '',
+        'get_component_history takes a name or an id from above; get_anomalies says what has moved recently.',
+      );
+      return text(lines.join('\n'));
+    }
+
+    case 'get_component_history': {
+      if (!arkg) return failure(NO_GRAPH);
+
+      const asked = typeof args.componentId === 'string' ? args.componentId.trim() : '';
+      if (!asked) {
+        return failure(
+          'get_component_history needs a componentId: a component name, or an id from get_app_architecture.',
+        );
+      }
+
+      /*
+       * A name or an id, because the id is a hash and the name is what the
+       * reader has in front of them — in a stack trace, in a flow, in the file
+       * they are already looking at. A tool that takes only the hash needs
+       * another call before it can be used at all, which on a 20-component
+       * summary is 500 tokens spent to ask one question.
+       *
+       * The name is resolved through the summary, which is the only lookup the
+       * graph module exposes, so it reaches what that summary covers: the most
+       * seen components, and nothing at all until one flow has arrived. An id
+       * always works. Both facts are the graph's, not this file's — a
+       * `getComponentByName` there would replace this whole paragraph.
+       */
+      const wanted = asked.replace(/^#/, '');
+      let component = arkgTry('component', (graph) => graph.getComponent(wanted));
+      if (!component) {
+        const arch = arkgTry('architecture', (graph) => graph.getAppArchitecture());
+        const named = arch?.topComponents.find(
+          (candidate) => candidate.name.toLowerCase() === wanted.toLowerCase(),
+        );
+        if (named) component = arkgTry('component', (graph) => graph.getComponent(named.id));
+      }
+
+      if (!component) {
+        return text(
+          `Nothing is recorded against "${asked}". get_app_architecture lists the components the ` +
+            'graph has seen, each with the id it is keyed by — a component only appears there once ' +
+            'a flow naming it has been sent, or it has been picked in the panel.',
+        );
+      }
+
+      const since = Number(args.since);
+      const window = Number.isFinite(since) && since > 0 ? since : 0;
+      const history =
+        arkgTry('component history', (graph) => graph.getComponentHistory(component.id, window), []) ?? [];
+
+      const lines = [
+        `${component.display_name}  ${component.frequency}x seen${failPct(component.failure_rate)}` +
+          `${component.timing_p50_ms ? `  p50 ${Math.round(component.timing_p50_ms)}ms` : ''}  #${component.id}`,
+        component.source_file
+          ? `Source: ${component.source_file}${component.source_line ? `:${component.source_line}` : ''}`
+          : 'Source: never resolved in anything observed so far.',
+        `First seen ${day(component.first_observed_at)}, last seen ${day(component.last_observed_at)}.`,
+      ];
+
+      if (!history.length) {
+        lines.push(
+          '',
+          window
+            ? 'It appears in no flow observed since that timestamp — it may have been seen only before then, or only from a pick in the panel.'
+            : 'It appears in no recorded flow: everything above came from picking it in the DevTools panel.',
+        );
+        return text(lines.join('\n'));
+      }
+
+      lines.push(
+        '',
+        `In ${history.length} recorded flow${history.length === 1 ? '' : 's'} — id, name, date, steps, failures:`,
+      );
+      for (const flow of history) {
+        lines.push(
+          `  ${flow.id}  ${flow.name}  ${day(flow.created_at)}  ${flow.step_count} steps` +
+            `${flow.failure_count ? `, ${flow.failure_count} failures` : ''}`,
+        );
+      }
+      lines.push('', 'get_flow with one of those ids opens the recording itself.');
+      return text(lines.join('\n'));
+    }
+
+    case 'get_anomalies': {
+      if (!arkg) return failure(NO_GRAPH);
+
+      const asked = Number(args.since);
+      const since = Number.isFinite(asked) && asked > 0 ? asked : null;
+      const window = since ? `since ${day(since)}` : 'in the last 24 hours';
+      const anomalies =
+        arkgTry(
+          'anomalies',
+          (graph) => (since === null ? graph.getAnomalies() : graph.getAnomalies(since)),
+          [],
+        ) ?? [];
+
+      if (!anomalies.length) {
+        /*
+         * "Nothing found" and "not enough to look at" are the same empty list
+         * from the graph and very different answers to the reader, and there is
+         * no way to tell them apart from here — so the reply says both, and
+         * names the tool that settles which one it was.
+         */
+        return text(
+          `Nothing is behaving unusually ${window}. That is also what a young graph says: an entity ` +
+            'needs 30 observations before it has a baseline to deviate from, so this reports nothing ' +
+            'rather than guessing. get_app_architecture says how much has been observed so far.',
+        );
+      }
+
+      const lines = [
+        `${anomalies.length} anomal${anomalies.length === 1 ? 'y' : 'ies'} ${window} — what, which, why:`,
+        '',
+      ];
+      for (const item of anomalies) {
+        lines.push(
+          `  ${item.type === 'component' ? 'component' : 'endpoint '}  ${item.name}  ` +
+            `${item.issue.replace(/_/g, ' ')}: ${item.detail}${item.source ? `  ${item.source}` : ''}`,
+        );
+      }
+      lines.push(
+        '',
+        'get_component_history for a component named here; get_flow_errors on a recent flow for the failures themselves.',
+      );
+      return text(lines.join('\n'));
     }
 
     default:

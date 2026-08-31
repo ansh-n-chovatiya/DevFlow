@@ -305,6 +305,9 @@ export function resultCard(options: ResultCardOptions): HTMLElement {
   const matchCount = source.matchCount ?? 0;
   if (matchCount > 1) card.append(ambiguity(matchCount, options.resourcesSearched));
 
+  const unconfigured = missingProjectRoot(options);
+  if (unconfigured) card.append(unconfigured);
+
   const actions = actionRow(options);
   if (actions) card.append(actions);
 
@@ -386,6 +389,38 @@ function ambiguity(matchCount: number, resourcesSearched?: number): HTMLElement 
   const banner = make('div', 'banner banner--warn result-card__ambiguity');
   banner.append(icon('triangle-alert', 'icon banner__icon'));
   banner.append(make('p', 'banner__body', ambiguityText(matchCount, resourcesSearched)));
+  return banner;
+}
+
+/**
+ * The card found the file and the editor cannot open it, said where the user
+ * can see it.
+ *
+ * This is the first run of every install: a source map gives
+ * `src/components/Cart.tsx`, an editor needs the other half of that path, and
+ * `projectRoot` defaults to empty. The explanation for the dead button used to
+ * be its `title`, on a `disabled` button — which suppresses pointer events, so
+ * Chrome never rendered the tooltip and the answer was written somewhere no
+ * user could reach it. The card's own status bar says as much about
+ * `Copy path`; this is the same fact, put where it can be read.
+ *
+ * Null when there is nothing to open anyway — a component with no original
+ * source has a worse problem than an unset setting, and `detailText` names it.
+ */
+function missingProjectRoot(options: ResultCardOptions): HTMLElement | null {
+  if (!options.onOpenEditor) return null;
+  if (!options.source.source) return null;
+  if (componentEditorUrl(options.source, options.link ?? null)) return null;
+
+  const banner = make('div', 'banner banner--warn result-card__unconfigured');
+  banner.append(icon('triangle-alert', 'icon banner__icon'));
+  banner.append(
+    make(
+      'p',
+      'banner__body',
+      'No project root set, so this path cannot be turned into a file on disk. Set one in Settings to open sources in your editor.',
+    ),
+  );
   return banner;
 }
 

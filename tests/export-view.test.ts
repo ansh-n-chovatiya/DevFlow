@@ -97,7 +97,13 @@ describe('the total', () => {
 
   it('quotes every format at once, not just the selected one', () => {
     const view = deriveExportView(input());
-    expect(view.formats.map((card) => card.id)).toEqual(['zip', 'markdown', 'json']);
+    expect(view.formats.map((card) => card.id)).toEqual([
+      'zip',
+      'markdown',
+      'json',
+      'playwright',
+      'cypress',
+    ]);
     expect(view.formats.every((card) => card.bytes > 0)).toBe(true);
     expect(view.formats.find((card) => card.selected)?.id).toBe('zip');
     expect(view.formats.find((card) => card.recommended)?.id).toBe('zip');
