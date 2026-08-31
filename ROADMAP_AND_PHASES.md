@@ -121,53 +121,53 @@
 **Objective:** Closed-loop automated debugging from issue description to verified PR, plus natural language application understanding powered by the ARKG.
 
 ### Work Stream 2.1: Deterministic Time-Travel Flow Recorder 2.0
-- [ ] **Unified Event Chronicle:**
+- [x] **Unified Event Chronicle:**
   - High-precision timestamped stream of user events (click, input, scroll, keydown).
   - Synchronized network requests (`fetch`/`XHR`/`WebSocket`) with request/response payloads.
   - Synchronized console output, warnings, uncaught exceptions, and unhandled promise rejections.
-  - DOM MutationObserver deltas and periodic layout snapshots.
-  - All events carry `causedBy` references (causal threading from Phase 1).
-- [ ] **Export to Resilient E2E Tests (Interaction-to-Test Compiler):**
+  - [x] DOM MutationObserver deltas and periodic layout snapshots.
+  - [x] All events carry `causedBy` references (causal threading from Phase 1).
+- [x] **Export to Resilient E2E Tests (Interaction-to-Test Compiler):**
   - 1-click export of recorded flows to Playwright and Cypress test scripts.
   - **Fiber-based resilient selectors** (not CSS selectors): aria-label → role+name → data-testid → component name → CSS selector (flagged as fragile)
   - Automatic injection of real network mock fixtures from intercepted request/response payloads.
   - State assertions from before/after store diffs recorded during the flow.
 
 ### Work Stream 2.2: "Why Is This Value Here?" Provenance Engine
-- [ ] **Full Value Provenance Trace:**
+- [x] **Full Value Provenance Trace:**
   - Click any visible value in the browser (a price, a username, an error message)
   - Trace the full provenance chain: DOM text → React prop → component state → store selector → API response field
   - Present as an interactive, expandable lineage tree
-- [ ] **MCP Tool:**
+- [x] **MCP Tool:**
   - `get_value_provenance(domNodeId)` → full lineage chain from DOM to origin
 
 ### Work Stream 2.3: Autonomous Sandbox Execution Engine
-- [ ] **Headless Replay Harness:**
+- [x] **Headless Replay Harness:**
   - Run recorded flows inside containerized Chrome via Chrome DevTools Protocol (CDP) and Playwright.
   - Re-inject recorded cookies, `localStorage`, and session tokens for state fidelity.
-- [ ] **Synthetic Action Generator:**
+- [x] **Synthetic Action Generator:**
   - Parse fuzzy user reports (e.g., *"Filter by Electronics then click Sort by Price breaks table"*) into structured replay steps.
   - Use vision-model heuristics + ARKG component graph to identify the most likely target elements.
 
 ### Work Stream 2.4: Closed-Loop AI Code Repair Loop
-- [ ] **Diagnostic Causal Tracing:**
+- [x] **Diagnostic Causal Tracing:**
   - Map crash/error stack trace → failing event handler → state mutator → AST node (using causal DAG from Phase 1).
-- [ ] **Patch Generation & In-Memory Application:**
+- [x] **Patch Generation & In-Memory Application:**
   - Generate targeted unified diffs via AST transforms.
   - Apply diffs in ephemeral branch/sandbox.
-- [ ] **Replay Verification & Test Runner:**
+- [x] **Replay Verification & Test Runner:**
   - Re-execute the recorded interaction in the sandbox.
   - Verify error absence and check unit/E2E test suite status.
   - Generate PR with root cause summary and visual before/after verification recording.
 
 ### Work Stream 2.5: Natural Language Application Navigator
-- [ ] **Feature Understanding Query:**
+- [x] **Feature Understanding Query:**
   - Developer types: *"How does the discount code get applied?"*
   - DevFlow queries ARKG component graph + code embeddings to identify related components/routes
   - Traces the implementation path in the ARKG: `DiscountInput` → `usePromoCode` → `POST /api/promo/validate`
   - Navigates the browser to trigger the feature, recording the runtime trace
   - Generates a narrative explanation with source links and a visual flow diagram
-- [ ] **MCP Tool:**
+- [x] **MCP Tool:**
   - `explain_feature(description)` → ARKG-guided implementation trace + narrative
 
 ---

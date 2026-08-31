@@ -190,6 +190,17 @@ export interface ConsoleEntry {
   causedBy?: string;
 }
 
+export interface MutationDelta {
+  type: 'attributes' | 'characterData' | 'childList';
+  targetNodeName: string;
+  attributeName?: string | null;
+  oldValue?: string | null;
+  addedNodesCount?: number;
+  removedNodesCount?: number;
+  timestamp: number;
+  causedBy?: string;
+}
+
 export type StepType = 'click' | 'input' | 'navigate' | 'note';
 
 /**
@@ -264,6 +275,7 @@ interface StepBase {
   element?: ElementRef;
   consoleLogs?: ConsoleEntry[];
   networkCalls?: NetworkCall[];
+  mutations?: MutationDelta[];
   /**
    * What the region around the touched element said before the interaction and
    * shortly after it — the cheap half of what a screenshot tells a human.

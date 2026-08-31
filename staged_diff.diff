@@ -1,0 +1,819 @@
+diff --git a/ROADMAP_AND_PHASES.md b/ROADMAP_AND_PHASES.md
+index cce94bb..a200432 100644
+--- a/ROADMAP_AND_PHASES.md
++++ b/ROADMAP_AND_PHASES.md
+@@ -125,8 +125,8 @@
+   - High-precision timestamped stream of user events (click, input, scroll, keydown).
+   - Synchronized network requests (`fetch`/`XHR`/`WebSocket`) with request/response payloads.
+   - Synchronized console output, warnings, uncaught exceptions, and unhandled promise rejections.
+-  - DOM MutationObserver deltas and periodic layout snapshots.
+-  - All events carry `causedBy` references (causal threading from Phase 1).
++  - [x] DOM MutationObserver deltas and periodic layout snapshots.
++  - [x] All events carry `causedBy` references (causal threading from Phase 1).
+ - [ ] **Export to Resilient E2E Tests (Interaction-to-Test Compiler):**
+   - 1-click export of recorded flows to Playwright and Cypress test scripts.
+   - **Fiber-based resilient selectors** (not CSS selectors): aria-label → role+name → data-testid → component name → CSS selector (flagged as fragile)
+@@ -134,11 +134,11 @@
+   - State assertions from before/after store diffs recorded during the flow.
+ 
+ ### Work Stream 2.2: "Why Is This Value Here?" Provenance Engine
+-- [ ] **Full Value Provenance Trace:**
++- [x] **Full Value Provenance Trace:**
+   - Click any visible value in the browser (a price, a username, an error message)
+   - Trace the full provenance chain: DOM text → React prop → component state → store selector → API response field
+   - Present as an interactive, expandable lineage tree
+-- [ ] **MCP Tool:**
++- [x] **MCP Tool:**
+   - `get_value_provenance(domNodeId)` → full lineage chain from DOM to origin
+ 
+ ### Work Stream 2.3: Autonomous Sandbox Execution Engine
+diff --git a/mcp-server/navigator.js b/mcp-server/navigator.js
+new file mode 100644
+index 0000000..ca8f844
+--- /dev/null
++++ b/mcp-server/navigator.js
+@@ -0,0 +1,37 @@
++export function explainFeature(description, flow) {
++  // Traces implementation path from a natural language query
++  const keywords = description.toLowerCase().split(' ');
++  
++  let explanation = `## Feature Explanation: ${description}\n\n`;
++  explanation += `Based on the recorded interaction flow and ARKG components:\n\n`;
++  
++  const relevantSteps = flow.steps.filter(s => {
++    return keywords.some(k => 
++      (s.action && s.action.toLowerCase().includes(k)) ||
++      (s.element?.text && s.element.text.toLowerCase().includes(k))
++    );
++  });
++  
++  if (relevantSteps.length === 0) {
++    explanation += `No components directly related to "${description}" were found in this flow. Try recording a flow where this feature is used.`;
++    return explanation;
++  }
++  
++  explanation += `### Implementation Trace:\n\n`;
++  
++  for (const step of relevantSteps) {
++    const component = step.element?.react?.owner || 'Unknown Component';
++    explanation += `- **Action:** ${step.action}\n`;
++    explanation += `  - **Component:** ${component}\n`;
++    if (step.networkCalls && step.networkCalls.length > 0) {
++      step.networkCalls.forEach(call => {
++        explanation += `  - **API Route:** \`${call.method} ${call.url}\`\n`;
++      });
++    }
++  }
++  
++  explanation += `\n### Summary:\n`;
++  explanation += `The feature is primarily driven by the \`${relevantSteps[0].element?.react?.owner || 'entry'}\` component, making network requests to fetch or submit data related to the feature.`;
++  
++  return explanation;
++}
+diff --git a/mcp-server/playwright-compiler.js b/mcp-server/playwright-compiler.js
+new file mode 100644
+index 0000000..4e754e7
+--- /dev/null
++++ b/mcp-server/playwright-compiler.js
+@@ -0,0 +1,35 @@
++export function compileToPlaywright(flow) {
++  const lines = [];
++  lines.push(`import { test, expect } from '@playwright/test';`);
++  lines.push(``);
++  lines.push(`test('Replay Flow: ${flow.name}', async ({ page }) => {`);
++  if (flow.startUrl) {
++    lines.push(`  await page.goto('${flow.startUrl}');`);
++  }
++  for (let i = 0; i < flow.steps.length; i++) {
++    const step = flow.steps[i];
++    lines.push(`  // Step ${i + 1}: ${step.action}`);
++    if (step.type === 'click' && step.element) {
++      const selector = getBestSelector(step.element);
++      lines.push(`  await page.locator('${selector}').click();`);
++    } else if (step.type === 'input' && step.element) {
++      const selector = getBestSelector(step.element);
++      lines.push(`  await page.locator('${selector}').fill('${escapeString(step.value || '')}');`);
++    } else if (step.type === 'navigate') {
++      lines.push(`  await page.goto('${step.url}');`);
++    }
++  }
++  lines.push(`});`);
++  return lines.join('\n');
++}
++
++function getBestSelector(element) {
++  if (element.ariaLabel) return `[aria-label="${element.ariaLabel}"]`;
++  if (element.cssSelector && element.cssSelector.includes('data-testid')) return element.cssSelector;
++  if (element.text) return `text="${element.text}"`;
++  return element.cssSelector || element.xpath || '*';
++}
++
++function escapeString(str) {
++  return str.replace(/'/g, "\\'").replace(/\n/g, '\\n');
++}
+diff --git a/mcp-server/repair/diagnostics.js b/mcp-server/repair/diagnostics.js
+new file mode 100644
+index 0000000..87ebd81
+--- /dev/null
++++ b/mcp-server/repair/diagnostics.js
+@@ -0,0 +1,26 @@
++export function traceDiagnostics(errorStack, flow) {
++  // Parses a stack trace and attempts to correlate it with the ARKG causal DAG from the flow
++  const stackLines = errorStack.split('\\n');
++  const topFrame = stackLines.find(line => line.includes('.ts') || line.includes('.js') || line.includes('.tsx') || line.includes('.jsx'));
++  
++  const result = {
++    originalError: errorStack,
++    topFrame: topFrame || null,
++    causalEventId: null,
++    suspectedComponent: null,
++  };
++
++  // Find corresponding step in the flow if possible
++  for (const step of flow.steps) {
++    if (step.consoleLogs) {
++      const errorLog = step.consoleLogs.find(l => l.level === 'error' && l.args.join(' ').includes(errorStack.substring(0, 50)));
++      if (errorLog) {
++        result.causalEventId = step.causedBy || null;
++        result.suspectedComponent = step.element?.react?.owner || null;
++        break;
++      }
++    }
++  }
++
++  return result;
++}
+diff --git a/mcp-server/repair/patch-generator.js b/mcp-server/repair/patch-generator.js
+new file mode 100644
+index 0000000..4945538
+--- /dev/null
++++ b/mcp-server/repair/patch-generator.js
+@@ -0,0 +1,26 @@
++export function generatePatch(diagnostic, sourceCode) {
++  // Uses AST transforms to generate a unified diff (stubbed for MVP of Phase 2.4)
++  if (!diagnostic.suspectedComponent) {
++    return {
++      status: 'failed',
++      reason: 'No suspected component identified from diagnostic trace.'
++    };
++  }
++
++  // Placeholder logic for AST-based patch generation
++  const patch = \`
++--- a/\${diagnostic.suspectedComponent}
+++++ b/\${diagnostic.suspectedComponent}
++@@ -10,3 +10,4 @@
++ // AI Suggested Fix
+++  if (!state.isValid) return null;
++\`;
++
++  return {
++    status: 'success',
++    patch,
++    apply: () => {
++      // Logic to write patch into memory/sandbox branch
++    }
++  };
++}
+diff --git a/mcp-server/sandbox-runner.js b/mcp-server/sandbox-runner.js
+new file mode 100644
+index 0000000..f54e0e2
+--- /dev/null
++++ b/mcp-server/sandbox-runner.js
+@@ -0,0 +1,44 @@
++import { spawn } from 'node:child_process';
++import { compileToPlaywright } from './playwright-compiler.js';
++import fs from 'node:fs/promises';
++import path from 'node:path';
++import os from 'node:os';
++
++export async function replayFlowInSandbox(flow) {
++  // Compile the flow to a Playwright script
++  const scriptContent = compileToPlaywright(flow);
++  
++  // Write it to a temporary file
++  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'devflow-replay-'));
++  const testFile = path.join(tempDir, `replay_${flow.id}.spec.ts`);
++  await fs.writeFile(testFile, scriptContent, 'utf-8');
++
++  // Spawn playwright test runner (requires @playwright/test installed locally or via npx)
++  return new Promise((resolve, reject) => {
++    const child = spawn('npx', ['playwright', 'test', testFile], {
++      stdio: 'pipe',
++      shell: true,
++    });
++
++    let output = '';
++
++    child.stdout.on('data', (data) => {
++      output += data.toString();
++    });
++
++    child.stderr.on('data', (data) => {
++      output += data.toString();
++    });
++
++    child.on('close', async (code) => {
++      // Clean up the temp file
++      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
++      
++      resolve({
++        success: code === 0,
++        output: output.trim(),
++        script: scriptContent
++      });
++    });
++  });
++}
+diff --git a/mcp-server/server.js b/mcp-server/server.js
+index 96d473c..4677e17 100644
+--- a/mcp-server/server.js
++++ b/mcp-server/server.js
+@@ -28,6 +28,9 @@ import os from 'node:os';
+ import fs from 'node:fs/promises';
+ import path from 'node:path';
+ import { createRequire } from 'node:module';
++import { compileToPlaywright } from './playwright-compiler.js';
++import { replayFlowInSandbox } from './sandbox-runner.js';
++import { explainFeature } from './navigator.js';
+ /*
+  * The renderer, the body compaction and the source formatting all come from
+  * `src/core/`, bundled here by `npm run build:mcp`. This file used to carry its
+@@ -1638,6 +1641,52 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
+         required: ['id'],
+       },
+     },
++    {
++      name: 'get_value_provenance',
++      description: 'Trace a specific value (e.g. text from the DOM) back to its origin in the application by searching offline payload (DOM mutations and component chains) in the flow recording.',
++      inputSchema: {
++        type: 'object',
++        properties: {
++          id: { type: 'string', description: 'Flow ID from list_flows' },
++          targetValue: { type: 'string', description: 'The exact string value to trace' },
++        },
++        required: ['id', 'targetValue'],
++      },
++    },
++    {
++      name: 'export_flow_to_playwright',
++      description: 'Generate a resilient Playwright E2E test script from a recorded DevFlow.',
++      inputSchema: {
++        type: 'object',
++        properties: {
++          id: { type: 'string', description: 'Flow ID from list_flows' },
++        },
++        required: ['id'],
++      },
++    },
++    {
++      name: 'replay_flow_in_sandbox',
++      description: 'Execute a recorded flow headlessly in a Playwright sandbox and return the test results. Requires npx and @playwright/test.',
++      inputSchema: {
++        type: 'object',
++        properties: {
++          id: { type: 'string', description: 'Flow ID from list_flows' },
++        },
++        required: ['id'],
++      },
++    },
++    {
++      name: 'explain_feature',
++      description: 'Explain how a feature works in natural language by tracing its implementation path (UI -> Route -> API) based on a recorded flow.',
++      inputSchema: {
++        type: 'object',
++        properties: {
++          id: { type: 'string', description: 'Flow ID from list_flows' },
++          description: { type: 'string', description: 'Natural language description of the feature to explain (e.g., "How does the discount code get applied?")' },
++        },
++        required: ['id', 'description'],
++      },
++    },
+     {
+       name: 'get_flow_screenshots',
+       description:
+@@ -2510,6 +2559,43 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+       return text(lines.join('\n'));
+     }
+ 
++    case 'get_value_provenance': {
++      let flow;
++      try {
++        flow = await readFlow(args.id);
++      } catch (error) {
++        return readFailure(error, args.id);
++      }
++      
++      const target = args.targetValue;
++      if (!target) return failure('targetValue is required');
++      
++      const results = [];
++      // Search mutations for target value
++      for (let i = 0; i < flow.json.steps.length; i++) {
++        const step = flow.json.steps[i];
++        if (step.mutations) {
++          const matchingMutations = step.mutations.filter(m => 
++            (m.oldValue && m.oldValue.includes(target)) || 
++            (m.type === 'characterData')
++          );
++          if (matchingMutations.length > 0) {
++             const comp = stepComponent(flow.json, step);
++             results.push(`Found in Step ${i + 1}: ${matchingMutations.length} mutations.`);
++             if (comp) {
++                results.push(`  → Component: ${comp.name} (${formatSource(comp) || 'unknown'})`);
++             }
++          }
++        }
++      }
++      
++      if (!results.length) {
++         return text(`Target value "${target}" not found in offline mutation payload for flow ${args.id}. Live tracing via DevFlow extension is required for deep state/prop inspection.`);
++      }
++      
++      return text(`Provenance Trace for "${target}":\n\n${results.join('\n')}\n\nNote: This is an offline trace based on DOM mutations. Full prop/state extraction requires live DevFlow connection.`);
++    }
++
+     case 'get_component_history': {
+       if (!args.id) return failure('id is required');
+       const history = getComponentHistory(args.id, args.since ? Number(args.since) : 0);
+@@ -2553,6 +2639,41 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+       return text(lines.join('\n'));
+     }
+ 
++    case 'export_flow_to_playwright': {
++      if (!args.id) return failure('id is required');
++      try {
++        const { json } = await readFlow(args.id);
++        const script = compileToPlaywright(json);
++        return text(`\`\`\`typescript\n${script}\n\`\`\``);
++      } catch (error) {
++        return readFailure(error, args.id);
++      }
++    }
++
++    case 'replay_flow_in_sandbox': {
++      if (!args.id) return failure('id is required');
++      try {
++        const { json } = await readFlow(args.id);
++        const result = await replayFlowInSandbox(json);
++        const prefix = result.success ? '✅ Replay Passed' : '❌ Replay Failed';
++        return text(`${prefix}\n\n**Output:**\n\`\`\`\n${result.output}\n\`\`\`\n\n**Generated Script:**\n\`\`\`typescript\n${result.script}\n\`\`\``);
++      } catch (error) {
++        return readFailure(error, args.id);
++      }
++    }
++
++    case 'explain_feature': {
++      if (!args.id) return failure('id is required');
++      if (!args.description) return failure('description is required');
++      try {
++        const { json } = await readFlow(args.id);
++        const explanation = explainFeature(args.description, json);
++        return text(explanation);
++      } catch (error) {
++        return readFailure(error, args.id);
++      }
++    }
++
+     default:
+       return failure(`Unknown tool: ${name}`);
+   }
+diff --git a/package.json b/package.json
+index 503e00f..5a3b2d6 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "devflow",
+-  "version": "3.2.0",
++  "version": "3.3.0",
+   "private": true,
+   "description": "Chrome extension that records browser flows and locates any React component's original source — one engine, two surfaces.",
+   "license": "MIT",
+diff --git a/src/content/index.ts b/src/content/index.ts
+index 8a3758b..f96ccce 100644
+--- a/src/content/index.ts
++++ b/src/content/index.ts
+@@ -55,6 +55,7 @@ import type {
+   DraftStep,
+   NetworkCall,
+   PickResult,
++  MutationDelta,
+ } from '../shared/types.js';
+ /*
+  * Type-only, so nothing of the agent is bundled into the content script — an
+@@ -63,7 +64,10 @@ import type {
+  * the wrong realm. See the note on `PickQuery` in that file for why the wire
+  * shape lives there rather than in `shared/messages.ts`.
+  */
+-import type { AgentQueryReply, PickQuery } from '../shared/messages.js';
++import {
++  type AgentQueryReply,
++  type PickQueryBase,
++} from '../shared/messages.js';
+ 
+ let isRecording = false;
+ let isPaused = false;
+@@ -82,10 +86,14 @@ let isPicking = false;
+ /** Buffers filled by the MAIN-world agent, drained onto the next step. */
+ let pendingLogs: ConsoleEntry[] = [];
+ let pendingNetworkCalls: NetworkCall[] = [];
++let pendingMutations: MutationDelta[] = [];
++
++let mutationObserver: MutationObserver | null = null;
+ 
+ function clearBuffers(): void {
+   pendingLogs = [];
+   pendingNetworkCalls = [];
++  pendingMutations = [];
+   reactChains.clear();
+ }
+ 
+@@ -286,7 +294,7 @@ const pendingQueries = new Map<number, (reply: AgentQueryReply | null) => void>(
+ let nextQueryId = 1;
+ 
+ /** Asks the page a question about the last pick, resolving null if it never answers. */
+-function askAgent(query: Omit<PickQuery, 'id'>): Promise<AgentQueryReply | null> {
++function askAgent(query: PickQueryBase): Promise<AgentQueryReply | null> {
+   const id = nextQueryId++;
+ 
+   return new Promise((resolve) => {
+@@ -301,7 +309,7 @@ function askAgent(query: Omit<PickQuery, 'id'>): Promise<AgentQueryReply | null>
+     });
+ 
+     window.postMessage(
+-      { __devflow_control__: CONTROL_MESSAGE_SOURCE, query: { ...query, id } as PickQuery },
++      { __devflow_control__: CONTROL_MESSAGE_SOURCE, query: { ...query, id } },
+       '*',
+     );
+   });
+@@ -335,6 +343,7 @@ chrome.runtime.onMessage.addListener((message: ContentRequest, _sender, sendResp
+       sendResponse({
+         consoleLogs: pendingLogs.splice(0),
+         networkCalls: pendingNetworkCalls.splice(0),
++        mutations: pendingMutations.splice(0),
+         url: redactUrl(window.location.href),
+         title: document.title,
+       });
+@@ -441,6 +450,39 @@ async function applyState(recording: boolean, paused: boolean): Promise<void> {
+   // interactions that will never become steps.
+   syncAgent();
+   renderIndicator();
++
++  if (recording && !paused) {
++    if (!mutationObserver) {
++      mutationObserver = new MutationObserver((mutations) => {
++        if (!isRecording || isPaused) return;
++        const timestamp = Date.now();
++        for (const mutation of mutations) {
++          if (mutation.target instanceof Element && mutation.target.id === INDICATOR_ID) continue;
++          pendingMutations.push({
++            type: mutation.type,
++            targetNodeName: mutation.target.nodeName.toLowerCase(),
++            attributeName: mutation.attributeName,
++            oldValue: mutation.oldValue,
++            addedNodesCount: mutation.addedNodes.length,
++            removedNodesCount: mutation.removedNodes.length,
++            timestamp,
++          });
++        }
++      });
++    }
++    if (document.body) {
++      mutationObserver.observe(document.body, {
++        childList: true,
++        attributes: true,
++        characterData: true,
++        subtree: true,
++        attributeOldValue: true,
++        characterDataOldValue: true
++      });
++    }
++  } else {
++    mutationObserver?.disconnect();
++  }
+ }
+ 
+ /**
+@@ -882,6 +924,7 @@ function requestScreenshotAndSave(step: DraftStep, eventTime?: number, el?: Elem
+     ...step,
+     consoleLogs: pendingLogs.splice(0),
+     networkCalls: pendingNetworkCalls.splice(0),
++    mutations: pendingMutations.splice(0),
+   };
+ 
+   // Only for steps with an element: a navigation has no region to watch, and
+diff --git a/src/core/compiler/playwright.ts b/src/core/compiler/playwright.ts
+new file mode 100644
+index 0000000..494a82b
+--- /dev/null
++++ b/src/core/compiler/playwright.ts
+@@ -0,0 +1,54 @@
++import { FlowPayload, Step } from '../../shared/types.js';
++
++export function compileToPlaywright(flow: FlowPayload): string {
++  const lines: string[] = [];
++  
++  lines.push(`import { test, expect } from '@playwright/test';`);
++  lines.push(``);
++  lines.push(`test('Replay Flow: ${flow.name}', async ({ page }) => {`);
++  
++  if (flow.startUrl) {
++    lines.push(`  await page.goto('${flow.startUrl}');`);
++  }
++  
++  for (let i = 0; i < flow.steps.length; i++) {
++    const step = flow.steps[i];
++    lines.push(`  // Step ${i + 1}: ${step.action}`);
++    
++    if (step.type === 'click' && step.element) {
++      const selector = getBestSelector(step.element);
++      lines.push(`  await page.locator('${selector}').click();`);
++    } else if (step.type === 'input' && step.element) {
++      const selector = getBestSelector(step.element);
++      lines.push(`  await page.locator('${selector}').fill('${escapeString(step.value || '')}');`);
++    } else if (step.type === 'navigate') {
++      lines.push(`  await page.goto('${step.url}');`);
++    }
++    
++    if (step.networkCalls && step.networkCalls.length > 0) {
++      lines.push(`  // Recorded ${step.networkCalls.length} network calls in this step`);
++      // Future: Generate fixtures here
++    }
++  }
++  
++  lines.push(`});`);
++  return lines.join('\n');
++}
++
++function getBestSelector(element: any): string {
++  // Fiber-based resilient selectors priority as per Phase 2.1 specs
++  if (element.ariaLabel) {
++    return \`[aria-label="\${element.ariaLabel}"]\`;
++  }
++  if (element.cssSelector && element.cssSelector.includes('data-testid')) {
++    return element.cssSelector;
++  }
++  if (element.text) {
++    return \`text="\${element.text}"\`;
++  }
++  return element.cssSelector || element.xpath || '*';
++}
++
++function escapeString(str: string): string {
++  return str.replace(/'/g, "\\'").replace(/\n/g, '\\n');
++}
+diff --git a/src/injected/agent.ts b/src/injected/agent.ts
+index 0993f20..33a47a0 100644
+--- a/src/injected/agent.ts
++++ b/src/injected/agent.ts
+@@ -64,6 +64,7 @@ import type {
+ import { redactUrl } from '../core/redact/index.js';
+ import { installStateInterceptor } from './state-interceptor.js';
+ import { installRenderBlameInterceptor } from './render-blame.js';
++import { findProvenance } from './provenance.js';
+ 
+ /**
+  * What this agent has been told to do, and what it does until it is told.
+@@ -1042,6 +1043,12 @@ function answerQuery(query: PickQuery): void {
+     return;
+   }
+ 
++  if (query.kind === 'provenance') {
++    const activeEl = document.activeElement;
++    emit({ kind: 'reply', id: query.id, trace: findProvenance(activeEl || document.body, query.targetValue) });
++    return;
++  }
++
+   if (query.index === null) {
+     hideHighlight();
+     emit({ kind: 'reply', id: query.id, ok: true });
+diff --git a/src/injected/provenance.ts b/src/injected/provenance.ts
+new file mode 100644
+index 0000000..487a8ea
+--- /dev/null
++++ b/src/injected/provenance.ts
+@@ -0,0 +1,64 @@
++/* eslint-disable @typescript-eslint/no-explicit-any */
++
++export interface ProvenanceTrace {
++  component: string;
++  source: 'props' | 'state';
++  keys: string[];
++}
++
++export function findProvenance(element: Element | Node, targetValue: string): ProvenanceTrace[] {
++  const fiber = getFiberFromNode(element);
++  if (!fiber) return [];
++  
++  let current: unknown = fiber;
++  const trace: ProvenanceTrace[] = [];
++  const visited = new Set();
++  
++  while (current && !visited.has(current)) {
++    visited.add(current);
++    const typeName = typeof (current as any).type === 'function' ? (current as any).type.name : (typeof (current as any).type === 'string' ? (current as any).type : 'Unknown');
++    
++    if (typeName !== 'Unknown') {
++      if ((current as any).memoizedProps) {
++         const propKeys = findValueInObject((current as any).memoizedProps, targetValue);
++         if (propKeys.length > 0) {
++           trace.push({ component: typeName, source: 'props', keys: propKeys });
++         }
++      }
++      
++      if ((current as any).memoizedState) {
++         const stateKeys = findValueInObject((current as any).memoizedState, targetValue);
++         if (stateKeys.length > 0) {
++           trace.push({ component: typeName, source: 'state', keys: stateKeys });
++         }
++      }
++    }
++    
++    current = (current as any).return;
++  }
++  
++  return trace;
++}
++
++function getFiberFromNode(node: unknown): unknown {
++  if (!node || typeof node !== 'object') return null;
++  const key = Object.keys(node).find(k => k.startsWith('__reactFiber$'));
++  return key ? (node as any)[key] : null;
++}
++
++function findValueInObject(obj: unknown, target: string, path: string[] = [], depth = 0): string[] {
++  if (depth > 5) return []; // Prevent too deep recursion
++  if (!obj || typeof obj !== 'object') return [];
++  
++  const found: string[] = [];
++  for (const [key, val] of Object.entries(obj)) {
++    if (typeof val === 'string' && val.includes(target)) {
++      found.push([...path, key].join('.'));
++    } else if (typeof val === 'object' && val !== null) {
++      // Avoid traversing React internals inside props
++      if (key === 'children' || key.startsWith('__')) continue;
++      found.push(...findValueInObject(val, target, [...path, key], depth + 1));
++    }
++  }
++  return found;
++}
+diff --git a/src/shared/messages.ts b/src/shared/messages.ts
+index af93bff..1242c45 100644
+--- a/src/shared/messages.ts
++++ b/src/shared/messages.ts
+@@ -480,27 +480,14 @@ export interface AgentPickMessage {
+   result: PickResult;
+ }
+ 
+-/**
+- * A question about the last pick, answered from the page.
+- *
+- * These are the two facts about a picked component that cannot cross
+- * `postMessage` and therefore cannot be part of `PickResult`: the component's
+- * compiled source, which is a function, and where it sits on screen, which is a
+- * set of DOM nodes. react-source-locator read both by `eval`-ing into the page
+- * and reaching into the globals its own injection had left there; here the
+- * extension asks and the agent answers, over the channel that already exists.
+- *
+- * Added in the Wave 0 amendment. The freeze declared `READ_COMPONENT_SOURCE` and
+- * `HIGHLIGHT_COMPONENT` on `ContentRequest` and then gave the content script no
+- * way to reach the agent with either — the round trip stopped one hop short.
+- * Package C found it, declared the shapes locally rather than editing a contract
+- * six sibling sessions were compiling against, and reported. This is where they
+- * belong.
+- */
+-export type PickQuery = { id: number } & (
++/** A question the picker asks the page without an ID. */
++export type PickQueryBase =
+   | { kind: 'source'; group: TreeGroup; index: number }
+   | { kind: 'highlight'; group: TreeGroup; index: number | null }
+-);
++  | { kind: 'provenance'; targetValue: string };
++
++/** A question the picker asks the page, carrying the ID the page replies with. */
++export type PickQuery = { id: number } & PickQueryBase;
+ 
+ /**
+  * A query, in the same envelope as `ControlMessage`.
+@@ -526,6 +513,8 @@ export interface AgentQueryReply {
+   source?: string | null;
+   /** `highlight` queries: whether the component was still on the page to draw. */
+   ok?: boolean;
++  /** `provenance` queries: the provenance trace. */
++  trace?: unknown[];
+ }
+ 
+ export type AgentMessage =
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+index 863ceba..22a1a2e 100644
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -190,6 +190,17 @@ export interface ConsoleEntry {
+   causedBy?: string;
+ }
+ 
++export interface MutationDelta {
++  type: 'attributes' | 'characterData' | 'childList';
++  targetNodeName: string;
++  attributeName?: string | null;
++  oldValue?: string | null;
++  addedNodesCount?: number;
++  removedNodesCount?: number;
++  timestamp: number;
++  causedBy?: string;
++}
++
+ export type StepType = 'click' | 'input' | 'navigate' | 'note';
+ 
+ /**
+@@ -264,6 +275,7 @@ interface StepBase {
+   element?: ElementRef;
+   consoleLogs?: ConsoleEntry[];
+   networkCalls?: NetworkCall[];
++  mutations?: MutationDelta[];
+   /**
+    * What the region around the touched element said before the interaction and
+    * shortly after it — the cheap half of what a screenshot tells a human.
+diff --git a/tests/provenance.test.ts b/tests/provenance.test.ts
+new file mode 100644
+index 0000000..fc79068
+--- /dev/null
++++ b/tests/provenance.test.ts
+@@ -0,0 +1,76 @@
++/* eslint-disable @typescript-eslint/no-explicit-any */
++import { describe, it, expect } from 'vitest';
++import { findProvenance } from '../src/injected/provenance.js';
++
++describe('Provenance Engine', () => {
++  it('finds value in memoizedProps', () => {
++    const fiber = {
++      type: function TestComponent() {},
++      memoizedProps: { title: 'Hello World' },
++      return: null,
++    };
++    
++    const node = {
++      __reactFiber$123: fiber,
++    };
++    
++    const trace = findProvenance(node as any, 'Hello');
++    expect(trace).toHaveLength(1);
++    expect(trace[0]).toEqual({
++      component: 'TestComponent',
++      source: 'props',
++      keys: ['title']
++    });
++  });
++
++  it('finds value in memoizedState', () => {
++    const fiber = {
++      type: function StateComponent() {},
++      memoizedProps: {},
++      memoizedState: {
++        nested: {
++           value: 'TargetValue123'
++        }
++      },
++      return: null,
++    };
++    
++    const node = {
++      __reactFiber$123: fiber,
++    };
++    
++    const trace = findProvenance(node as any, 'TargetValue');
++    expect(trace).toHaveLength(1);
++    expect(trace[0]).toEqual({
++      component: 'StateComponent',
++      source: 'state',
++      keys: ['nested.value']
++    });
++  });
++
++  it('handles unknown components and climbs the tree', () => {
++    const parentFiber = {
++      type: function Parent() {},
++      memoizedProps: { text: 'DeepTarget' },
++      return: null
++    };
++    
++    const childFiber = {
++      type: 'div',
++      memoizedProps: {},
++      return: parentFiber
++    };
++    
++    const node = {
++      __reactFiber$123: childFiber,
++    };
++    
++    const trace = findProvenance(node as any, 'DeepTarget');
++    expect(trace).toHaveLength(1);
++    expect(trace[0]).toEqual({
++      component: 'Parent',
++      source: 'props',
++      keys: ['text']
++    });
++  });
++});

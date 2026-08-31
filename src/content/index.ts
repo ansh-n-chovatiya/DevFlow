@@ -55,6 +55,7 @@ import type {
   DraftStep,
   NetworkCall,
   PickResult,
+  MutationDelta,
 } from '../shared/types.js';
 /*
  * Type-only, so nothing of the agent is bundled into the content script — an
@@ -63,7 +64,10 @@ import type {
  * the wrong realm. See the note on `PickQuery` in that file for why the wire
  * shape lives there rather than in `shared/messages.ts`.
  */
-import type { AgentQueryReply, PickQuery } from '../shared/messages.js';
+import {
+  type AgentQueryReply,
+  type PickQueryBase,
+} from '../shared/messages.js';
 
 let isRecording = false;
 let isPaused = false;
@@ -82,10 +86,14 @@ let isPicking = false;
 /** Buffers filled by the MAIN-world agent, drained onto the next step. */
 let pendingLogs: ConsoleEntry[] = [];
 let pendingNetworkCalls: NetworkCall[] = [];
+let pendingMutations: MutationDelta[] = [];
+
+let mutationObserver: MutationObserver | null = null;
 
 function clearBuffers(): void {
   pendingLogs = [];
   pendingNetworkCalls = [];
+  pendingMutations = [];
   reactChains.clear();
 }
 
@@ -286,7 +294,7 @@ const pendingQueries = new Map<number, (reply: AgentQueryReply | null) => void>(
 let nextQueryId = 1;
 
 /** Asks the page a question about the last pick, resolving null if it never answers. */
-function askAgent(query: Omit<PickQuery, 'id'>): Promise<AgentQueryReply | null> {
+function askAgent(query: PickQueryBase): Promise<AgentQueryReply | null> {
   const id = nextQueryId++;
 
   return new Promise((resolve) => {
@@ -301,7 +309,7 @@ function askAgent(query: Omit<PickQuery, 'id'>): Promise<AgentQueryReply | null>
     });
 
     window.postMessage(
-      { __devflow_control__: CONTROL_MESSAGE_SOURCE, query: { ...query, id } as PickQuery },
+      { __devflow_control__: CONTROL_MESSAGE_SOURCE, query: { ...query, id } },
       '*',
     );
   });
@@ -335,6 +343,7 @@ chrome.runtime.onMessage.addListener((message: ContentRequest, _sender, sendResp
       sendResponse({
         consoleLogs: pendingLogs.splice(0),
         networkCalls: pendingNetworkCalls.splice(0),
+        mutations: pendingMutations.splice(0),
         url: redactUrl(window.location.href),
         title: document.title,
       });
@@ -441,6 +450,39 @@ async function applyState(recording: boolean, paused: boolean): Promise<void> {
   // interactions that will never become steps.
   syncAgent();
   renderIndicator();
+
+  if (recording && !paused) {
+    if (!mutationObserver) {
+      mutationObserver = new MutationObserver((mutations) => {
+        if (!isRecording || isPaused) return;
+        const timestamp = Date.now();
+        for (const mutation of mutations) {
+          if (mutation.target instanceof Element && mutation.target.id === INDICATOR_ID) continue;
+          pendingMutations.push({
+            type: mutation.type,
+            targetNodeName: mutation.target.nodeName.toLowerCase(),
+            attributeName: mutation.attributeName,
+            oldValue: mutation.oldValue,
+            addedNodesCount: mutation.addedNodes.length,
+            removedNodesCount: mutation.removedNodes.length,
+            timestamp,
+          });
+        }
+      });
+    }
+    if (document.body) {
+      mutationObserver.observe(document.body, {
+        childList: true,
+        attributes: true,
+        characterData: true,
+        subtree: true,
+        attributeOldValue: true,
+        characterDataOldValue: true
+      });
+    }
+  } else {
+    mutationObserver?.disconnect();
+  }
 }
 
 /**
@@ -882,6 +924,7 @@ function requestScreenshotAndSave(step: DraftStep, eventTime?: number, el?: Elem
     ...step,
     consoleLogs: pendingLogs.splice(0),
     networkCalls: pendingNetworkCalls.splice(0),
+    mutations: pendingMutations.splice(0),
   };
 
   // Only for steps with an element: a navigation has no region to watch, and

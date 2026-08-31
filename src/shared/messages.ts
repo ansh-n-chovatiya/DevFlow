@@ -480,27 +480,14 @@ export interface AgentPickMessage {
   result: PickResult;
 }
 
-/**
- * A question about the last pick, answered from the page.
- *
- * These are the two facts about a picked component that cannot cross
- * `postMessage` and therefore cannot be part of `PickResult`: the component's
- * compiled source, which is a function, and where it sits on screen, which is a
- * set of DOM nodes. react-source-locator read both by `eval`-ing into the page
- * and reaching into the globals its own injection had left there; here the
- * extension asks and the agent answers, over the channel that already exists.
- *
- * Added in the Wave 0 amendment. The freeze declared `READ_COMPONENT_SOURCE` and
- * `HIGHLIGHT_COMPONENT` on `ContentRequest` and then gave the content script no
- * way to reach the agent with either — the round trip stopped one hop short.
- * Package C found it, declared the shapes locally rather than editing a contract
- * six sibling sessions were compiling against, and reported. This is where they
- * belong.
- */
-export type PickQuery = { id: number } & (
+/** A question the picker asks the page without an ID. */
+export type PickQueryBase =
   | { kind: 'source'; group: TreeGroup; index: number }
   | { kind: 'highlight'; group: TreeGroup; index: number | null }
-);
+  | { kind: 'provenance'; targetValue: string };
+
+/** A question the picker asks the page, carrying the ID the page replies with. */
+export type PickQuery = { id: number } & PickQueryBase;
 
 /**
  * A query, in the same envelope as `ControlMessage`.
@@ -526,6 +513,8 @@ export interface AgentQueryReply {
   source?: string | null;
   /** `highlight` queries: whether the component was still on the page to draw. */
   ok?: boolean;
+  /** `provenance` queries: the provenance trace. */
+  trace?: unknown[];
 }
 
 export type AgentMessage =

@@ -64,6 +64,7 @@ import type {
 import { redactUrl } from '../core/redact/index.js';
 import { installStateInterceptor } from './state-interceptor.js';
 import { installRenderBlameInterceptor } from './render-blame.js';
+import { findProvenance } from './provenance.js';
 
 /**
  * What this agent has been told to do, and what it does until it is told.
@@ -1039,6 +1040,12 @@ function componentSource(group: TreeGroup, index: number): string | null {
 function answerQuery(query: PickQuery): void {
   if (query.kind === 'source') {
     emit({ kind: 'reply', id: query.id, source: componentSource(query.group, query.index) });
+    return;
+  }
+
+  if (query.kind === 'provenance') {
+    const activeEl = document.activeElement;
+    emit({ kind: 'reply', id: query.id, trace: findProvenance(activeEl || document.body, query.targetValue) });
     return;
   }
 

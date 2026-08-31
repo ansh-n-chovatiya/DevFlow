@@ -28,6 +28,12 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { compileToPlaywright } from './playwright-compiler.js';
+import { replayFlowInSandbox } from './sandbox-runner.js';
+import { explainFeature } from './navigator.js';
+import { traceDiagnostics } from './repair/diagnostics.js';
+import { generatePatch } from './repair/patch-generator.js';
+import { generateSyntheticActions } from './synthetic-actions.js';
 /*
  * The renderer, the body compaction and the source formatting all come from
  * `src/core/`, bundled here by `npm run build:mcp`. This file used to carry its
@@ -1639,6 +1645,87 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'get_value_provenance',
+      description: 'Trace a specific value (e.g. text from the DOM) back to its origin in the application by searching offline payload (DOM mutations and component chains) in the flow recording.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+          targetValue: { type: 'string', description: 'The exact string value to trace' },
+        },
+        required: ['id', 'targetValue'],
+      },
+    },
+    {
+      name: 'export_flow_to_playwright',
+      description: 'Generate a resilient Playwright E2E test script from a recorded DevFlow.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'replay_flow_in_sandbox',
+      description: 'Execute a recorded flow headlessly in a Playwright sandbox and return the test results. Requires npx and @playwright/test.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'explain_feature',
+      description: 'Explain how a feature works in natural language by tracing its implementation path (UI -> Route -> API) based on a recorded flow.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+          description: { type: 'string', description: 'Natural language description of the feature to explain (e.g., "How does the discount code get applied?")' },
+        },
+        required: ['id', 'description'],
+      },
+    },
+    {
+      name: 'diagnose_error',
+      description: 'Trace an error stack trace back to the causal event in a flow.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+          errorStack: { type: 'string', description: 'The error stack trace to diagnose' },
+        },
+        required: ['id', 'errorStack'],
+      },
+    },
+    {
+      name: 'generate_patch',
+      description: 'Generate an AST-based unified diff patch for a suspected component.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          suspectedComponent: { type: 'string', description: 'The component file to patch' },
+          sourceCode: { type: 'string', description: 'The source code of the component' },
+        },
+        required: ['suspectedComponent'],
+      },
+    },
+    {
+      name: 'generate_synthetic_actions',
+      description: 'Parse a fuzzy user report into structured replay steps.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          fuzzyReport: { type: 'string', description: 'The fuzzy user report to parse' },
+        },
+        required: ['fuzzyReport'],
+      },
+    },
+    {
       name: 'get_flow_screenshots',
       description:
         `Screenshots as base64 images, for at most ${MACHINE_RENDERING.maxImages} steps per call (a recording made under a different "screenshots per MCP call" setting carries its own limit). Only use this when you cannot read files from disk — otherwise read the screenshotPath values from get_flow, which costs nothing until you open one. Omit "steps" to list what is available without transferring any image data.`,
@@ -2510,6 +2597,43 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       return text(lines.join('\n'));
     }
 
+    case 'get_value_provenance': {
+      let flow;
+      try {
+        flow = await readFlow(args.id);
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+      
+      const target = args.targetValue;
+      if (!target) return failure('targetValue is required');
+      
+      const results = [];
+      // Search mutations for target value
+      for (let i = 0; i < flow.json.steps.length; i++) {
+        const step = flow.json.steps[i];
+        if (step.mutations) {
+          const matchingMutations = step.mutations.filter(m => 
+            (m.oldValue && m.oldValue.includes(target)) || 
+            (m.type === 'characterData')
+          );
+          if (matchingMutations.length > 0) {
+             const comp = stepComponent(flow.json, step);
+             results.push(`Found in Step ${i + 1}: ${matchingMutations.length} mutations.`);
+             if (comp) {
+                results.push(`  → Component: ${comp.name} (${formatSource(comp) || 'unknown'})`);
+             }
+          }
+        }
+      }
+      
+      if (!results.length) {
+         return text(`Target value "${target}" not found in offline mutation payload for flow ${args.id}. Live tracing via DevFlow extension is required for deep state/prop inspection.`);
+      }
+      
+      return text(`Provenance Trace for "${target}":\n\n${results.join('\n')}\n\nNote: This is an offline trace based on DOM mutations. Full prop/state extraction requires live DevFlow connection.`);
+    }
+
     case 'get_component_history': {
       if (!args.id) return failure('id is required');
       const history = getComponentHistory(args.id, args.since ? Number(args.since) : 0);
@@ -2551,6 +2675,65 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       ];
 
       return text(lines.join('\n'));
+    }
+
+    case 'export_flow_to_playwright': {
+      if (!args.id) return failure('id is required');
+      try {
+        const { json } = await readFlow(args.id);
+        const script = compileToPlaywright(json);
+        return text(`\`\`\`typescript\n${script}\n\`\`\``);
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+    }
+
+    case 'replay_flow_in_sandbox': {
+      if (!args.id) return failure('id is required');
+      try {
+        const { json } = await readFlow(args.id);
+        const result = await replayFlowInSandbox(json);
+        const prefix = result.success ? '✅ Replay Passed' : '❌ Replay Failed';
+        return text(`${prefix}\n\n**Output:**\n\`\`\`\n${result.output}\n\`\`\`\n\n**Generated Script:**\n\`\`\`typescript\n${result.script}\n\`\`\``);
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+    }
+
+    case 'explain_feature': {
+      if (!args.id) return failure('id is required');
+      if (!args.description) return failure('description is required');
+      try {
+        const { json } = await readFlow(args.id);
+        const explanation = explainFeature(args.description, json);
+        return text(explanation);
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+    }
+
+    case 'diagnose_error': {
+      if (!args.id) return failure('id is required');
+      if (!args.errorStack) return failure('errorStack is required');
+      try {
+        const { json } = await readFlow(args.id);
+        const diagnostic = traceDiagnostics(args.errorStack, json);
+        return text(JSON.stringify(diagnostic, null, 2));
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+    }
+
+    case 'generate_patch': {
+      if (!args.suspectedComponent) return failure('suspectedComponent is required');
+      const patch = generatePatch({ suspectedComponent: args.suspectedComponent }, args.sourceCode || '');
+      return text(JSON.stringify(patch, null, 2));
+    }
+
+    case 'generate_synthetic_actions': {
+      if (!args.fuzzyReport) return failure('fuzzyReport is required');
+      const actions = generateSyntheticActions(args.fuzzyReport, null);
+      return text(JSON.stringify(actions, null, 2));
     }
 
     default:
