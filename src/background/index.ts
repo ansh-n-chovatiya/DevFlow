@@ -58,6 +58,10 @@ import { mergeComponents } from '../core/react/table.js';
 import { mergeScripts } from '../features/react/inventory.js';
 import { clearResolverCaches, resolvePending } from '../features/react/resolver.js';
 import { ingestComponentPick } from '../features/arkg/ingest.js';
+import { buildPayload, pruneSteps } from '../features/mcp/send.js';
+import { sendDefaults } from '../features/export/defaults.js';
+import { readCurrentReact } from '../features/flows/store.js';
+import { renumber } from '../core/flow/index.js';
 
 /** Serialises captures so concurrent clicks never clobber each other's write. */
 let captureQueue: Promise<void> = Promise.resolve();
@@ -930,14 +934,39 @@ async function autoExportToMcp(steps: Step[]): Promise<void> {
    */
   const stamp = { ...(await readRecordingStamp()), ...renderedOverrides(settings) };
 
-  const payload = JSON.stringify({
-    id: `flow-${Date.now()}`,
-    name: `Flow ${new Date().toLocaleString()}`,
-    timestamp: Date.now(),
-    startUrl: steps[0]?.url,
-    ...(Object.keys(stamp).length ? { settings: stamp } : {}),
-    steps,
-  });
+  /*
+   * The same four switches the Send dialog obeys, on the path where nobody is
+   * there to check.
+   *
+   * This used to serialise `steps` raw — no `pruneSteps`, no `leanCalls`, no
+   * component table pruning — so `export.sendImages`, `sendNetwork`, `sendLogs`
+   * and `sendReact` meant nothing the moment auto-send was on. A user who had
+   * deliberately switched network bodies off still shipped every un-redacted
+   * request and response body, and every screenshot, on every recording. The
+   * settings are the user's answer to "what may leave this browser"; a second
+   * path that does not read them is not a second path, it is a hole.
+   *
+   * `sendFlow` is the shared implementation everywhere else, and cannot be used
+   * here: it finishes by writing the prompt to `navigator.clipboard`, which a
+   * service worker does not have, and it asks the worker to resolve components
+   * over `chrome.runtime` — a message this context would be sending to itself.
+   * The payload is the part worth sharing, and it is shared.
+   */
+  const include = sendDefaults(settings);
+  const sending = pruneSteps(renumber(steps), include);
+  const react = include.react ? await readCurrentReact(sending) : null;
+
+  const payload = JSON.stringify(
+    buildPayload(
+      `flow-${Date.now()}`,
+      `Flow ${new Date().toLocaleString()}`,
+      sending,
+      Date.now(),
+      react,
+      include,
+      stamp,
+    ),
+  );
 
   /*
    * The same timeout the Send dialog uses, which this path did not have at all.

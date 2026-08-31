@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**Auto-send now obeys the four switches that say what may leave the browser.**
+`Include screenshots`, `network`, `console` and `components` were read by the
+Send dialog and by nothing else, so turning `Send flows to Claude Code
+automatically` on quietly overrode all four: every recording went over with its
+un-redacted request and response bodies, its console output, its screenshots and
+its source paths, whatever the settings said. It builds the same payload the
+dialog does now, and says in `omitted` what it withheld. If you have had
+auto-send on, flows already in `~/.devflow/flows` were sent under the old
+behaviour and still hold whatever your app sent.
+
 **A flow can become a Playwright or Cypress test.** `Export` offers two more
 formats beside the zip, the Markdown and the JSON, and they are a runnable spec
 rather than a transcript: the selector for each step is chosen by how well it
