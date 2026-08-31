@@ -1,5 +1,55 @@
 # Changelog
 
+## Unreleased
+
+**Auto-send now obeys the four switches that say what may leave the browser.**
+`Include screenshots`, `network`, `console` and `components` were read by the
+Send dialog and by nothing else, so turning `Send flows to Claude Code
+automatically` on quietly overrode all four: every recording went over with its
+un-redacted request and response bodies, its console output, its screenshots and
+its source paths, whatever the settings said. It builds the same payload the
+dialog does now, and says in `omitted` what it withheld. If you have had
+auto-send on, flows already in `~/.devflow/flows` were sent under the old
+behaviour and still hold whatever your app sent.
+
+**A flow can become a Playwright or Cypress test.** `Export` offers two more
+formats beside the zip, the Markdown and the JSON, and they are a runnable spec
+rather than a transcript: the selector for each step is chosen by how well it
+survives the next refactor — the accessible name first, then role and name, then
+the visible text of a button or link, and a CSS path only as a last resort,
+where the generated line says in a comment that it is fragile and will break.
+Every response the recording captured comes with it as a route mock, so the
+test does not need the API that was running when you recorded it. A body that
+was cut at the capture cap is left out rather than mocked, and the script says
+which call it skipped and why — half a JSON body is not the response the page
+received, and a mock that lies is worse than a mock that is missing.
+
+**DevFlow keeps a knowledge graph of the app it has been watching.** Every flow
+you send, and every component you pick, is recorded in a small SQLite graph in
+`~/.devflow/arkg.db`: which components render inside which, which endpoints
+they call, how long those took, and how often they failed. Claude can read it
+with three new tools — `get_app_architecture` for the shape of the app,
+`get_component_history` for one component over time, and `get_anomalies` for
+what is failing or slow relative to its own past. Sending the same recording
+twice counts it once, so the numbers mean what they say. Observations older than
+90 days are swept on the same pass that enforces flow retention.
+
+The graph is additive and never load-bearing: if it cannot be opened — a corrupt
+file, or a native module that will not load after a Node upgrade — the server
+says so once and every other tool carries on unaffected.
+
+**Starting a recording asks before it deletes the last one.** The steps from a
+recording you have stopped but not saved are not written anywhere else, and
+`Start recording` swept them silently, from a button sitting directly above the
+card counting them. It now says how many are about to go, and `Reload and
+record` asks before the reload rather than after.
+
+**A component whose file was found says why it cannot be opened.** When no
+project root is set, the path resolves and `Open in Editor` cannot use it. The
+explanation for that was a tooltip on a disabled button, which Chrome does not
+render — so the first run of every install showed a correct source path beside a
+dead button with nothing to say why. It is on the card now.
+
 ## 3.1.1 — 2026-08-29
 
 **The panel's result view reads in the right order.** `Source preview` is the

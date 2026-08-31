@@ -81,8 +81,20 @@ describe('the published MCP server', () => {
      * imported only on the `npx devflow-mcp-server install` path, so a publish without
      * it passes every test that runs the server and fails the one command a
      * person types before they have a server at all.
+     *
+     * `arkg.js` is the third: the server reaches it through a guarded dynamic
+     * import, so leaving it out throws nothing and fails nothing — every tool
+     * keeps working and the knowledge graph is simply, permanently, absent.
+     * That is the one failure mode a test has to hold, because nothing else
+     * would ever report it.
      */
-    expect(server.files).toEqual(['server.js', 'install.js', 'core.js', 'README.md']);
+    expect(server.files).toEqual([
+      'server.js',
+      'install.js',
+      'core.js',
+      'arkg.js',
+      'README.md',
+    ]);
   });
 
   it('is not private, unlike the extension package', () => {

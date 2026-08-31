@@ -106,6 +106,7 @@ describe('no surface resolves its settings once, at import time', () => {
     'src/features/mcp/remote.ts',
     'src/features/mcp/machine.ts',
     'src/features/flows/store.ts',
+    'src/features/arkg/ingest.ts',
     'src/features/export/download.ts',
   ];
 

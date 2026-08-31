@@ -257,7 +257,7 @@ describe('resultCard', () => {
     );
   });
 
-  it('renders a disabled Open in Editor button with tooltip when there is no link', () => {
+  it('says on the card, not in a tooltip, that no project root is set', () => {
     const card = resultCard({ source: resolved(), link: null, onOpenEditor: vi.fn() });
 
     const button = [...card.querySelectorAll('button')].find((node) =>
@@ -265,10 +265,17 @@ describe('resultCard', () => {
     );
     expect(button).toBeDefined();
     expect(button?.disabled).toBe(true);
-    expect(button?.title).toBe('Set a project root in Settings to enable editor links.');
     expect(text(card, '.result-card__path-text')).toBe('src/checkout/CartSummary.tsx:42:7');
-    // A missing link is not an error, so nothing about the card says it is.
-    expect(card.querySelector('.banner')).toBeNull();
+
+    /*
+     * The explanation used to live only in `button.title`. A disabled button
+     * suppresses pointer events, so Chrome never rendered that tooltip and the
+     * first run of every install showed a correct path beside a dead button
+     * with nothing to say why. It has to be in the card's own text.
+     */
+    const banner = card.querySelector('.result-card__unconfigured');
+    expect(banner).not.toBeNull();
+    expect(banner?.textContent).toContain('No project root set');
   });
 
   it('renders a disabled Open in Editor button for a component with no original source', () => {

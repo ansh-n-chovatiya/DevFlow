@@ -399,9 +399,51 @@ async function beginRecording(): Promise<void> {
   window.close();
 }
 
+/**
+ * Which question the discard dialog is currently asking.
+ *
+ * One dialog, two callers. `Discard flow` ends there; `Start recording` only
+ * passes through it on its way to a new recording, and has to know the answer
+ * rather than act on it — hence the resolver rather than a second listener.
+ */
+let discardAsksFor: 'discard' | 'start' = 'discard';
+let settleStart: ((confirmed: boolean) => void) | null = null;
+
+/**
+ * Ask before a new recording deletes the last one.
+ *
+ * `beginRecording` sweeps the screenshots and empties `recordedSteps`, and the
+ * steps it is about to delete are not written anywhere else until somebody has
+ * pressed `Save to library` — which lives behind an overflow menu two surfaces
+ * away. The button that destroys them sits directly above the card that counts
+ * them, so the one gesture most likely to follow "I stopped recording" was also
+ * the one that threw the recording away, silently.
+ *
+ * Resolves true when there is nothing to lose, so both callers can await it
+ * unconditionally.
+ */
+function confirmReplacingSteps(): Promise<boolean> {
+  const count = state.steps.length;
+  if (count === 0) return Promise.resolve(true);
+
+  discardAsksFor = 'start';
+  dom.discardBody.textContent =
+    count === 1
+      ? 'The one recorded step has not been saved to the library, and starting a new flow deletes it. This cannot be undone.'
+      : `The ${count} recorded steps have not been saved to the library, and starting a new flow deletes them. This cannot be undone.`;
+  dom.discardDialog.showModal();
+
+  return new Promise((resolve) => {
+    settleStart = resolve;
+  });
+}
+
 dom.start.addEventListener('click', () => {
-  dom.start.disabled = true;
-  void beginRecording();
+  void (async () => {
+    if (!(await confirmReplacingSteps())) return;
+    dom.start.disabled = true;
+    await beginRecording();
+  })();
 });
 
 /**
@@ -417,6 +459,10 @@ dom.reload.addEventListener('click', () => {
       paint();
       return;
     }
+
+    // Asked before the reload, not after: a reload the user did not want is
+    // still a reload, and by then the page they were looking at is gone.
+    if (!(await confirmReplacingSteps())) return;
 
     dom.reload.disabled = true;
     await reloadAndWait(found.target.tabId, state.live['recording.reloadTimeoutMs']);
@@ -488,7 +534,19 @@ dom.clear.addEventListener('click', () => {
 });
 
 dom.discardDialog.addEventListener('close', () => {
-  if (dom.discardDialog.returnValue !== 'discard') return;
+  const confirmed = dom.discardDialog.returnValue === 'discard';
+
+  // Asked on behalf of `Start recording`: hand the answer back and let that
+  // path do the deleting, so the steps are swept once rather than twice.
+  if (discardAsksFor === 'start') {
+    discardAsksFor = 'discard';
+    const settle = settleStart;
+    settleStart = null;
+    settle?.(confirmed);
+    return;
+  }
+
+  if (!confirmed) return;
 
   void (async () => {
     await sendToWorker({ type: 'CLEAR_STEPS' });

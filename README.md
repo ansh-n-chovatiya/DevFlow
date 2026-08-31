@@ -1,24 +1,36 @@
 # DevFlow
 
-**Record what happened in the browser, and find the file it happened in.**
+**The Ambient Runtime-to-Source Intelligence Platform.**
+*Record what happened in the browser, trace causality across runtime state, link directly to source code AST, and accumulate living knowledge of your application across every session.*
 
-DevFlow is a Chrome extension for debugging your own web app. You record a flow —
-a run through the thing that is broken — and every step comes back with the
-element you touched, the requests it fired, the console output it produced, a
-screenshot, and, on a React page, the component behind it and **the file and line
-that component was written in**. Or you skip the recording entirely, point at
-something on the page, and get the same answer for that one component.
-
-Both are the same question — *where in my code is this?* — so both go through the
-same engine and come back on the same card, whether it was reached from a picked
-element or from a step recorded twenty minutes ago.
-
-The end of that is usually a keystroke: **Open in Editor** puts your cursor on
-the line.
+DevFlow is an AI-assisted developer platform and Chrome extension for understanding, navigating, debugging, and modifying web applications. By connecting **live browser execution (DOM, React Fiber, state stores, wire requests) ↔ source code AST ↔ Accumulating Runtime Knowledge Graph ↔ AI coding agents**, DevFlow enables deterministic, automated development workflows — not just when something breaks, but continuously as you build.
 
 ---
 
-## What it does
+## 🧭 Platform Vision & Architecture
+
+- 🌟 **[Grand Vision & Architecture (`VISION.md`)](./VISION.md):** The core thesis, Accumulating Runtime Knowledge Graph (ARKG), unified runtime-to-source graph, 10 novel capabilities, 18-stage autonomous debugging loop, prioritization matrix, competitive moat analysis, and the ultimate 2–3 year vision.
+- 🗺️ **[Implementation Roadmap & Phased Plan (`ROADMAP_AND_PHASES.md`)](./ROADMAP_AND_PHASES.md):** 5-phase rollout plan (Phase 0: ARKG Foundation → Phase 5: Ambient Intelligence Platform), modular work streams, and production-grade engineering benchmarks.
+
+```
+       TRADITIONAL AI CODING TOOLS                     DEVFLOW CORE MOAT
+┌──────────────────────────────────────┐     ┌──────────────────────────────────────┐
+│  Static Codebase + LLM + Terminal    │     │      LIVE RUNTIME EXECUTION FABRIC   │
+│  • Guesses runtime state             │     │  (DOM + Fiber + State + Wire + DB)   │
+│  • Reads logs post-facto             │     │                  ↕                   │
+│  • Blind to UI/render lifecycle      │     │  UNIFIED RUNTIME-TO-SOURCE GRAPH     │
+│  • Trial-and-error reproduction      │     │                  ↕                   │
+│                                      │     │ ACCUMULATING APPLICATION INTELLIGENCE│
+└──────────────────────────────────────┘     └──────────────────────────────────────┘
+```
+
+### The Strategic Difference
+
+Other AI tools are debuggers you invoke when something breaks. DevFlow is the **ambient intelligence layer** between your running application and your source code — always on, accumulating knowledge of your app across every session, every developer, and every deployment. The Accumulating Runtime Knowledge Graph (ARKG) is DevFlow's deepest competitive moat: it knows your application's normal behavior, its history, and its architecture as well as your best senior engineer does.
+
+---
+
+## What it does today
 
 **Record a flow.** Open the popup, press **Start recording**, and use the page.
 Clicks, typed values and navigations become steps; network calls and console
@@ -47,9 +59,9 @@ Finding the file works most of the time and not always, and when it does not,
 DevFlow says which way it failed instead of showing a blank. A bundle served
 without a source map, a map that would not parse, a component sitting in a lazy
 chunk the page never loaded, a match found in more than one place — each comes
-with a sentence, because *this component has no source* is discouraging and
-usually untrue, while *most likely a lazy chunk that was never fetched* tells you
-to load that route and pick again.
+with a sentence and a confidence score, because *this component has no source* is
+discouraging and usually untrue, while *most likely a lazy chunk that was never
+fetched* tells you to load that route and pick again.
 
 An ambiguous match says how many places matched and across how many scripts. The
 path it offers may be the wrong one of them, and that is better learnt before you
@@ -58,6 +70,25 @@ open it than after you edit it.
 When the compiled position is known but the original is not, the card still
 offers **Open in Sources** in the DevTools panel — the minified line is a worse
 answer than the original, and a much better one than nothing.
+
+---
+
+## Where DevFlow is going
+
+What is described above is what works today. The roadmap below is what is being
+built, and a phase is called done when `npm run verify` proves it — see the
+status key at the top of [`ROADMAP_AND_PHASES.md`](./ROADMAP_AND_PHASES.md).
+
+| Phase | Capability | Status |
+|---|---|---|
+| **Phase 0** | Accumulating Runtime Knowledge Graph (ARKG) — the foundational data layer | In progress: the graph, its ingestion pipeline and its three MCP tools are in. `state_keys` and `git_commits` nodes wait on Phases 1 and 3 |
+| **Phase 1** | Runtime-to-Source Intelligence: source mapping with confidence scoring, causal threading, "Why did this render?" | Partly done: source mapping and the locator are the shipped product. Causal threading, state-store inspection and render blame are not started |
+| **Phase 2** | Autonomous bug reproduction, "Why is this value here?" provenance, Interaction-to-Test compiler, natural language app navigator | Started: the Interaction-to-Test compiler exports Playwright and Cypress. The rest is Months 4–6 |
+| **Phase 3** | Full-stack wire & DB lineage (OTel), Living Architecture Map, Temporal Diff & regression detection, Source → Browser live link | Months 7–9 |
+| **Phase 4** | Production telemetry ingestion, autonomous regression watcher (CI), self-healing CI bot, Accessibility Autopilot | Months 10–12 |
+| **Phase 5** | Team intelligence, counterfactual replay, platform-level ambient intelligence | Year 2+ |
+
+The ultimate experience: a developer right-clicks a broken button, types *"Why is this disabled?"*, and gets an instant answer tracing the exact state, the event that set it, the source line, and the commit that introduced the bug — along with a two-line fix, a generated test, and a PR link. Under 5 minutes. Zero manual investigation.
 
 ---
 
