@@ -34,10 +34,13 @@ import { createRequire } from 'node:module';
  * own smaller copy of each; see `src/core/mcp-bundle.ts` for what that cost.
  */
 import {
+  buildCausalGraph,
   callFailed,
+  causesOf,
   compactBody,
   DEFAULTS,
   describeStamp,
+  effectsOf,
   exportToMarkdown,
   fieldFor,
   flowHost,
@@ -2563,6 +2566,57 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'get_causal_chain',
+      description:
+        'What led to one event in a recording — a console error, a network call, a state change — walked ' +
+        'backwards to the interaction it came from. Each link says the evidence it rests on and how far ' +
+        'that evidence goes, because a guessed edge presented as a known one is worse than no edge: ' +
+        '"attributed" is temporal containment and nothing more (a background poll on a timer lands in the ' +
+        'same place as a click\u2019s own request), "named" means the log line contains the request\u2019s own ' +
+        'path, "echoed" means a value the response carried turned up in what the store was written with, ' +
+        'and "followed" is ordering after a failed call and nothing else. The chain is derived from the ' +
+        'recording each time it is asked for and is not stored, so it covers every flow on disk. Call it ' +
+        'with a ref from get_flow_errors or from this tool\u2019s own output; omit "event" and it lists the ' +
+        'events worth asking about.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+          event: {
+            type: 'string',
+            description:
+              'An event ref: "step:3", "net:3.1", "log:3.2", "state:3/redux:0/0". Omit to list the refs this recording has.',
+          },
+          depth: {
+            type: 'number',
+            description: 'How many links to walk back. Defaults to 8; honest chains are two or three long.',
+          },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'get_effects_of',
+      description:
+        'What followed from one event in a recording — the same graph as get_causal_chain, walked the other ' +
+        'way. Given the click, it reaches the requests it made, the state those requests were echoed into ' +
+        'and the errors that followed. Given a failing request, it reaches what the app then logged and ' +
+        'wrote. Every link states its evidence, on the same four bases and with the same limits.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+          event: {
+            type: 'string',
+            description:
+              'An event ref: "step:3", "net:3.1", "log:3.2", "state:3/redux:0/0". Omit to list the refs this recording has.',
+          },
+          depth: { type: 'number', description: 'How many links to walk forward. Defaults to 8.' },
+        },
+        required: ['id'],
+      },
+    },
+    {
       name: 'get_app_architecture',
       description:
         'What every recording and every component pick together say about this application: the components seen most often, the endpoints each of them calls, how often those fail, and how long they take. This is the accumulated graph, not one recording — read it before opening a flow, to know whether the thing that just broke is usually reliable. Names the id each component is keyed by, for get_component_history.',
@@ -2640,6 +2694,122 @@ const EMPTY_GRAPH =
 
 /** A failure rate worth printing, as a whole percent. Nothing, when nothing failed. */
 const failPct = (rate) => (rate > 0 ? `  ${Math.round(rate * 100)}% fail` : '');
+
+/**
+ * The edges hanging off one component, grouped by what they mean.
+ *
+ * `getComponent` has always returned these and no tool has ever printed one, so
+ * every edge the graph holds about a component — the endpoints it calls, the
+ * stores it was observed reading — was reachable only by opening the database
+ * by hand. A node type nobody can read is, from outside, a node type that was
+ * never written, which makes the write and the renderer one deliverable.
+ *
+ * Bounded per group rather than overall, so a component that calls forty
+ * endpoints cannot push its one `subscribes_to` edge off the end: the rare edge
+ * is the one worth seeing.
+ */
+/**
+ * The events worth asking a causal question about, and what each would answer.
+ *
+ * Not every event — a forty-step recording has hundreds, and a listing of all
+ * of them is the tokens the drill-down exists to save. The ones here are the
+ * ones a chain actually terminates at: the failures, and the steps. An event
+ * with no link either way is left out entirely, because walking from it is a
+ * call whose answer is already known to be "nothing".
+ */
+const CAUSAL_INDEX_LIMIT = 12;
+
+function renderCausalIndex(json, graph, backwards) {
+  const verb = backwards ? 'led to' : 'followed from';
+  const lines = [
+    `Causal events in "${json.name}" — ${graph.events.length} event${graph.events.length === 1 ? '' : 's'}, ` +
+      `${graph.links.length} link${graph.links.length === 1 ? '' : 's'}.`,
+  ];
+
+  if (!graph.links.length) {
+    lines.push(
+      '',
+      'No link was found in this recording. Every event is still attributed to its step — that is what ' +
+        'get_flow_step shows — but nothing here named a request, echoed a response into a store, or ' +
+        'followed a failed call, which are the three things this analysis looks for.',
+    );
+    return lines.join('\n');
+  }
+
+  const linked = new Set();
+  for (const link of graph.links) {
+    linked.add(link.from);
+    linked.add(link.to);
+  }
+
+  // Failures first: an error is the event somebody is holding when they reach
+  // for this tool, and a listing that opens with step 1 makes them scroll.
+  const ranked = graph.events
+    .filter((event) => linked.has(event.ref))
+    .sort((a, b) => rankCausal(a) - rankCausal(b) || a.step - b.step);
+
+  lines.push('', `Ask what ${verb} any of these:`);
+  for (const event of ranked.slice(0, CAUSAL_INDEX_LIMIT)) {
+    lines.push(`  ${event.ref}  ${event.label}`);
+  }
+  if (ranked.length > CAUSAL_INDEX_LIMIT) {
+    lines.push(`  \u2026 and ${ranked.length - CAUSAL_INDEX_LIMIT} more events carrying a link`);
+  }
+  return lines.join('\n');
+}
+
+/** Console entries, then network, then state, then steps — worst news first. */
+function rankCausal(event) {
+  if (event.kind === 'console') return 0;
+  if (event.kind === 'network') return 1;
+  if (event.kind === 'state') return 2;
+  return 3;
+}
+
+const EDGES_PER_GROUP = 6;
+
+const EDGE_HEADINGS = {
+  calls: 'Calls, most often first:',
+  renders: 'Renders, most often first:',
+  maps_to: 'Written in:',
+  subscribes_to:
+    'Reads these stores — observed, meaning this component\u2019s own fiber carried the dependency, not that it sits underneath the provider:',
+  caused_by: 'Causally linked, with the evidence each link rests on:',
+};
+
+function renderEdges(lines, component) {
+  const edges = Array.isArray(component.edges) ? component.edges : [];
+  if (!edges.length) return;
+
+  const groups = new Map();
+  for (const edge of edges) {
+    const list = groups.get(edge.type) ?? [];
+    list.push(edge);
+    groups.set(edge.type, list);
+  }
+
+  for (const [type, list] of groups) {
+    // An unrecognised type still prints, under its own name. An edge written by
+    // a newer graph than this renderer is data, and hiding it is how two halves
+    // of one package quietly stop agreeing about what is known.
+    lines.push('', EDGE_HEADINGS[type] ?? `${type}:`);
+    const sorted = [...list].sort((a, b) => (b.frequency ?? 0) - (a.frequency ?? 0));
+    for (const edge of sorted.slice(0, EDGES_PER_GROUP)) {
+      const outgoing = edge.from_node_type === 'component' && edge.from_node_id === component.id;
+      const other = outgoing
+        ? `${edge.to_node_type} ${edge.to_node_id}`
+        : `${edge.from_node_type} ${edge.from_node_id}`;
+      lines.push(
+        `  ${outgoing ? '' : '← '}${other}  ${edge.frequency ?? 1}x${failPct(edge.failure_rate)}` +
+          `${edge.basis ? `  ${edge.basis}` : ''}${edge.confidence ? ` (${edge.confidence} confidence)` : ''}`,
+      );
+    }
+    if (sorted.length > EDGES_PER_GROUP) {
+      lines.push(`  \u2026 and ${sorted.length - EDGES_PER_GROUP} more`);
+    }
+  }
+}
+
 
 /** A stored millisecond timestamp as a date. ISO, not a locale: this is read on a machine, by a model. */
 const day = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : 'unknown');
@@ -4010,6 +4180,94 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
      * text. Collapsing the two produces the worst reply of the set — an empty
      * list that reads as "your app is fine".
      */
+    case 'get_causal_chain':
+    case 'get_effects_of': {
+      let flow;
+      try {
+        flow = await readFlow(args.id);
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+
+      const backwards = name === 'get_causal_chain';
+      const graph = buildCausalGraph(flow.json);
+      const byRef = new Map(graph.events.map((event) => [event.ref, event]));
+
+      /*
+       * No event named: list what there is to ask about, rather than refusing.
+       *
+       * A ref is a syntax, and a tool whose first answer is "that is not a
+       * valid ref" has made the caller guess at one. The listing is the cheap
+       * call that makes the expensive one right, exactly as `get_step_detail`
+       * with no `include` prices its parts before one is asked for.
+       */
+      const asked = typeof args.event === 'string' ? args.event.trim() : '';
+      if (!asked) return text(renderCausalIndex(flow.json, graph, backwards));
+
+      const event = byRef.get(asked);
+      if (!event) {
+        return failure(
+          `"${asked}" names no event in "${flow.json.name}". Call ${name} with no "event" to see the ` +
+            'refs this recording has; they are of the form "step:3", "net:3.1", "log:3.2" or ' +
+            '"state:3/redux:0/0", and they are derived from the step numbering, so a ref from a ' +
+            'different recording will not resolve here.',
+        );
+      }
+
+      const depth = Number.isFinite(Number(args.depth)) && Number(args.depth) > 0
+        ? Math.trunc(Number(args.depth))
+        : undefined;
+      const links = backwards ? causesOf(graph, asked, depth) : effectsOf(graph, asked, depth);
+
+      const lines = [
+        `${backwards ? 'What led to' : 'What followed'} ${event.ref} — ${event.label}`,
+        `Step ${event.step} of ${flow.json.steps.length} in "${flow.json.name}".`,
+      ];
+
+      if (!links.length) {
+        /*
+         * Nothing found is three different facts and this says which.
+         *
+         * An event with no cause is ordinary — a step *is* a root, the user
+         * caused it — and reporting that as "nothing found" would read as a
+         * failure of the analysis rather than as the answer.
+         */
+        lines.push(
+          '',
+          backwards
+            ? event.kind === 'step'
+              ? 'Nothing led to it: a step is where a chain starts. The user did this, and DevFlow records what followed rather than what preceded.'
+              : 'Nothing in this recording links to it. It was attributed to its step, but no request named it, no response was echoed into it, and no failed call preceded it.'
+            : event.kind === 'console'
+              ? 'Nothing followed it. A console entry is where a chain ends — DevFlow observes what the app said, not what the app did about it.'
+              : 'Nothing in this recording followed from it.',
+        );
+        return text(lines.join('\n'));
+      }
+
+      lines.push(
+        '',
+        `${links.length} link${links.length === 1 ? '' : 's'}, nearest first — each with the evidence it rests on:`,
+      );
+      for (const link of links) {
+        const other = byRef.get(backwards ? link.from : link.to);
+        lines.push(
+          `  ${backwards ? link.from : link.to}  ${other ? other.label : '(unknown)'}`,
+          `      ${link.basis} · ${link.confidence} confidence — ${link.detail}`,
+        );
+      }
+
+      lines.push(
+        '',
+        'The bases, in the order they are worth trusting: "echoed" and "named" are evidence from the ' +
+          'events themselves; "attributed" is only that the recorder filed them under the same step; ' +
+          '"followed" is only that one came after a failed call. ' +
+          `${backwards ? 'get_effects_of' : 'get_causal_chain'} walks the same graph the other way, and ` +
+          'get_flow_step opens any step named above.',
+      );
+      return text(lines.join('\n'));
+    }
+
     case 'get_app_architecture': {
       if (!arkg) return failure(NO_GRAPH);
 
@@ -4144,6 +4402,7 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
             ? 'It appears in no flow observed since that timestamp — it may have been seen only before then, or only from a pick in the panel.'
             : 'It appears in no recorded flow: everything above came from picking it in the DevTools panel.',
         );
+        renderEdges(lines, component);
         return text(lines.join('\n'));
       }
 
@@ -4157,6 +4416,7 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
             `${flow.failure_count ? `, ${flow.failure_count} failures` : ''}`,
         );
       }
+      renderEdges(lines, component);
       lines.push('', 'get_flow with one of those ids opens the recording itself.');
       return text(lines.join('\n'));
     }

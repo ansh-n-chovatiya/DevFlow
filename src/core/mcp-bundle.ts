@@ -25,6 +25,27 @@ export { stepEnclosing, stepOwner, formatSource } from './react/attribution.js';
 export { snippet } from './source/snippet.js';
 
 /*
+ * The causal graph, derived on this side rather than shipped with the flow.
+ *
+ * It is computed from facts a recording already carries — which step a call was
+ * attributed to, what a log line says, what a patch wrote — so storing it would
+ * be a second copy to keep in sync with the first. Deriving it here has the
+ * property that matters more: every recording already on somebody's disk gets
+ * the analysis, and a rule improved in a later release reaches all of them
+ * rather than only the ones recorded afterwards.
+ *
+ * `arkg.js` imports it from the built `core.js` too, which is why it is here and
+ * not reached for through `src/`: the server package has no TypeScript.
+ */
+export {
+  buildCausalGraph,
+  causesOf,
+  effectsOf,
+  eventRef,
+  parseEventRef,
+} from './causal/index.js';
+
+/*
  * The one exception to "core only", and it earns it.
  *
  * `describeStamp` turns a flow's `settings` into the sentences the walkthrough
