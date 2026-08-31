@@ -15,14 +15,21 @@ import { describeStamp } from '../settings/stamp.js';
 import { renderLimits, type RenderLimits } from '../settings/render.js';
 import { load as loadSettings, resolve } from '../settings/index.js';
 import { readRecordingStamp, renderedOverrides } from '../settings/recording.js';
-import { readCurrentReact } from '../flows/store.js';
+import { readCurrentReact, readCurrentState } from '../flows/store.js';
 import { sendToWorker } from '../../shared/messages.js';
 import {
   FLOW_SCHEMA_VERSION,
 } from '../../shared/constants.js';
 import { flowError } from '../../shared/errors.js';
 import { err, ok, type Result } from '../../shared/result.js';
-import type { ExportOptions, FlowPayload, FlowReact, Overrides, Step } from '../../shared/types.js';
+import type {
+  ExportOptions,
+  FlowPayload,
+  FlowReact,
+  FlowState,
+  Overrides,
+  Step,
+} from '../../shared/types.js';
 
 /**
  * What a send carries when nobody has chosen otherwise.
@@ -263,6 +270,12 @@ export function buildPayload(
    * then absent from the payload rather than sent as an empty object.
    */
   settings: Overrides = {},
+  /**
+   * What the recording saw of the app's state. `null` for a flow archived
+   * before state capture existed, which is not the same as "nothing changed"
+   * and is the one case the payload has nothing to say about.
+   */
+  state: FlowState | null = null,
 ): FlowPayload {
   const components = react ? pruneComponents(steps, react.components) : {};
   const carries = react !== null && react !== undefined && Object.keys(components).length > 0;
@@ -291,6 +304,11 @@ export function buildPayload(
     // stamp is what shaped the bodies below.
     steps: attributed.map((step) => leanCalls(step, bodyLimits(settings))),
     ...(carries ? { react: { ...react, components } } : {}),
+    // Sent whole, including when it says nothing was read. That is the whole
+    // point of `FlowState.read` and `FlowState.note`: on the receiving side,
+    // "state capture was off" and "no store changed" are indistinguishable
+    // without them, and a reader that cannot tell picks the worse one.
+    ...(state ? { state } : {}),
   };
 }
 
@@ -334,6 +352,8 @@ export async function sendFlow(
   /** An archived flow's frozen stamp. Omitted for the live recording, whose
    *  stamp is read back here — the same split as `archivedReact`. */
   archivedSettings?: Overrides | null,
+  /** An archived flow's frozen state, on the same split as `archivedReact`. */
+  archivedState?: FlowState | null,
 ): Promise<Result<SendResult>> {
   if (steps.length === 0) return err(flowError('MCP_UNREACHABLE', 'nothing to send'));
 
@@ -379,6 +399,7 @@ export async function sendFlow(
   // refs left, so the table would prune to nothing, but not touching storage is
   // the clearer promise.
   const react = include.react ? (archivedReact ?? (await readCurrentReact(sending))) : null;
+  const state = archivedState ?? (await readCurrentState());
   // The recording's own time, not the moment Send was pressed. The server
   // prints this as "Recorded" and orders `list_flows` by it, so stamping now
   // dated a week-old flow to this afternoon and pushed it above the recording
@@ -391,6 +412,7 @@ export async function sendFlow(
     react,
     include,
     stamp,
+    state,
   );
   const first = payload.startUrl;
 

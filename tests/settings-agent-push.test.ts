@@ -24,6 +24,13 @@ import {
   LOG_ARG_CAP,
   MAX_COMPONENT_CHAIN,
   MAX_FIBER_WALK,
+  CAPTURE_STATE,
+  STATE_MAX_DEPTH,
+  STATE_MAX_ENTRIES,
+  STATE_MAX_KEYS,
+  STATE_MAX_STORES,
+  STATE_SETTLE_MS,
+  STATE_STRING_CAP,
   REACT_PREWARM_TTL_MS,
 } from '../src/shared/constants.js';
 import { DEFAULTS } from '../src/features/settings/fields.js';
@@ -85,6 +92,17 @@ describe('what the content script sends', () => {
       maxComponentChain: MAX_COMPONENT_CHAIN,
       maxFiberWalk: MAX_FIBER_WALK,
       prewarmTtlMs: REACT_PREWARM_TTL_MS,
+      // The state sampler's seven, for the same reason: the stores are read off
+      // the page's own fibers, so the caps have to be in the page.
+      // `recording.statePatchOps` is deliberately absent — it budgets the diff,
+      // which happens on the isolated side.
+      captureState: CAPTURE_STATE,
+      stateSettleMs: STATE_SETTLE_MS,
+      stateMaxDepth: STATE_MAX_DEPTH,
+      stateMaxKeys: STATE_MAX_KEYS,
+      stateMaxEntries: STATE_MAX_ENTRIES,
+      stateStringCap: STATE_STRING_CAP,
+      stateMaxStores: STATE_MAX_STORES,
     });
   });
 
@@ -96,6 +114,7 @@ describe('what the content script sends', () => {
     expect(sent).toEqual([
       'bodyCap',
       'captureBodies',
+      'captureState',
       'captureUncaught',
       'consoleLevels',
       'logArgCap',
@@ -103,6 +122,12 @@ describe('what the content script sends', () => {
       'maxFiberWalk',
       'prewarmTtlMs',
       'stackFrames',
+      'stateMaxDepth',
+      'stateMaxEntries',
+      'stateMaxKeys',
+      'stateMaxStores',
+      'stateSettleMs',
+      'stateStringCap',
     ]);
   });
 

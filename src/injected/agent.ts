@@ -55,6 +55,13 @@ import {
   MAX_FIBER_WALK,
   REACT_PREWARM_TTL_MS,
   STACK_FRAMES,
+  CAPTURE_STATE,
+  STATE_MAX_DEPTH,
+  STATE_MAX_ENTRIES,
+  STATE_MAX_KEYS,
+  STATE_MAX_STORES,
+  STATE_SETTLE_MS,
+  STATE_STRING_CAP,
 } from '../shared/constants.js';
 import type {
   AgentConfig,
@@ -89,6 +96,13 @@ const config: AgentConfig = {
   maxComponentChain: MAX_COMPONENT_CHAIN,
   maxFiberWalk: MAX_FIBER_WALK,
   prewarmTtlMs: REACT_PREWARM_TTL_MS,
+  captureState: CAPTURE_STATE,
+  stateSettleMs: STATE_SETTLE_MS,
+  stateMaxDepth: STATE_MAX_DEPTH,
+  stateMaxKeys: STATE_MAX_KEYS,
+  stateMaxEntries: STATE_MAX_ENTRIES,
+  stateStringCap: STATE_STRING_CAP,
+  stateMaxStores: STATE_MAX_STORES,
 };
 
 /**
@@ -128,6 +142,28 @@ function applyConfig(next: Partial<AgentConfig> | undefined): void {
     // walk ceiling of zero would end React capture for the session while
     // looking exactly like a page with no React on it.
     config.maxFiberWalk = Math.max(1, next.maxFiberWalk);
+  }
+  if (typeof next.captureState === 'boolean') config.captureState = next.captureState;
+  if (typeof next.stateSettleMs === 'number' && Number.isFinite(next.stateSettleMs)) {
+    config.stateSettleMs = Math.max(0, next.stateSettleMs);
+  }
+  // Each floored at one for `maxFiberWalk`'s reason: a page can post here, and a
+  // zeroed cap would produce a snapshot of nothing that reads, downstream,
+  // exactly like a store that did not change.
+  if (typeof next.stateMaxDepth === 'number' && Number.isFinite(next.stateMaxDepth)) {
+    config.stateMaxDepth = Math.max(1, next.stateMaxDepth);
+  }
+  if (typeof next.stateMaxKeys === 'number' && Number.isFinite(next.stateMaxKeys)) {
+    config.stateMaxKeys = Math.max(1, next.stateMaxKeys);
+  }
+  if (typeof next.stateMaxEntries === 'number' && Number.isFinite(next.stateMaxEntries)) {
+    config.stateMaxEntries = Math.max(1, next.stateMaxEntries);
+  }
+  if (typeof next.stateStringCap === 'number' && Number.isFinite(next.stateStringCap)) {
+    config.stateStringCap = Math.max(1, next.stateStringCap);
+  }
+  if (typeof next.stateMaxStores === 'number' && Number.isFinite(next.stateMaxStores)) {
+    config.stateMaxStores = Math.max(1, next.stateMaxStores);
   }
 }
 
@@ -673,6 +709,13 @@ import {
 } from '../core/react/fiber.js';
 import { componentId, nameOnlyId } from '../core/react/id.js';
 import { buildNeedle } from '../core/react/needle.js';
+import {
+  forgetStores,
+  sampleStores,
+  stateNote,
+  type StateBudget,
+  type StateSample,
+} from './state.js';
 import { cancelPick, pickedEntry, startPick } from './picker.js';
 import { hide as hideHighlight, highlight } from './highlight.js';
 
@@ -869,13 +912,126 @@ function chainFor(el: Element): ChainResult {
 function abandonReact(): void {
   reactGaveUp = true;
   prewarm = null;
+  cancelPendingState();
+  forgetStores();
   detachReactListeners();
   stopScriptInventory();
   sendReactMeta(false);
 }
 
+// ── Application state ────────────────────────────────────────────────────────
+
+/**
+ * The sample taken when the gesture started, waiting for the app to settle.
+ *
+ * One slot rather than one per interaction, and the coalescing that follows from
+ * that is the point rather than a saving. Typing fires an `input` event per
+ * keystroke and the recorder commits the whole field as *one* step, so a sample
+ * pair per keystroke would be a dozen pairs for one step, eleven of which no
+ * step ever claims. Keeping the first `before` and restarting the timer on each
+ * new interaction produces exactly the pair the step wants: the state as it was
+ * before the user started typing, and the state once they had stopped.
+ */
+let pendingState: { before: StateSample[]; timer: ReturnType<typeof setTimeout> } | null = null;
+
+function stateBudget(): StateBudget {
+  // Read per call, like every other setting here — see `config` above.
+  return {
+    maxDepth: config.stateMaxDepth,
+    maxKeys: config.stateMaxKeys,
+    maxEntries: config.stateMaxEntries,
+    stringCap: config.stateStringCap,
+    maxStores: config.stateMaxStores,
+  };
+}
+
+/**
+ * A component id minted the way the recorder mints them.
+ *
+ * Through `describeEntry` rather than `componentId` directly, so a subscriber
+ * and the same component in a step's chain get the one id and share the one
+ * cache entry. Two id functions over one component is how a `subscribers` list
+ * ends up joining to nothing.
+ */
+function identifyComponent(fn: ComponentFn, name: string): string {
+  return describeEntry({ name, fn, debugSource: null, development: false }).id;
+}
+
+/** Pairs two samples by store id, keeping only the stores that actually moved. */
+function pairSamples(
+  before: StateSample[],
+  after: StateSample[],
+): Record<string, unknown>[] {
+  const seen = new Map(before.map((sample) => [sample.id, sample]));
+  const paired: Record<string, unknown>[] = [];
+
+  for (const now of after) {
+    const then = seen.get(now.id);
+    // A store discovered between the two samples has no `before` to diff
+    // against. Treated as arriving empty rather than skipped, so a provider
+    // that mounted during the step is visible as the thing that appeared.
+    paired.push({
+      id: now.id,
+      kind: now.kind,
+      label: now.label,
+      ...(now.subscribers.length ? { subscribers: now.subscribers } : {}),
+      before: then ? then.value : null,
+      after: now.value,
+      ...(now.bounded || then?.bounded ? { bounded: true } : {}),
+    });
+  }
+  return paired;
+}
+
+/**
+ * Sample around one interaction.
+ *
+ * Called before the chain walk and before the target check, because state is a
+ * fact about the app rather than about the element: a click on a plain `<div>`
+ * that dispatches an action is exactly the step whose state change explains it.
+ */
+function onStateInteraction(event: Event): void {
+  if (!config.captureState) return;
+
+  const budget = stateBudget();
+  // The first sample of the gesture is the `before`; a later interaction in the
+  // same gesture keeps it. This listener is `capture: true` on the document, so
+  // it runs ahead of React's own root listener and the handlers below it — the
+  // whole basis of calling this reading "before".
+  const before = pendingState
+    ? pendingState.before
+    : sampleStores(budget, identifyComponent, false, Date.now());
+  if (pendingState) clearTimeout(pendingState.timer);
+
+  const eventTime = event.timeStamp;
+  const timer = setTimeout(() => {
+    pendingState = null;
+    const after = sampleStores(stateBudget(), identifyComponent, true, Date.now());
+    const stores = pairSamples(before, after);
+    if (!stores.length) return;
+    emit({
+      kind: 'state',
+      // Claimed by the same number the chain is claimed by, and for the same
+      // reason: one dispatch, one `timeStamp`, identical in both worlds.
+      eventTime,
+      stores,
+      note: stateNote(),
+    });
+  }, config.stateSettleMs);
+
+  pendingState = { before, timer };
+}
+
+/** Drops a sample nobody will claim — a recording that stopped, a page that left. */
+function cancelPendingState(): void {
+  if (pendingState) clearTimeout(pendingState.timer);
+  pendingState = null;
+}
+
 function onReactInteraction(event: Event): void {
   if (!reactActive || reactGaveUp) return;
+
+  onStateInteraction(event);
 
   // The composed target, not `event.target`: anything inside a shadow root is
   // retargeted to its host by the time a document listener sees it, and React
@@ -948,6 +1104,12 @@ function applyRecording(wanted: boolean): void {
     detachReactListeners();
     stopScriptInventory();
     prewarm = null;
+    // Nothing here is restoring the page — there is nothing to restore, see
+    // `state.ts`. It is dropping a timer whose result no step can claim, and
+    // letting go of the fibers the store list holds, so a recording that ended
+    // does not keep an unmounted tree alive.
+    cancelPendingState();
+    forgetStores();
   }
 }
 

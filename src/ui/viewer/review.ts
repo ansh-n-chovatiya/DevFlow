@@ -200,6 +200,7 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
         // The same split as `react`: an archived flow's stamp travels here; the
         // live recording's is still in storage and is read at send time.
         settings: flow.settings,
+        state: flow.id === null ? undefined : flow.state,
       });
     })();
   });

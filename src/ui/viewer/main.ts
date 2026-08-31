@@ -161,6 +161,10 @@ async function reload(): Promise<void> {
       // Re-read on every reload rather than held: the resolver writes to this
       // key while the recording runs, so a cached copy would go stale on screen.
       react: await readCurrentReact(state.current.steps),
+      // Read at send time instead, like the stamp below it: the recording may
+      // still be running, and a store discovered after this tab opened belongs
+      // to the flow whether or not the review screen has heard of it.
+      state: null,
       // Re-read alongside the component table, and for the same reason: the
       // recording may still be running, and the export and send paths both need
       // the stamp the *worker* is capturing under rather than one this tab
@@ -185,6 +189,7 @@ async function reload(): Promise<void> {
       steps: flow.value.steps,
       createdAt: flow.value.meta?.createdAt ?? null,
       react: flow.value.react,
+      state: flow.value.state,
       settings: flow.value.meta?.settings ?? null,
     };
     state.missing = false;

@@ -34,6 +34,7 @@ import {
   CAPTURE_DOM_DELTA,
   CAPTURE_MIN_INTERVAL_MS,
   CAPTURE_SCREENSHOTS,
+  CAPTURE_STATE,
   CAPTURE_TRAILING_STEP,
   CAPTURE_UNCAUGHT,
   CONSOLE_LEVELS,
@@ -78,6 +79,13 @@ import {
   REACT_SETTING_DEFAULTS,
   RELOAD_TIMEOUT_MS,
   REMOTE_TIMEOUT_MS,
+  STATE_MAX_DEPTH,
+  STATE_MAX_ENTRIES,
+  STATE_MAX_KEYS,
+  STATE_MAX_PATCH_OPS,
+  STATE_MAX_STORES,
+  STATE_SETTLE_MS,
+  STATE_STRING_CAP,
   RESOLVE_CONCURRENCY,
   RESOLVE_DEBOUNCE_MS,
   SCHEMA_THRESHOLD,
@@ -277,7 +285,11 @@ interface NumberField extends Common {
     | "px"
     | "%"
     | "flows"
-    | "chars";
+    | "chars"
+    | "keys"
+    | "entries"
+    | "stores"
+    | "ops";
 }
 
 interface BooleanField extends Common {
@@ -454,6 +466,158 @@ export const FIELDS = [
     // The one consequence in the table that is true at both ends, which is why
     // `below` and `above` are OR-ed rather than being alternatives.
     consequenceWhen: { below: 300, above: 2000 },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  // ── The app's own state ────────────────────────────────────────────────────
+  //
+  // Under `recording.` rather than a `state.` prefix of its own, because
+  // `docs/CONTRACTS.md` §3.6 enumerates the prefixes the Recording group owns
+  // and it is frozen. A prefix that is not in that table does not exist, and
+  // the honest reading of the gap is to use one that is — the same conclusion
+  // `features/arkg/ingest.ts` reached about its own missing key.
+  {
+    key: "recording.state",
+    group: "recording",
+    tier: 1,
+    type: "boolean",
+    default: CAPTURE_STATE,
+    title: "Record the app’s state",
+    // The privacy point is in the description rather than a `consequence`,
+    // because no boolean in this table carries one: a consequence shows while a
+    // setting is merely *modified*, and for a switch that is on by default the
+    // sentence a user needs is the one they read before touching it.
+    description:
+      "The difference between what the app’s stores held before each interaction and after it settled. A store holds whatever the app put in it, which on some apps includes the signed-in user.",
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.stateSettleMs",
+    group: "recording",
+    tier: 1,
+    type: "number",
+    default: STATE_SETTLE_MS,
+    min: 100,
+    max: 5000,
+    unit: "ms",
+    title: "Wait before reading state back",
+    description: "The delay is app-specific; the feature is worth a switch.",
+    consequence:
+      "Too short and the store has not been written yet; too long and the change belongs to the next thing the user did.",
+    consequenceWhen: { below: 300, above: 2000 },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.stateMaxDepth",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: STATE_MAX_DEPTH,
+    min: 1,
+    max: 12,
+    title: "State depth",
+    description: "How deep into a store one snapshot goes.",
+    consequence:
+      "Anything below the cut reads as unchanged whether it changed or not. The step says the snapshot was cut, but it cannot say what it missed.",
+    // Shallower than the shipped depth is where a normalised store starts
+    // hiding its interesting half; deeper only costs size, which the other
+    // caps already speak for.
+    consequenceWhen: { below: STATE_MAX_DEPTH },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.stateMaxKeys",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: STATE_MAX_KEYS,
+    min: 4,
+    max: 400,
+    unit: "keys",
+    title: "State keys per object",
+    description: "Keys kept from one object in a snapshot, in sorted order.",
+    consequence:
+      "Keys are sorted and then cut, so the cut is the same in both snapshots and a diff never invents a change. What it does mean below the shipped value is that a store with more slices than this loses the ones late in the alphabet entirely.",
+    consequenceWhen: { below: STATE_MAX_KEYS },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.stateMaxEntries",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: STATE_MAX_ENTRIES,
+    min: 2,
+    max: 200,
+    unit: "entries",
+    title: "State entries per list",
+    description: "Entries kept from one array in a snapshot.",
+    consequence:
+      "Only the head of a longer list is kept, so an append past this point looks like nothing happening — the list a store holds is usually longer than the part of it that changed.",
+    consequenceWhen: { below: STATE_MAX_ENTRIES },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.stateStringCap",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: STATE_STRING_CAP,
+    min: 20,
+    max: 4000,
+    unit: "chars",
+    title: "State string cap",
+    description: "Characters kept from one string in a snapshot.",
+    consequence:
+      "Two strings that differ only past the cut read as identical, so an edit to the tail of a long value is a change the patch cannot see. The step says the snapshot was cut; it cannot say where.",
+    consequenceWhen: { below: STATE_STRING_CAP },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.stateMaxStores",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: STATE_MAX_STORES,
+    min: 1,
+    max: 32,
+    unit: "stores",
+    title: "Stores read",
+    description: "How many of the page’s stores one recording reads.",
+    consequence:
+      "The innermost providers are kept and the outermost cut, so below this the stores that go are the ones wrapped around the whole app — the theme, the session — while the route’s own survive.",
+    consequenceWhen: { below: STATE_MAX_STORES },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.statePatchOps",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: STATE_MAX_PATCH_OPS,
+    min: 1,
+    max: 500,
+    unit: "ops",
+    title: "State patch operations",
+    description: "Operations one store’s patch may carry for one step.",
+    consequence:
+      "Over budget the patch is re-cut at a shallower path, never trimmed — it stays applicable and becomes coarser, and the step counts what that cost.",
+    consequenceWhen: { below: STATE_MAX_PATCH_OPS },
     consumers: ["content"],
     recorded: true,
     wired: true,

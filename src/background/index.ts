@@ -54,7 +54,9 @@ import type {
   DraftStep,
   PickResult,
   RecordingState,
+  StateStoreRef,
   Step,
+  StepStateDelta,
 } from '../shared/types.js';
 import type { CapturedComponent } from '../shared/messages.js';
 import { stripReactRef } from '../core/react/attribution.js';
@@ -65,7 +67,7 @@ import { clearResolverCaches, resolvePending } from '../features/react/resolver.
 import { ingestComponentPick } from '../features/arkg/ingest.js';
 import { buildPayload, pruneSteps } from '../features/mcp/send.js';
 import { sendDefaults } from '../features/export/defaults.js';
-import { readCurrentReact } from '../features/flows/store.js';
+import { readCurrentReact, readCurrentState } from '../features/flows/store.js';
 import { prepare } from '../features/recording/preflight.js';
 import { renumber } from '../core/flow/index.js';
 
@@ -465,6 +467,50 @@ async function attachDomDelta(key: string, before: string, after: string): Promi
 }
 
 /**
+ * Merge a settled state sample into the step it belongs to.
+ *
+ * Behind the capture queue for `attachDomDelta`'s reason: that queue owns
+ * `recordedSteps`, and the step this belongs to may still be in it.
+ *
+ * Two keys are written, not one. The deltas go on the step; the store
+ * descriptions go on `stateStores`, which is a fact about the page rather than
+ * about any step — a store forty steps touched is described once, and
+ * `StepStateDelta.store` indexes it.
+ */
+async function attachStateDelta(
+  key: string,
+  deltas: StepStateDelta[],
+  stores: StateStoreRef[] | undefined,
+): Promise<void> {
+  const stored = await getLocal(['recordedSteps', 'recordingActive', 'stateStores']);
+  if (!stored.ok || !stored.value.recordingActive) return;
+
+  const known = stored.value.stateStores ?? [];
+  // Replaced rather than appended when the id is already known: a store's
+  // subscriber list grows as the user visits more of the app, and the later
+  // description is the more complete one.
+  const merged = stores?.length
+    ? [...known.filter((store) => !stores.some((next) => next.id === store.id)), ...stores]
+    : known;
+
+  const recordedSteps = stored.value.recordedSteps ?? [];
+  const index = recordedSteps.findIndex((step) => stepKey(step) === key);
+  // The step may have been deleted in the review tab while the app was still
+  // settling, or the recording cleared. Nothing to attach it to is not an
+  // error — but the stores it named are still what the page has, so they are
+  // written whether or not the step survived.
+  if (index !== -1 && deltas.length) {
+    recordedSteps[index] = { ...recordedSteps[index], state: deltas };
+  }
+
+  const written = await setLocal({
+    ...(index !== -1 && deltas.length ? { recordedSteps } : {}),
+    ...(merged !== known ? { stateStores: merged } : {}),
+  });
+  if (!written.ok) await reportError(written.error);
+}
+
+/**
  * End the recording once every capture already in flight has been written.
  *
  * A step is not saved when the user clicks — it is saved a few hundred
@@ -754,6 +800,7 @@ async function purgeReact(): Promise<void> {
     const written = await setLocal({
       recordedSteps: stripped,
       reactComponents: {},
+      stateStores: [],
       reactNeedles: {},
       reactScripts: {},
       reactMeta: null,
@@ -1041,6 +1088,11 @@ async function autoExportToMcp(steps: Step[]): Promise<void> {
   const include = sendDefaults(settings);
   const sending = pruneSteps(renumber(steps), include);
   const react = include.react ? await readCurrentReact(sending) : null;
+  // Not behind an include switch. There is no `state` in `ExportOptions` and
+  // adding one is `docs/CONTRACTS.md`'s to do; what is sent is bounded by
+  // `recording.state`, which is the switch that decides whether it was ever
+  // captured — and a `FlowState` with `read: false` is two dozen bytes.
+  const state = await readCurrentState();
 
   const payload = JSON.stringify(
     buildPayload(
@@ -1051,6 +1103,7 @@ async function autoExportToMcp(steps: Step[]): Promise<void> {
       react,
       include,
       stamp,
+      state,
     ),
   );
 
@@ -1341,6 +1394,17 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
       return true;
     }
 
+    case 'STEP_STATE_DELTA': {
+      // Behind the capture queue, for `STEP_DOM_DELTA`'s reason.
+      captureQueue = captureQueue.then(() =>
+        attachStateDelta(message.key, message.deltas, message.stores).catch((error: unknown) =>
+          console.warn('DevFlow: state delta not attached', error),
+        ),
+      );
+      sendResponse({ ok: true });
+      return true;
+    }
+
     case 'CAPTURE_AND_SAVE_STEP': {
       const { step, elementBox, dpr, components, componentsPageUrl, scroll } = message;
       // Enqueue so captures run one at a time. A rejected step is swallowed so
@@ -1471,6 +1535,7 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
             recordingPaused: false,
             recordingTabId: null,
             reactComponents: {},
+      stateStores: [],
             reactNeedles: {},
             reactScripts: {},
             reactMeta: null,

@@ -56,11 +56,13 @@ Nothing below is ticked on the strength of that branch.
 ### Work Stream 0.1: ARKG Schema Design & SQLite Implementation
 - [~] **Core Graph Schema:**
   - [x] Nodes: `components`, `api_endpoints`, `source_files`, `named_flows`
-  - [ ] Nodes: `state_keys` (needs Work Stream 1.2), `git_commits` (needs Phase 3)
+  - [x] Nodes: `state_keys` — one top-level key of one store, counting how often it was *changed* as well as how often it was seen. Keyed on the store's kind and label rather than its per-recording id, so one key is one node across recordings. `arkg_state_stores` beside it, so an edge has something to point at at the granularity it was observed.
+  - [ ] Nodes: `git_commits` (needs Phase 3)
   - [x] Edges: `renders`, `calls`, `maps_to`
-  - [ ] Edges: `subscribes_to` (needs 1.2), `changed_in` (needs Phase 3), `caused_by` (needs 1.3)
+  - [x] Edges: `subscribes_to` — component → **store**, not component → key. `subscribers` is observed per store (a component is on the list because its own fiber carried the context dependency); crossing it with the store's keys would give a component that reads `state.cart` an edge to `state.auth`, indistinguishable in the graph from one somebody saw. The hop from store to key is left as a hop, because that is what it is.
+  - [ ] Edges: `changed_in` (needs Phase 3), `caused_by` (needs 1.3)
   - [x] Properties on every node/edge: `timing_p50`, `timing_p95`, `frequency`, `failure_rate`, `last_observed_at`
-  - [ ] `git_sha` — columns exist and are always NULL; nothing writes them until Phase 3
+  - [ ] `git_sha` — columns exist and are always NULL; nothing writes them until Phase 3. The `state_keys` and `arkg_state_stores` tables deliberately have no `timing_p50`/`timing_p95` columns for the same reason: nothing times a state key, and a column that is always NULL is exactly what this line is complaining about.
 - [x] **Observation Ingestion Pipeline:**
   - Every recorded flow writes to the ARKG automatically on completion.
   - Every component inspection writes a `maps_to` edge linking the DOM element → source file.
@@ -88,15 +90,26 @@ Nothing below is ticked on the strength of that branch.
 - [ ] **Optional Compiler Plugin (`@devflow/compiler-plugin`) [Strictly Optional]:** not started.
 
 ### Work Stream 1.2: Deep React Fiber & State Store Inspection (Non-Invasive)
-> Reverted in full. The `v3.2.0` attempt fabricated `window.__REDUX_DEVTOOLS_EXTENSION__`
-> as a non-callable object when the real extension was absent, which crashes the
+> The `v3.2.0` attempt fabricated `window.__REDUX_DEVTOOLS_EXTENSION__` as a
+> non-callable object when the real extension was absent, which crashes the
 > classic `__REDUX_DEVTOOLS_EXTENSION__ && __REDUX_DEVTOOLS_EXTENSION__()` store
 > enhancer at boot — a violation of Invariant 1 on every page, recording or not.
-> **Whatever replaces it must be inert when DevFlow is not recording.**
-- [ ] **React DevTools Global Hook Reader**
-- [ ] **Non-Invasive State Store Interceptor:** Zustand, Redux, TanStack Query, React Context
-- [ ] **Subscription Discovery**
-- [ ] **RFC 6902 state deltas and `get_state_patch`,** moved here from Work Stream 1.5. The differ and the tool are one deliverable with whatever captures the state, because what a patch has to decide — which subtrees are worth diffing at all, and how one is bounded to a token budget — is a question about the shape of what is captured, and there is no shape to answer it against until the three items above exist.
+>
+> **What replaced it samples rather than intercepts.** The stores are read off
+> the fibers React already keeps, twice per step, and nothing is defined,
+> patched, wrapped or subscribed to on the page at any point. "Inert when not
+> recording" is therefore not a property the code maintains but one it cannot
+> violate: there is no global to restore and no restore path to get wrong.
+> `tests/state-reader.test.ts` asserts it directly — the devtools global stays
+> absent, `window` gains no property, and a store is never `subscribe`d.
+>
+> The cost of sampling is stated where the data is read rather than left to be
+> found: a store that changed and changed back between the two samples shows no
+> change, and nothing says anything about ordering *within* a step.
+- [x] **React DevTools Global Hook Reader** — `getFiberRoots` is read when the extension is installed, and the container-key scan stands whether or not it answered. Read only; installing a renderer to make the hook appear is the mistake one object over.
+- [~] **Non-Invasive State Store Interceptor:** Redux, TanStack Query and React Context are read in full; Zustand is read **only when the store is provided through a context**. A module-level `create()` store is not read, and the recording says so in as many words. It is reachable in principle — a consumer has a `useSyncExternalStore` hook holding a `getSnapshot` — but what comes back is that component's *selection*, not the store, and its only identity is a function reference that does not survive a reload. A `state_keys` node keyed on that accumulates one row per recording and answers nothing, which is the shape the `v3.2.0` audit deleted. It waits for a mechanism with a stable identity.
+- [x] **Subscription Discovery** — from `fiber.dependencies.firstContext`, React's own record of what a component consumed. Being rendered underneath a provider is not reading it, is true of nearly every component in an app, and is never counted.
+- [x] **RFC 6902 state deltas and `get_state_patch`,** moved here from Work Stream 1.5. The differ is pure and tested (`src/core/state/`); the budget question the deferral named is answered by **collapsing, never trimming** — an over-budget patch is re-cut at a shallower path so it stays applicable exactly, because a patch with operations removed no longer reconstructs the state and says nothing about it. The tool distinguishes "capture was off", "no store was recognised" and "no store moved", because those are three answers and only the last is about the application.
 
 ### Work Stream 1.3: Causal Threading in the Flow Recorder
 - [ ] **Causal DAG Construction:** `causedBy` does not exist in `src/shared/types.ts`. Not started.
@@ -116,7 +129,9 @@ Nothing below is ticked on the strength of that branch.
 - [x] `get_flow_summary` — one flow in under 400 estimated tokens, budget enforced by dropping whole facts rather than cutting text, and tested against a deliberately hostile recording.
 - [x] `get_step_detail` — one named part of one step (component, network, console, element, dom, screenshot), with an index that prices each part before it is asked for.
 - [x] `get_source_snippet` — the lines a component was written on, read only from underneath one project root, re-checked after symlinks, and off in remote mode unless `DEVFLOW_PROJECT_ROOT` says otherwise.
-- [ ] `get_state_patch` (RFC 6902) — **deferred to Work Stream 1.2, deliberately.** `Step` has no state field and nothing captures one, so the tool would have nothing to read and the differ behind it would be a module in `src/core/` with no caller. That is the exact shape of what the `v3.2.0` audit deleted, and shipping it to tick a box is the habit that made the previous attempt worthless. RFC 6902 generation is well specified and does not depend on the state shape; what does depend on it is the part that matters here — which subtrees are worth diffing and how a patch is bounded to a token budget — and that cannot be designed against a shape that does not exist. Build it in 1.2, with the captured state in hand.
+- [x] `get_state_patch` (RFC 6902) — **shipped in Work Stream 1.2**, where it was deferred to. The reasoning that deferred it is kept below because it is the reasoning that made it shippable: the budget question really did need the captured shape, and the answer — collapse, never trim — could not have been written against a shape that did not exist.
+
+  > **Deferred to Work Stream 1.2, deliberately.** `Step` has no state field and nothing captures one, so the tool would have nothing to read and the differ behind it would be a module in `src/core/` with no caller. That is the exact shape of what the `v3.2.0` audit deleted, and shipping it to tick a box is the habit that made the previous attempt worthless. RFC 6902 generation is well specified and does not depend on the state shape; what does depend on it is the part that matters here — which subtrees are worth diffing and how a patch is bounded to a token budget — and that cannot be designed against a shape that does not exist. Build it in 1.2, with the captured state in hand.
 
 ---
 
@@ -138,7 +153,7 @@ Nothing below is ticked on the strength of that branch.
   - [x] 1-click export of a recorded flow to Playwright and Cypress from the flow review screen.
   - [x] Resilient selector hierarchy: aria-label → role+name → text → CSS selector (flagged as fragile).
   - [x] Network mock fixtures injected from real intercepted request/response payloads.
-  - [ ] State assertions from before/after store diffs (blocked on Work Stream 1.2).
+  - [ ] State assertions from before/after store diffs. **Unblocked** — 1.2 now captures the diffs — but not built. The compiler would need to decide which of a patch's operations are worth asserting on, which is a question about a real app's patches and not one to answer from a fixture.
 
 ### Work Stream 2.2: "Why Is This Value Here?" Provenance Engine
 - [ ] **Full Value Provenance Trace:** DOM text → React prop → component state → store selector → API response field
