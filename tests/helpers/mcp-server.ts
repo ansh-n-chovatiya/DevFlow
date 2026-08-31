@@ -80,6 +80,16 @@ export interface McpSession {
   }>;
   /** One tool call, with every text part joined. */
   call(name: string, args: Record<string, unknown>): Promise<string>;
+  /**
+   * The same call, with the `isError` flag kept.
+   *
+   * `call` throws the flag away, which is right for the tests that are about
+   * what a response says. It is wrong for the ones about a *refusal*: an MCP
+   * client reads `isError` to tell "here is your answer" from "I could not",
+   * and a refusal sent as a success is a sentence the model treats as a
+   * finding. Asserting the text alone cannot see that.
+   */
+  callRaw(name: string, args: Record<string, unknown>): Promise<ToolResult & { text: string }>;
   /** The whole tool list, for the descriptions that name a configured value. */
   tools(): Promise<string>;
   /** Everything the server has written to stderr so far. */
@@ -203,6 +213,13 @@ export async function startServer(options: StartOptions = {}): Promise<McpSessio
         arguments: args,
       });
       return result.content.map((part) => part.text).join('\n');
+    },
+    callRaw: async (name, args) => {
+      const result = await request<ToolResult>('tools/call', {
+        name,
+        arguments: args,
+      });
+      return { ...result, text: result.content.map((part) => part.text).join('\n') };
     },
     tools: async () => JSON.stringify(await request('tools/list', {})),
     stderr: () => errors,

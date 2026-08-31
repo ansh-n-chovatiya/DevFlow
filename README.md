@@ -148,10 +148,12 @@ That runs `claude mcp add devflow --scope user -- npx -y devflow-mcp-server`. Th
 user-scope flag registers the server globally, making it immediately available across all your repositories and workspaces without any per-project setup.
 
 Then record a flow in DevFlow and press **Send to Claude**. It lands in `~/.devflow/flows`
-and Claude can read it immediately — `get_flow_errors` for just what broke,
-`get_latest_flow` for what you just did, and `compare_flows` for a working run beside
-a broken one. Screenshots are written to disk and referenced by absolute path, so
-a 500-step recording costs nothing in context until a specific image is opened.
+and Claude can read it immediately — `get_flow_summary` for whether it broke at all,
+in under 400 tokens, `get_flow_errors` for just what broke, `get_step_detail` for one
+part of one step, `get_source_snippet` for the lines the component was written on, and
+`compare_flows` for a working run beside a broken one. Screenshots are written to disk
+and referenced by absolute path, so a 500-step recording costs nothing in context until
+a specific image is opened.
 
 See [`mcp-server/README.md`](mcp-server/README.md) for its tools, its retention
 ceilings and how it is configured.

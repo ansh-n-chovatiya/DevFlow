@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+**Three tools that let Claude look at a recording without reading all of it.**
+`get_flow_summary` answers the question you actually have first — is this the
+flow, and did it break — in under 400 tokens, which is about a fiftieth of
+`get_flow`, so asking it of the wrong recording costs nothing. `get_step_detail`
+returns one *part* of one step: its component, its network calls, its console
+output, its element, the text that changed around it, or its screenshot. Asked
+with no part named it lists what the step has and what each part would cost, so
+the next call is the cheap one. And `get_source_snippet` reads the lines the
+component was actually written on, off this machine, so a path from
+`get_flow_errors` becomes code without a round trip.
+
+**`get_source_snippet` reads source only from underneath one project root.** It
+is the first thing in the server that opens a file, and the path it opens came
+off a recorded page's own source map — a string that arrives over an
+unauthenticated loopback port any page you visit can reach. So the path is
+resolved under a single root, checked again after symlinks are followed, and
+refused if it lands anywhere else. The root is the directory the server was
+started in, which under Claude Code is the project you are in;
+`DEVFLOW_PROJECT_ROOT` or a `root` argument move it. In remote mode the tool is
+off unless that variable is set, because the machine running the server is not
+the machine the caller is working on.
+
+**A recording whose file is not in the checkout says so.** A source map records
+the line as it was in the tree the bundle was built from, so a stale build names
+line 900 of a file that has 40 lines. Clamping that quietly would print the end
+of the file as though it were the component. It prints the end of the file and
+says the line was past it, which is what a stale build looks like from here.
+
 **The send dialog says where the flow is going, and checks before you commit.**
 It shows the address it will post to, and probes it as it opens rather than
 after uploading the whole recording. When that fails it says what actually

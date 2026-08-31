@@ -22,6 +22,7 @@ export { exportToMarkdown, renderComponents, renderStep, flowHost, urlPath } fro
 export { compactBody } from './schema/index.js';
 export { callFailed, statusClass, stepFailed, worstLevel } from './flow/index.js';
 export { stepEnclosing, stepOwner, formatSource } from './react/attribution.js';
+export { snippet } from './source/snippet.js';
 
 /*
  * The one exception to "core only", and it earns it.
