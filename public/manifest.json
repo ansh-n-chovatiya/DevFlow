@@ -49,8 +49,17 @@
     "page": "settings.html",
     "open_in_tab": true
   },
+  "commands": {
+    "toggle-recording": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Start or stop recording a flow"
+    }
+  },
   "action": {
     "default_popup": "popup.html",
+    "default_title": "DevFlow — record a flow",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

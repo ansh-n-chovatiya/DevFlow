@@ -23,6 +23,7 @@
  */
 
 import { bytesInUse, getLocal, setLocal } from '../../chrome/storage.js';
+import { readCurrent, saveAsFlow, writeCurrent } from '../../features/flows/store.js';
 import { hydrateTail, sweep as sweepShots } from '../../features/flows/shots.js';
 import { reloadAndWait } from '../../chrome/tabs.js';
 import { prepare, probe, type Preflight } from '../../features/recording/preflight.js';
@@ -40,6 +41,7 @@ import { hydrateIcons, setIcon } from '../icons.js';
 import { initTheme } from '../theme.js';
 import {
   derivePopupView,
+  suggestFlowName,
   THUMBNAIL_LIMIT,
   type NoticeView,
   type PopupView,
@@ -94,6 +96,7 @@ const dom = {
   flowCount: el('flow-count'),
   flowWhen: el('flow-when'),
   flowThumbs: el('flow-thumbs'),
+  save: el<HTMLButtonElement>('btn-save'),
   view: el<HTMLButtonElement>('btn-view'),
   clear: el<HTMLButtonElement>('btn-clear'),
 
@@ -134,6 +137,8 @@ interface PopupState {
    * from the snapshot.
    */
   live: Settings;
+  /** The flow this popup has just archived, for the one line that says so. */
+  savedName: string | null;
 }
 
 const state: PopupState = {
@@ -145,6 +150,7 @@ const state: PopupState = {
   lastError: null,
   frozen: RECORDING_DEFAULTS,
   live: DEFAULTS,
+  savedName: null,
 };
 
 function show(node: HTMLElement, visible: boolean): void {
@@ -388,6 +394,8 @@ async function beginRecording(): Promise<void> {
     return;
   }
 
+  // The library line belonged to the flow that has just been replaced.
+  state.savedName = null;
   await refresh();
 
   // Recording is live, so get out of the way. The popup overlays the page and
@@ -504,6 +512,61 @@ dom.resume.addEventListener('click', () => {
 });
 
 /**
+ * Archive the recording, from the surface it is announced on.
+ *
+ * `Save to library` lived behind the review tab's overflow menu, five gestures
+ * from Stop, while the popup — which is where a recording ends, and the only
+ * screen that offers to delete it — had no Save at all. The work is
+ * `saveAsFlow`'s, unchanged and shared with the viewer, including the final
+ * resolve pass it runs while the recorded pages may still be open.
+ *
+ * The steps are re-read rather than taken from `state.steps`: the popup only
+ * hydrates the last few images for its thumbnails, so archiving what it has on
+ * screen would file a flow whose screenshots stop three from the end.
+ */
+async function saveToLibrary(): Promise<void> {
+  const current = await readCurrent();
+  if (!current.ok) {
+    state.lastError = { ...current.error, at: Date.now() };
+    paint();
+    return;
+  }
+
+  const steps = current.value;
+  const name = suggestFlowName(steps, Date.now());
+
+  const saved = await saveAsFlow(name, steps);
+  if (!saved.ok) {
+    state.lastError = { ...saved.error, at: Date.now() };
+    paint();
+    return;
+  }
+
+  /*
+   * Archived means no longer current — the same rule the viewer keeps, for the
+   * same reason: a card that still says "unsaved" above a Save button that has
+   * already worked invites a second copy of every screenshot into the library.
+   *
+   * The base is the array that was archived, so a step the worker captured
+   * while the save was in flight survives rather than being cleared with the
+   * ones that are now safely in the library.
+   */
+  const cleared = await writeCurrent([], steps);
+  if (!cleared.ok) state.lastError = { ...cleared.error, at: Date.now() };
+
+  state.savedName = saved.value.name;
+  await refresh();
+}
+
+dom.save.addEventListener('click', () => {
+  void (async () => {
+    dom.save.disabled = true;
+    await saveToLibrary();
+    dom.save.disabled = false;
+  })();
+});
+
+/**
  * The two buttons now go to two places — the viewer split into Library and
  * Review in step 8 (structural decision A). "Open flow" lands on the recording
  * in progress; "Library" lands on the list.
@@ -561,6 +624,7 @@ dom.discardDialog.addEventListener('close', () => {
       recordingStartedAt: null,
       lastError: null,
     });
+    state.savedName = null;
     await refresh();
   })();
 });

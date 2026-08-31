@@ -85,3 +85,80 @@ export function redactUrl(url: string): string {
   const rebuiltHash = hash === null ? parsed.hash : `#${hash}`;
   return `${parsed.origin}${parsed.pathname}${rebuiltQuery}${rebuiltHash}`;
 }
+
+/**
+ * Parameter names worth *warning* about, which is a wider net than the one worth
+ * masking.
+ *
+ * `SECRET_PARAM` is narrow on purpose, because a mask destroys information: a
+ * false positive there costs somebody the value they were trying to read. A
+ * warning costs a sentence, so it can afford to be drawn wider — and `state`
+ * and `nonce` are the whole difference. They are CSRF machinery rather than
+ * credentials and are deliberately left readable in the recording, but an OAuth
+ * round trip that shows one is usually carrying a grant beside it, and somebody
+ * deciding whether to hand a flow to a context window is better served by being
+ * told what they are looking at than by being left to notice.
+ */
+const SUSPICIOUS_PARAM = /^(state|nonce)$/i;
+
+/** Percent-decoding that survives a malformed `%`, which a recorded URL may have. */
+function decodeOrRaw(part: string): string {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return part;
+  }
+}
+
+function scan(raw: string, into: string[], seen: Set<string>): void {
+  if (!raw.includes('=')) return;
+
+  for (const part of raw.split('&')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+
+    const name = decodeOrRaw(part.slice(0, eq));
+    if (!SECRET_PARAM.test(name) && !SUSPICIOUS_PARAM.test(name)) continue;
+
+    // An empty parameter carries nothing, and one `redactUrl` has already dealt
+    // with is the system working — neither is worth raising an alarm over.
+    const value = decodeOrRaw(part.slice(eq + 1));
+    if (value === '' || value === MASK) continue;
+
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    into.push(name);
+  }
+}
+
+/**
+ * The credential-looking parameters a URL is still carrying a value for.
+ *
+ * The counterpart to `redactUrl`, and deliberately not its inverse: this
+ * reports, it does not change anything, so it is free to flag what masking
+ * would be wrong to touch. Empty for a URL that is clean, unparseable, or whose
+ * credentials have already been masked at capture — which is the ordinary case,
+ * and is why a non-empty answer is worth putting in front of somebody.
+ *
+ * Names come back in the spelling and order they appear in, deduplicated
+ * case-insensitively across the query and the fragment. A fragment is read only
+ * when it looks like a query string, for `redactUrl`'s reason: `#access_token=…`
+ * is an implicit-flow grant and `#/orders/42` is a route.
+ */
+export function credentialParams(url: string): readonly string[] {
+  if (typeof url !== 'string' || !url) return [];
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return [];
+  }
+
+  const found: string[] = [];
+  const seen = new Set<string>();
+  if (parsed.search) scan(parsed.search.slice(1), found, seen);
+  if (parsed.hash) scan(parsed.hash.slice(1), found, seen);
+  return found;
+}

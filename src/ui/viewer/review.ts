@@ -1119,6 +1119,36 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
       return;
     }
 
+    /*
+     * The two keys that go through the buttons rather than round them.
+     *
+     * `.click()` on the button the view has already enabled or disabled is what
+     * keeps the keyboard from being a second answer to "may this flow be sent?"
+     * — a disabled button ignores a click, so there is one rule and `paint` owns
+     * it. Send is Ctrl+Enter because it is the product's headline action and had
+     * no key at all while Export had one; Save is Ctrl+S over Chrome's own
+     * "save page", which is not a thing anybody wants on this screen.
+     */
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !typing) {
+      event.preventDefault();
+      dom.send.click();
+      return;
+    }
+
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      event.key.toLowerCase() === 's' &&
+      !typing &&
+      // A flow already in the library cannot be archived again, and taking
+      // "save page" away from the browser to then do nothing is worse than not
+      // binding the key at all.
+      !dom.save.disabled
+    ) {
+      event.preventDefault();
+      dom.save.click();
+      return;
+    }
+
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'e') {
       event.preventDefault();
       const { flow } = app.state;
@@ -1166,6 +1196,15 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
           `.step[data-index="${app.state.activeIndex}"] [data-action="annotate"]`,
         )
         ?.click();
+      return;
+    }
+
+    // The list of keys, reachable by the key everything else uses for it. The
+    // button beside Export is still there; this is for the people who never
+    // look at a toolbar for a shortcut.
+    if (event.key === '?') {
+      event.preventDefault();
+      dom.shortcutsDialog.showModal();
       return;
     }
 

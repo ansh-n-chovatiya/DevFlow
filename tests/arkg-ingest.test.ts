@@ -41,11 +41,12 @@ async function server(env?: Record<string, string>): Promise<McpSession> {
  * table, a step attributed to one of those components, and a network call that
  * failed under it.
  */
-function flow(id: string) {
-  // The component ids carry the flow's, so two flows are two observations of
-  // two different components rather than a second sighting of the same ones —
-  // which is what the retention case below needs, and what a recording of a
-  // different app would look like anyway.
+function flow(id: string, names = { panel: 'CheckoutPanel', row: 'OrderRow' }) {
+  // The component ids carry the flow's, so two flows do not arrive under one
+  // id. That alone no longer makes them different components — the graph joins
+  // on the name and the file, so a rebuild that re-hashes an id still
+  // accumulates onto one node — so the retention case below varies the names
+  // too, which is what a recording of a different app would look like anyway.
   const checkout = `cmp_checkout_${id}`;
   const row = `cmp_row_${id}`;
 
@@ -57,8 +58,8 @@ function flow(id: string) {
     schemaVersion: 1,
     react: {
       components: {
-        [checkout]: { name: 'CheckoutPanel', source: 'src/pages/Checkout.tsx', line: 42 },
-        [row]: { name: 'OrderRow', source: 'src/pages/OrderRow.tsx', line: 8 },
+        [checkout]: { name: names.panel, source: `src/pages/${names.panel}.tsx`, line: 42 },
+        [row]: { name: names.row, source: `src/pages/${names.row}.tsx`, line: 8 },
       },
     },
     steps: [
@@ -103,6 +104,45 @@ describe('the server starts, and keeps its graph to itself', () => {
     const session = await server({ DEVFLOW_ARKG_RETENTION_DAYS: '30' });
     expect(session.stderr()).toContain('keeping 30 days');
   });
+
+  /*
+   * The claim at the top of this file, exercised rather than asserted about.
+   *
+   * A directory where the database file belongs is the cheapest way to make the
+   * graph unavailable from outside the process, and it is indistinguishable
+   * from inside it from the two failures that actually happen: a published
+   * tarball that does not carry `arkg.js`, and a native addon built against
+   * the wrong Node ABI. Every graph call in the server is behind one guarded
+   * funnel, so if this degrades, all of them do.
+   */
+  it('degrades to no graph, with every other tool untouched', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'devflow-arkg-'));
+    fs.mkdirSync(path.join(home, 'flows'), { recursive: true });
+    fs.mkdirSync(path.join(home, 'arkg.db'));
+    const session = await startServer({ home });
+    servers.push(session);
+
+    expect(session.stderr()).toContain('no knowledge graph');
+    expect(session.stderr()).toContain('every other tool are unaffected');
+
+    // The recordings, which are what this server is for, are unaffected.
+    expect(await session.post('/flows', JSON.stringify(flow('flow-degraded')))).toMatchObject({ status: 200 });
+    expect(await session.call('list_flows', {})).toContain('Recording flow-degraded');
+    expect(await session.call('get_latest_flow', {})).toContain('Clicked "Pay"');
+
+    // The three graph tools say the graph is gone, which is a different answer
+    // from an empty one and points at neither Send to Claude nor the panel.
+    for (const tool of ['get_app_architecture', 'get_anomalies']) {
+      expect(await session.call(tool, {})).toContain('arkg.db could not be opened');
+    }
+    expect(await session.call('get_component_history', { componentId: 'CheckoutPanel' }))
+      .toContain('arkg.db could not be opened');
+
+    // And a pick is answered, not errored: nobody is waiting on it.
+    const posted = await session.post('/arkg/ingest-component', JSON.stringify({ name: 'Anything' }));
+    expect(posted.status).toBe(200);
+    expect(JSON.parse(posted.body)).toEqual({ ok: true, stored: false });
+  });
 });
 
 describe('what the graph is told', () => {
@@ -114,7 +154,7 @@ describe('what the graph is told', () => {
     const architecture = await session.call('get_app_architecture', {});
     expect(architecture).toContain('1 flow observed');
     expect(architecture).toContain('CheckoutPanel');
-    expect(architecture).toContain('src/pages/Checkout.tsx');
+    expect(architecture).toContain('src/pages/CheckoutPanel.tsx');
     // The endpoint, with its ids collapsed to a pattern, and the call edge.
     expect(architecture).toContain('POST api.example.com/orders/:id');
     expect(architecture).toContain('calls POST api.example.com/orders/:id');
@@ -125,11 +165,8 @@ describe('what the graph is told', () => {
 
   it('takes a component pick, and keys it by name and file rather than by what the caller says', async () => {
     const session = await server();
-    // A flow first, because the graph summarises nothing until one has arrived
-    // — and looking a component up by the name somebody has in front of them
-    // goes through that summary. See `get_component_history`.
-    await session.post('/flows', JSON.stringify(flow('flow-b')));
-
+    // No flow first. A pick is evidence on its own, and a graph made only of
+    // picks used to be invisible to every tool that reads it.
     const posted = await session.post(
       '/arkg/ingest-component',
       JSON.stringify({
@@ -149,6 +186,97 @@ describe('what the graph is told', () => {
     // Everything it knows came from the panel, and the reply says so rather
     // than showing an empty list of flows.
     expect(history).toContain('picking it in the DevTools panel');
+  });
+
+  /*
+   * The join, end to end and over the wire, which is the only place it can be
+   * seen the way a user meets it: the extension cannot compute the id a flow
+   * carries — that hash is over compiled source that never leaves the page — so
+   * the two halves of one component arrive under two different keys and the
+   * server has to recognise them as one thing.
+   */
+  it('counts a component seen in a flow and picked in the panel once, flow first', async () => {
+    const session = await server();
+    await session.post('/flows', JSON.stringify(flow('flow-join-a')));
+
+    const posted = await session.post(
+      '/arkg/ingest-component',
+      JSON.stringify({
+        name: 'CheckoutPanel',
+        sourceFile: 'src/pages/CheckoutPanel.tsx',
+        sourceLine: 42,
+      }),
+    );
+    expect(JSON.parse(posted.body)).toEqual({ ok: true, stored: true });
+
+    const architecture = await session.call('get_app_architecture', {});
+    // One line for it, and that line counts both sightings.
+    expect(architecture.match(/CheckoutPanel /g)).toHaveLength(1);
+    expect(architecture).toContain('CheckoutPanel  2x');
+
+    // And it still knows the flow it appeared in, which is the thing a second
+    // node keyed by the pick would have lost.
+    const history = await session.call('get_component_history', { componentId: 'CheckoutPanel' });
+    expect(history).toContain('2x seen');
+    expect(history).toContain('Recording flow-join-a');
+  });
+
+  it('counts it once the other way round too, pick first', async () => {
+    const session = await server();
+    await session.post(
+      '/arkg/ingest-component',
+      JSON.stringify({
+        name: 'CheckoutPanel',
+        sourceFile: 'src/pages/CheckoutPanel.tsx',
+        sourceLine: 42,
+      }),
+    );
+    await session.post('/flows', JSON.stringify(flow('flow-join-b')));
+
+    const architecture = await session.call('get_app_architecture', {});
+    expect(architecture.match(/CheckoutPanel /g)).toHaveLength(1);
+    expect(architecture).toContain('CheckoutPanel  2x');
+    // The flow's own edges landed on the row the pick created.
+    expect(architecture).toContain('calls POST api.example.com/orders/:id');
+  });
+});
+
+describe('a graph made only of picks', () => {
+  /*
+   * `getAppArchitecture` used to answer null whenever no flow had been
+   * ingested, which made every pick invisible to all three tools — and
+   * `get_component_history` looked names up *through* that summary, so a picked
+   * component was unreachable even in principle. Both of those are the same
+   * bug seen from two ends.
+   */
+  it('is reported rather than called empty', async () => {
+    const session = await server();
+    await session.post(
+      '/arkg/ingest-component',
+      JSON.stringify({ name: 'SoloWidget', sourceFile: 'src/SoloWidget.tsx', sourceLine: 3 }),
+    );
+
+    const architecture = await session.call('get_app_architecture', {});
+    expect(architecture).not.toContain('The knowledge graph is empty');
+    expect(architecture).toContain('no recorded flow yet');
+    expect(architecture).toContain('1 component seen by picking');
+    expect(architecture).toContain('SoloWidget');
+    // And it says what the missing half would add, rather than reading as all
+    // there is to know.
+    expect(architecture).toContain('Send a recording');
+  });
+
+  it('is reachable by name, without a flow to look the name up through', async () => {
+    const session = await server();
+    await session.post(
+      '/arkg/ingest-component',
+      JSON.stringify({ name: 'SoloWidget', sourceFile: 'src/SoloWidget.tsx', sourceLine: 3 }),
+    );
+
+    // Lower case: a caller is quoting a name, not a key.
+    const history = await session.call('get_component_history', { componentId: 'solowidget' });
+    expect(history).toContain('SoloWidget');
+    expect(history).toContain('src/SoloWidget.tsx:3');
   });
 });
 
@@ -177,7 +305,13 @@ describe('the graph ages out on the sweep that already exists', () => {
     db.exec('UPDATE arkg_api_endpoints SET last_observed_at = 0');
     db.close();
 
-    const second = await session.post('/flows', JSON.stringify(flow('flow-new')));
+    const second = await session.post(
+      '/flows',
+      // Different components, not the same ones under new ids: the graph joins
+      // on name and file now, so re-sending CheckoutPanel would refresh the row
+      // that was just backdated and there would be nothing old left to prune.
+      JSON.stringify(flow('flow-new', { panel: 'ShipPanel', row: 'ShipRow' })),
+    );
     expect(second.status).toBe(200);
     expect(session.stderr()).toMatch(/pruned \d+ node\(s\) older than 1 days/);
   });

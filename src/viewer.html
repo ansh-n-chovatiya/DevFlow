@@ -434,10 +434,54 @@
       </div>
 
       <div class="dialog__body">
+        <!--
+          Where the flow is going, said before anybody commits to it.
+
+          The dialog priced the send to the byte and never named the
+          destination, so a stale port looked exactly like a working one until
+          the POST had already failed. The health check runs when this opens for
+          the same reason: after the upload is after the point of the check.
+        -->
+        <div class="field">
+          <p class="label">Send to</p>
+          <p id="send-target" class="mono meta truncate"></p>
+          <p id="send-target-status" class="meta hidden"></p>
+        </div>
+
+        <div id="send-target-problem" class="banner banner--danger hidden">
+          <span data-icon="triangle-alert" class="banner__icon"></span>
+          <div class="banner__body">
+            <p id="send-target-problem-title" class="banner__title"></p>
+            <p id="send-target-problem-text"></p>
+          </div>
+          <button
+            id="send-recheck"
+            class="btn btn--ghost btn--compact banner__action"
+            type="button"
+          >
+            <span data-icon="refresh-cw"></span>
+            <span>Check again</span>
+          </button>
+        </div>
+
         <div class="field">
           <p class="label">Include</p>
           <div id="send-includes" class="includes"></div>
           <p id="send-note" class="meta hidden"></p>
+        </div>
+
+        <!--
+          Not gated on a switch, unlike #send-warning beneath it. Step URLs are
+          behind no Include switch at all, so the one banner that was here
+          vanished exactly when everything was turned off — and the note that
+          replaced it said "and nothing else".
+        -->
+        <div id="send-credentials" class="banner banner--warn hidden">
+          <span data-icon="triangle-alert" class="banner__icon"></span>
+          <div class="banner__body">
+            <p class="banner__title">Some step URLs look like they carry credentials</p>
+            <p id="send-credentials-text"></p>
+          </div>
         </div>
 
         <div id="send-warning" class="banner banner--warn hidden">
@@ -695,6 +739,12 @@
             <dd>Annotate the selected step's screenshot</dd>
             <dt><kbd>Ctrl</kbd> <kbd>E</kbd></dt>
             <dd>Export this flow</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>Enter</kbd></dt>
+            <dd>Send this flow to Claude</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>S</kbd></dt>
+            <dd>Save to library</dd>
+            <dt><kbd>?</kbd></dt>
+            <dd>Show these shortcuts</dd>
             <dt><kbd>Esc</kbd></dt>
             <dd>Close a dialog, or clear the filter</dd>
           </dl>

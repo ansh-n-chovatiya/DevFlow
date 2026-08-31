@@ -3,7 +3,12 @@ import type { Preflight, RecordingTarget } from '../src/features/recording/prefl
 import { flowError } from '../src/shared/errors.js';
 import { ERROR_TTL_MS, MAX_STEPS, WARN_STEPS } from '../src/shared/constants.js';
 import type { Step } from '../src/shared/types.js';
-import { derivePopupView, THUMBNAIL_LIMIT, type PopupInput } from '../src/ui/popup/view.js';
+import {
+  derivePopupView,
+  suggestFlowName,
+  THUMBNAIL_LIMIT,
+  type PopupInput,
+} from '../src/ui/popup/view.js';
 
 const NOW = 1_700_000_000_000;
 
@@ -52,6 +57,9 @@ function input(overrides: Partial<PopupInput> = {}): PopupInput {
     // reason: these cases are about the shipped hour, not about a number a test
     // chose.
     errorTtlMs: ERROR_TTL_MS,
+    // Nothing has been archived from this popup. The one state where it is not
+    // null is the moment after `Save to library`.
+    savedName: null,
     ...overrides,
   };
 }
@@ -273,5 +281,62 @@ describe('errors', () => {
 
     expect(view.notice?.tone).toBe('danger');
     expect(view.notice?.title).toBe('The disk is full');
+  });
+});
+
+/*
+ * Archiving empties the recording, so the card the user pressed the button on
+ * vanishes — which on its own is indistinguishable from the discard directly
+ * beside it. The line saying where the flow went is the whole of the difference.
+ */
+describe('after Save to library', () => {
+  it('says where the flow went, once there is nothing left on screen to explain it', () => {
+    const view = derivePopupView(input({ steps: [], savedName: 'Checkout' }));
+
+    expect(view.body).toBe('empty');
+    expect(view.notice?.tone).toBe('info');
+    expect(view.notice?.title).toBe('Saved to library');
+    expect(view.notice?.body).toContain('Checkout');
+  });
+
+  it('still puts a real failure first', () => {
+    const view = derivePopupView(
+      input({
+        savedName: 'Checkout',
+        lastError: { code: 'STORAGE_QUOTA', message: 'Out of space.', at: NOW - 1000 },
+      }),
+    );
+
+    expect(view.notice?.title).toBe('The disk is full');
+  });
+
+  it('outranks the explanation of what a late attach will miss', () => {
+    // The attach notice is advice about the *next* recording; the confirmation
+    // is about the one that just happened, and only one of them is news.
+    const view = derivePopupView(
+      input({ preflight: NEEDS_ATTACH, steps: [], savedName: 'Checkout' }),
+    );
+
+    expect(view.notice?.title).toBe('Saved to library');
+  });
+});
+
+describe('the name a popup save files a flow under', () => {
+  it('prefers the page title, which says what the flow is about', () => {
+    const name = suggestFlowName([step({ title: 'Checkout — Acme' })], NOW);
+    expect(name).toBe('Checkout — Acme');
+  });
+
+  it('falls back to the host when no step carried a title', () => {
+    expect(suggestFlowName([step()], NOW)).toBe('github.com');
+  });
+
+  it('never returns an empty name, because a flow with no name cannot be found again', () => {
+    expect(suggestFlowName([], NOW)).not.toBe('');
+  });
+
+  it('keeps a run-on title short enough to read in a list', () => {
+    const name = suggestFlowName([step({ title: 'x'.repeat(200) })], NOW);
+    expect(name.length).toBe(80);
   });
 });

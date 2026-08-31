@@ -82,15 +82,53 @@
             <span data-icon="atom"></span>
           </span>
 
-          <h1 class="hero-title">Locate React Component</h1>
+          <!--
+            Both verbs, in the order the gesture happens (CONTRACTS §4.2). A pick
+            can succeed where a locate fails, so a title naming only one of them
+            promises the wrong thing on the half of the outcomes where they come
+            apart. Sentence case, like every other heading in the product.
+          -->
+          <h1 class="hero-title">Pick and locate a component</h1>
           <p class="hero-sub">
             Pick a React component on the page to view its source and the component tree.
           </p>
 
+          <!-- `Pick component` is frozen for the idle state (CONTRACTS §4.4). -->
           <button id="pick-btn" class="btn btn--primary btn-hero idle-action" type="button">
             <span data-icon="crosshair"></span>
-            <span>Pick Element</span>
+            <span>Pick component</span>
           </button>
+
+          <!--
+            First run, and only first run.
+
+            `projectRoot` defaults to empty and `Open in Editor` cannot work
+            without it, so the payoff of a locate is gated on a setting nothing
+            on this surface mentions — and the card that says so appears only
+            *after* a pick, which is one pick too late. `main.ts` shows this
+            while the setting is empty and hides it the moment it is not, so
+            there is no onboarding state to store, migrate or reset.
+          -->
+          <div id="setup-hint" class="banner banner--info idle-setup" hidden>
+            <span data-icon="folder-plus" data-icon-class="banner__icon"></span>
+            <p class="banner__body">
+              Set your project root to open a located component straight in your editor.
+            </p>
+            <span class="idle-setup-actions banner__action">
+              <button id="setup-hint-open" class="btn btn--secondary btn--compact" type="button">
+                Set project root
+              </button>
+              <button
+                id="setup-hint-dismiss"
+                class="btn btn--ghost btn--icon btn--compact"
+                type="button"
+                title="Dismiss"
+                aria-label="Dismiss this tip"
+              >
+                <span data-icon="x"></span>
+              </button>
+            </span>
+          </div>
 
           <ul class="feature-grid">
             <li class="feature-card">

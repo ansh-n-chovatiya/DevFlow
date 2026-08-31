@@ -18,7 +18,7 @@ import type {
   NetworkCall,
   Step,
 } from '../src/shared/types.js';
-import { deriveSendView, SEND_DEFAULTS } from '../src/ui/viewer/send-view.js';
+import { deriveSendView, SEND_DEFAULTS, type SendProbe } from '../src/ui/viewer/send-view.js';
 import { pos1 } from '../src/core/react/positions.js';
 
 const NOW = 1_700_000_000_000;
@@ -323,5 +323,187 @@ describe('pruning, which is what the totals are promising', () => {
 
   it('hands back the same array when nothing is being dropped', () => {
     expect(pruneSteps(LOADED, SEND_EVERYTHING)).toBe(LOADED);
+  });
+});
+
+/**
+ * The banner that is not behind a switch.
+ *
+ * Every other warning in this dialog is gated on the Include switch that
+ * controls the thing it warns about, which is right for all of them and wrong
+ * for this one: a step URL is behind no switch, so gating it meant the dialog
+ * fell silent — and printed its most reassuring line — at the exact moment
+ * somebody had turned everything off to be careful.
+ */
+describe('credentials in step URLs', () => {
+  const callback = (url: string) => [step({ url })];
+
+  it('raises the banner with every switch off, which is the whole point', () => {
+    const bare = view(NONE, callback('https://app.example.com/callback?code=4/0AY0e-g7'));
+
+    expect(bare.credentials).not.toBeNull();
+    expect(bare.credentials?.steps).toBe(1);
+    expect(bare.credentials?.text).toContain('?code=');
+  });
+
+  it('does not let the bare note claim "nothing else" over a URL like that', () => {
+    const clean = view(NONE, callback('https://shop.example.com/cart'));
+    const dirty = view(NONE, callback('https://app.example.com/callback?code=abc'));
+
+    expect(clean.note).toContain('nothing else');
+    expect(dirty.note).not.toContain('nothing else');
+    expect(dirty.note).toContain('does not strip the URLs');
+  });
+
+  it('says nothing about a flow whose URLs are ordinary', () => {
+    expect(view(ALL, callback('https://shop.example.com/orders?sort=date&page=2')).credentials)
+      .toBeNull();
+  });
+
+  it('is unmoved by the switches, because the URLs are', () => {
+    const steps = callback('https://app.example.com/callback?code=abc');
+    expect(view(ALL, steps).credentials?.text).toBe(view(NONE, steps).credentials?.text);
+  });
+
+  it('counts URLs, and names each parameter once however often it appears', () => {
+    const found = view(NONE, [
+      step({ url: 'https://app.example.com/callback?code=one&state=xyz' }),
+      step({ url: 'https://app.example.com/callback?code=two' }),
+      step({ url: 'https://shop.example.com/cart' }),
+    ]).credentials;
+
+    expect(found?.steps).toBe(2);
+    expect(found?.params).toEqual(['code', 'state']);
+  });
+
+  /**
+   * `redactUrl` runs at capture, so the ordinary flow has already had its
+   * grants masked. Warning about those would be the dialog crying wolf about
+   * its own redactor, and a warning people learn to click past is worse than
+   * none — the one this raises has to mean something.
+   */
+  it('ignores a parameter capture has already masked', () => {
+    expect(view(NONE, callback('https://app.example.com/callback?code=[redacted]')).credentials)
+      .toBeNull();
+  });
+
+  it('ignores a parameter carrying nothing', () => {
+    expect(view(NONE, callback('https://app.example.com/callback?code=')).credentials).toBeNull();
+  });
+
+  it('reads an implicit-flow token out of the fragment, and leaves a route alone', () => {
+    expect(view(NONE, callback('https://app.example.com/#access_token=ya29.a0')).credentials)
+      .not.toBeNull();
+    expect(view(NONE, callback('https://app.example.com/#/orders/42')).credentials).toBeNull();
+  });
+
+  it('reads as one sentence for one parameter and for many', () => {
+    const one = view(NONE, callback('https://app.example.com/cb?code=abc')).credentials;
+    expect(one?.text).toContain('1 step URL carries a query parameter that looks like');
+
+    const many = view(NONE, [
+      step({ url: 'https://app.example.com/cb?code=abc&state=xyz' }),
+      step({ url: 'https://app.example.com/cb?token=t' }),
+    ]).credentials;
+    expect(many?.text).toContain('2 step URLs carry query parameters that look like');
+  });
+
+  it('stops listing parameters before the sentence becomes a dump', () => {
+    const text = view(
+      NONE,
+      callback('https://app.example.com/cb?code=a&state=b&token=c&secret=d&api_key=e'),
+    ).credentials?.text;
+
+    expect(text).toContain('and 2 more');
+  });
+});
+
+/**
+ * Where the flow is going, and whether anything is there.
+ *
+ * Four causes of a failed send reached one canned sentence that named exactly
+ * one of them, and it was the wrong one three times out of four. These are the
+ * four, kept apart by the only thing that can tell them apart — what the health
+ * probe actually reported.
+ */
+describe('the destination', () => {
+  const URL_LOCAL = 'http://127.0.0.1:4321/flows';
+
+  function target(url: string, probe: SendProbe | null) {
+    return deriveSendView({
+      steps: LOADED,
+      options: SEND_DEFAULTS,
+      busy: false,
+      target: { url, probe },
+    }).target;
+  }
+
+  it('names the address before anything has been asked of it', () => {
+    expect(target(URL_LOCAL, null)?.url).toBe(URL_LOCAL);
+    expect(target(URL_LOCAL, null)?.status).toBeNull();
+    expect(target(URL_LOCAL, null)?.problem).toBeNull();
+  });
+
+  it('says it is checking, then what answered', () => {
+    expect(target(URL_LOCAL, { kind: 'checking' })?.status).toBe('Checking…');
+    expect(
+      target(URL_LOCAL, { kind: 'ok', service: 'devflow-mcp-server', mode: 'local' })?.status,
+    ).toBe('Connected · devflow-mcp-server (local)');
+  });
+
+  it('raises no problem while the server is answering', () => {
+    expect(target(URL_LOCAL, { kind: 'ok', service: 'x', mode: 'local' })?.problem).toBeNull();
+  });
+
+  it('reads a refused connection as nothing listening, not as a closed editor', () => {
+    const problem = target(URL_LOCAL, { kind: 'failed', detail: 'Failed to fetch' })?.problem;
+
+    expect(problem?.title).toBe('Nothing is listening on that port');
+    expect(problem?.text).toContain('127.0.0.1:4321');
+    expect(problem?.text).toContain('npx devflow-mcp-server install');
+  });
+
+  it('reads an HTTP answer as something else holding the port', () => {
+    const problem = target(URL_LOCAL, { kind: 'failed', detail: 'HTTP 404' })?.problem;
+
+    expect(problem?.title).toBe('Something else is on that port');
+    expect(problem?.text).toContain('HTTP 404');
+    // Nothing to install and nothing to open: something *is* listening.
+    expect(problem?.text).not.toContain('install');
+  });
+
+  it('reads an abort as a timeout, and points at the setting that governs it', () => {
+    const problem = target(URL_LOCAL, {
+      kind: 'failed',
+      detail: 'The operation was aborted.',
+    })?.problem;
+
+    expect(problem?.title).toBe('The server did not answer in time');
+    expect(problem?.text).toContain('mcp.healthTimeoutMs');
+  });
+
+  /** `port.ts` refuses to rewrite a remote address; the same fact makes every
+   *  local remedy the wrong advice here. */
+  it('does not tell somebody to start a server on a machine that is not theirs', () => {
+    const problem = target('http://build-box.example.com:4321/flows', {
+      kind: 'failed',
+      detail: 'Failed to fetch',
+    })?.problem;
+
+    expect(problem?.title).toContain('is not this machine');
+    expect(problem?.text).toContain('not loopback');
+    expect(problem?.text).not.toContain('install');
+  });
+
+  it('says an unusable address is unusable rather than guessing at a port', () => {
+    const problem = target('not a url', { kind: 'failed', detail: 'not a URL: not a url' })
+      ?.problem;
+
+    expect(problem?.title).toBe('That address is not a URL');
+    expect(problem?.text).toContain('Settings');
+  });
+
+  it('is absent for a caller that asked only about the bytes', () => {
+    expect(view(SEND_DEFAULTS).target).toBeNull();
   });
 });

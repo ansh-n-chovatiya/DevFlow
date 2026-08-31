@@ -43,7 +43,8 @@ const manifest = JSON.parse(readFileSync(resolve(root, 'public/manifest.json'), 
   devtools_page?: string;
   content_scripts: ContentScript[];
   options_ui?: { page: string; open_in_tab?: boolean };
-  action?: { default_popup?: string };
+  action?: { default_popup?: string; default_title?: string };
+  commands?: Record<string, { suggested_key?: { default?: string }; description?: string }>;
   web_accessible_resources?: { resources: string[]; matches: string[] }[];
 };
 
@@ -80,6 +81,63 @@ describe('the manifest', () => {
 
   it('takes its version from package.json — sync-version writes it, nobody edits it', () => {
     expect(manifest.version).toBe(pkg.version);
+  });
+});
+
+/*
+ * The toolbar is the only surface that is visible when the recorded tab is not,
+ * and until these two lines existed it could not say anything at all: the badge
+ * carried a step count with no state attached to it, and the tooltip was the
+ * extension's name. `default_title` is what Chrome shows before the worker's
+ * first `setTitle` of a session — a fresh profile, a browser just restarted —
+ * so it has to say what the icon does rather than repeat what the icon is.
+ */
+describe('the toolbar', () => {
+  it('names the action in its tooltip rather than repeating the extension name', () => {
+    expect(manifest.action?.default_title).toBeTruthy();
+    expect(manifest.action?.default_title).not.toBe(manifest.name);
+    expect(manifest.action?.default_title).toMatch(/record/i);
+  });
+});
+
+/*
+ * Start and Stop are the two most repeated gestures in the product, and both
+ * were mouse-only — which also meant dismissing the popup before the page could
+ * be used. A `commands` entry is the only way an extension can be driven
+ * without one, and the binding is the user's to change from
+ * chrome://extensions/shortcuts; what is fixed here is that one exists, that it
+ * is described (Chrome refuses a command without a description), and that its
+ * default does not land on a combination Chrome keeps for itself.
+ */
+describe('the keyboard', () => {
+  const toggle = manifest.commands?.['toggle-recording'];
+
+  it('declares a command for the gesture the whole product is built around', () => {
+    expect(toggle).toBeDefined();
+    expect(toggle?.description).toMatch(/record/i);
+  });
+
+  it('suggests a default binding, so the shortcut works before anyone opens the settings', () => {
+    expect(toggle?.suggested_key?.default).toBe('Alt+Shift+R');
+  });
+
+  it('does not take a shortcut Chrome has already spent', () => {
+    // Chrome silently ignores a suggested key it reserves, so the command would
+    // ship with no binding at all and nothing would say why.
+    const reserved = [
+      'Ctrl+Shift+A',
+      'Ctrl+Shift+N',
+      'Ctrl+Shift+T',
+      'Ctrl+Shift+W',
+      'Ctrl+Shift+Q',
+      'Ctrl+N',
+      'Ctrl+T',
+      'Ctrl+W',
+    ];
+
+    for (const command of Object.values(manifest.commands ?? {})) {
+      expect(reserved).not.toContain(command.suggested_key?.default);
+    }
   });
 });
 

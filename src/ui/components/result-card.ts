@@ -32,6 +32,13 @@
  * the fallback for a record that reached us without one — an older flow, a
  * hand-built fixture — so that "no sentence" is never a state the card can be in.
  *
+ * **Diagnosis and advice are two fields, not one.** `detail` says what happened
+ * and is written where it happened; `STATUS_ACTION` says what to do about it and
+ * is written once, here, keyed by status. Folding the second into the first
+ * would mean every resolver that composes a `detail` string re-deriving the same
+ * advice, and — worse — would leave advice as text on a surface that could have
+ * offered the control instead, which is what `skipped` and its switch are.
+ *
  * ## Positions
  *
  * `ComponentSource.line` is `Pos1` and `compiled.line` is `Pos0` (CONTRACTS §1).
@@ -135,6 +142,82 @@ export const STATUS_DETAIL: Record<Exclude<ComponentStatus, 'resolved'>, string>
 export function detailText(source: ComponentSource): string | null {
   if (source.status === 'resolved') return null;
   return source.detail ?? STATUS_DETAIL[source.status];
+}
+
+/**
+ * A control an action can carry, when saying what to do is not as good as doing it.
+ *
+ * `kind` rather than a bare label so the card cannot wire a button to the wrong
+ * handler: `CONTROL_HANDLERS` below maps each kind to the one option that serves
+ * it, and a second kind added here without an entry there is a compile error.
+ */
+export interface ActionControl {
+  readonly kind: 'enable-source-lookup';
+  readonly label: string;
+  readonly icon: IconName;
+}
+
+/** What to do about an outcome, as against `detail`, which says what happened. */
+export interface StatusAction {
+  /** One sentence, in the imperative. Rendered whether or not a control is. */
+  readonly text: string;
+  /** Null when the advice is the whole of it, and no surface could do more. */
+  readonly control: ActionControl | null;
+}
+
+/**
+ * The advice beside each explanation.
+ *
+ * `detail` diagnoses and stops there — *most likely a lazy chunk that was never
+ * fetched* names the cause and leaves the reader holding it. This is the other
+ * half of that sentence, and it is separate from `STATUS_DETAIL` for two
+ * reasons: the resolver writes its own `detail` and would otherwise have to
+ * repeat the advice in seven places, and advice is the part a surface can
+ * sometimes *act on* rather than only print.
+ *
+ * Keyed over `Exclude<ComponentStatus, 'resolved'>` for the same reason
+ * `STATUS_DETAIL` is: a tenth status with nothing to say about it fails the
+ * build here rather than shipping a card that goes quiet. `null` is a real
+ * answer — `pending` has nothing to advise because nothing has happened yet,
+ * and `map-error` and `unfetchable` are the page's problem rather than an
+ * action the reader has.
+ */
+export const STATUS_ACTION: Record<Exclude<ComponentStatus, 'resolved'>, StatusAction | null> = {
+  'compiled-only': {
+    text:
+      'Your build is not serving source maps for that bundle — or reading them is ' +
+      'switched off in Settings. Serve the .map files to get the file it was written in.',
+    control: null,
+  },
+  ambiguous: {
+    text:
+      'Check the match before you trust the path: Open in Sources shows the one place ' +
+      'this answer came from, and the other matches are the same code elsewhere.',
+    control: null,
+  },
+  'not-found': {
+    text: 'Load the route that renders it, then pick it again — a chunk the page never fetched cannot be searched.',
+    control: null,
+  },
+  'no-map': {
+    text:
+      'Your build is not serving source maps for that bundle, so the bundled position ' +
+      'above is as far back as this can go. Serve the .map files to see the original file.',
+    control: null,
+  },
+  'map-error': null,
+  unfetchable: null,
+  skipped: {
+    text: 'Turn source lookup back on, then pick it again.',
+    control: { kind: 'enable-source-lookup', label: 'Turn on source lookup', icon: 'settings' },
+  },
+  pending: null,
+};
+
+/** The advice for one component, or null when there is none to give. */
+export function actionFor(source: ComponentSource): StatusAction | null {
+  if (source.status === 'resolved') return null;
+  return STATUS_ACTION[source.status];
 }
 
 /**
@@ -268,7 +351,32 @@ export interface ResultCardOptions {
    * Start another pick gesture on the page.
    */
   readonly onPickAnother?: () => void;
+  /**
+   * Turn `react.useSourceMaps` back on, on the surface that holds the setting.
+   *
+   * The advice for `skipped` is the one piece of advice on this card that names
+   * a switch the reader owns, and the panel keeps that switch four inches away
+   * in its own settings drawer. Optional like every other effect here: a surface
+   * that cannot write settings omits it, and the sentence is then advice without
+   * a button rather than a button that does nothing.
+   */
+  readonly onEnableSourceLookup?: () => void;
 }
+
+/**
+ * Which option serves which control.
+ *
+ * A `Record` over `ActionControl['kind']`, so a control kind added to
+ * `STATUS_ACTION` with no handler for it does not compile. `undefined` back
+ * means the surface did not supply the callback, which is how the control
+ * degrades to not being rendered.
+ */
+const CONTROL_HANDLERS: Record<
+  ActionControl['kind'],
+  (options: ResultCardOptions) => (() => void) | undefined
+> = {
+  'enable-source-lookup': (options) => options.onEnableSourceLookup,
+};
 
 /**
  * Build the card.
@@ -301,6 +409,9 @@ export function resultCard(options: ResultCardOptions): HTMLElement {
 
   const detail = detailText(source);
   if (detail) card.append(make('p', 'result-card__detail', detail));
+
+  const advice = actionBlock(options);
+  if (advice) card.append(advice);
 
   const matchCount = source.matchCount ?? 0;
   if (matchCount > 1) card.append(ambiguity(matchCount, options.resourcesSearched));
@@ -389,6 +500,44 @@ function ambiguity(matchCount: number, resourcesSearched?: number): HTMLElement 
   const banner = make('div', 'banner banner--warn result-card__ambiguity');
   banner.append(icon('triangle-alert', 'icon banner__icon'));
   banner.append(make('p', 'banner__body', ambiguityText(matchCount, resourcesSearched)));
+  return banner;
+}
+
+/**
+ * What to do next, under the sentence that says what happened.
+ *
+ * The shared banner rather than a bare paragraph, and `--info` rather than
+ * `--warn`: the caveat tone on this card belongs to the two warnings below it,
+ * and an outcome like "the route was never loaded" is not a warning — it is the
+ * next thing to do. It sits directly under `result-card__detail` because it
+ * finishes that sentence.
+ *
+ * A control is rendered only when the surface supplied the callback for it, the
+ * same rule `onOpenEditor` and `onOpenSources` already follow. The advice is
+ * rendered either way: a reader who cannot press the button still needs to know
+ * which switch is off.
+ */
+function actionBlock(options: ResultCardOptions): HTMLElement | null {
+  const action = actionFor(options.source);
+  if (!action) return null;
+
+  const banner = make('div', 'banner banner--info result-card__action');
+  banner.append(icon('info', 'icon banner__icon'));
+  banner.append(make('p', 'banner__body', action.text));
+
+  const control = action.control;
+  const onClick = control ? CONTROL_HANDLERS[control.kind](options) : undefined;
+  if (control && onClick) {
+    banner.append(
+      actionButton(
+        control.icon,
+        control.label,
+        'btn btn--secondary btn--compact banner__action result-card__action-btn',
+        onClick,
+      ),
+    );
+  }
+
   return banner;
 }
 

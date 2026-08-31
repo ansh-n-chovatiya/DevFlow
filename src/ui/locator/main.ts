@@ -396,6 +396,7 @@ function renderCard(source: ComponentSource): void {
     onOpenEditor: (url) => void openInEditor(url),
     onOpenSources: openInSources,
     onPickAnother: () => void startPick(),
+    onEnableSourceLookup: () => void enableSourceLookup(),
   });
 
   // The card is the selected component, so it gets the same page highlight its
@@ -577,6 +578,60 @@ function openInSources(compiled?: CompiledPosition): void {
   }
 }
 
+/**
+ * The card's `skipped` advice, taken.
+ *
+ * The switch it names is in the panel's own drawer, so this flips it in place
+ * and re-locates the component that is on screen — leaving for the options page
+ * would answer the question in a tab the answer is not in. Managed and
+ * already-on both open the drawer instead: one is a value this panel may not
+ * write, the other is a card that predates the setting, and in both cases the
+ * honest thing is to show the reader the switch rather than claim to have moved
+ * it.
+ */
+async function enableSourceLookup(): Promise<void> {
+  const key: SettingKey = 'react.useSourceMaps';
+
+  if (state.managed.has(key)) {
+    drawer?.open();
+    showToast({ message: 'Source lookup is managed by your organisation.', tone: 'neutral' });
+    return;
+  }
+
+  if (state.settings[key]) {
+    drawer?.open();
+    return;
+  }
+
+  const result = await saveSettings({ [key]: true });
+  if (!result.ok) {
+    showToast({ message: result.error.message, tone: 'danger' });
+    return;
+  }
+
+  showToast({ message: 'Source lookup turned on', tone: 'success' });
+
+  // The point of the control is the answer, not the setting: the component that
+  // could not be looked up is still on screen, and it can be now.
+  if (state.activeGroup !== null && state.activeIndex >= 0) {
+    void locate(state.activeGroup, state.activeIndex);
+  }
+}
+
+/**
+ * The first-run strip, shown while there is nothing to open a file with.
+ *
+ * Its whole state is `projectRoot === ''` plus a dismissal that lasts as long as
+ * the panel does. Nothing is stored: a strip that survives its own condition is
+ * an onboarding flag somebody has to reset, and this one has no condition left
+ * to describe the moment the setting is set.
+ */
+let setupHintDismissed = false;
+
+function syncSetupHint(): void {
+  toggle(el('setup-hint'), !setupHintDismissed && state.settings.projectRoot.trim() === '');
+}
+
 function retry(): void {
   if (state.activeGroup !== null && state.activeIndex >= 0) {
     void locate(state.activeGroup, state.activeIndex);
@@ -704,6 +759,15 @@ function wire(): void {
     el('ambiguity-warning').hidden = true;
   });
 
+  el('setup-hint-open').addEventListener('click', () => {
+    el('history-drawer').hidden = true;
+    drawer?.open();
+  });
+  el('setup-hint-dismiss').addEventListener('click', () => {
+    setupHintDismissed = true;
+    syncSetupHint();
+  });
+
   el<HTMLInputElement>('tree-filter').addEventListener('input', (event) => {
     state.filter = (event.target as HTMLInputElement).value;
     renderTrees();
@@ -789,6 +853,10 @@ function onKeyDown(event: KeyboardEvent): void {
 function adopt(settings: Settings): void {
   state.settings = settings;
   provider.retarget(bundleBudget(settings));
+
+  // Setting a project root in the drawer is the strip's own condition going
+  // away, so it goes away here rather than on the next repaint of the view.
+  syncSetupHint();
 
   if (state.view === 'result' && state.source) {
     // The editor, the project root and the five category flags all change what

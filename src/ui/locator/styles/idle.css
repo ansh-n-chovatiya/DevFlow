@@ -75,6 +75,31 @@
   font-weight: var(--weight-medium);
 }
 
+/* ── First-run setup strip ───────────────────────────────────────────────── */
+
+/*
+ * The shared `.banner` supplies everything but the placement, so this is only
+ * the two things the hero's centred column cannot give it: the full width the
+ * feature cards below already take, and left-aligned text, because a sentence
+ * with a button beside it is a row rather than a heading.
+ *
+ * It is a child of the hero rather than a strip above the view: it belongs to
+ * the empty state it is explaining, and pinned to the top of the panel it would
+ * be the first thing read on every idle repaint, which for someone who has set
+ * a project root is a banner about nothing.
+ */
+.idle-setup {
+  width: 100%;
+  margin-bottom: var(--space-6);
+  text-align: left;
+}
+
+.idle-setup-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 /* ── Bento feature cards ─────────────────────────────────────────────────── */
 
 .feature-grid {

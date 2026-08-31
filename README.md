@@ -202,13 +202,25 @@ server binds to loopback and writes to your home directory, and refuses any
 request carrying a web page's `Origin` — a loopback port is reachable from any
 page you happen to have open.
 
-**Captured request and response bodies are not redacted.** Only headers are. A
-recorded flow can contain whatever your app sent, including tokens in payloads,
-and URLs keep their query strings, so an OAuth callback recorded mid-flow keeps
-its `?code=`. That is why auto-send is off by default, and why both the export
-and send dialogs let you drop the network data, the console output, the
-screenshots or the component table before a flow leaves the extension — each with
-the bytes it would cost beside it.
+**Captured request and response bodies are not redacted.** Headers are, and so
+are the credential-bearing parameters of a URL: `?code=`, `?access_token=`,
+`?session=` and their kin are masked to `[redacted]` as the step is captured, in
+the fragment as well as the query, so an OAuth callback recorded mid-flow does
+not keep its code. Bodies are not touched, because a body is usually the thing
+you are debugging — a recorded flow can contain whatever your app sent,
+including tokens in payloads.
+
+What survives in a URL is the parameter *names*, which is deliberate: a step
+whose query was stripped is unreadable as a record of where the user was. It
+also means the mask is a list, and a list is never complete — `state` and
+`nonce` are left alone as CSRF machinery rather than secrets, and a flow
+recorded before URL masking existed still holds whatever it held. The send
+dialog says so when it sees them.
+
+That is why auto-send is off by default, and why both the export and send
+dialogs let you drop the network data, the console output, the screenshots or
+the component table before a flow leaves the extension — each with the bytes it
+would cost beside it.
 
 ---
 

@@ -161,6 +161,20 @@ export const INDICATOR_ID = 'devflow-indicator';
 export const BADGE_COLOR = '#FF3B30';
 
 /**
+ * The other two badge states, beside the red of a live recording.
+ *
+ * Here rather than in the worker for the same reason `BADGE_COLOR` is: the
+ * badge is the one surface that is always visible, and three states that are
+ * only distinguishable by a number are not three states. Paused is the amber of
+ * `--warn` and waiting-to-be-saved is `--fg-muted`, both from `tokens.css` —
+ * written out because `chrome.action.setBadgeBackgroundColor` takes a value and
+ * cannot read a custom property, which is the same reason the red is a literal.
+ * If the tokens move, these move with them.
+ */
+export const BADGE_PAUSED_COLOR = '#8A6212';
+export const BADGE_WAITING_COLOR = '#4E5C59';
+
+/**
  * Highlight box baked into screenshots.
  *
  * Tier 1, and in the field table as `annotation.stroke`. Red is invisible on a

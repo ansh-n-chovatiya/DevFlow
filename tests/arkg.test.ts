@@ -45,6 +45,8 @@ interface Anomaly {
 
 interface Architecture {
   totalFlows: number;
+  totalComponents: number;
+  totalEndpoints: number;
   lastSeen: string | null;
   topComponents: {
     id: string;
@@ -62,6 +64,7 @@ interface Arkg {
   ingestFlow(flowJson: unknown): void;
   ingestComponentPick(pick: unknown): void;
   getComponent(id: string): (Row & { edges: Row[] }) | null;
+  getComponentByName(name: string): (Row & { edges: Row[] }) | null;
   getComponentHistory(id: string, sinceMs?: number): Row[];
   getAnomalies(sinceMs?: number): Anomaly[];
   getBlastRadius(sourceFile: string, lineStart?: number, lineEnd?: number): Row[];
@@ -202,15 +205,371 @@ describe('the schema', () => {
     const { db, path } = openFile();
     db.exec('ALTER TABLE arkg_edges DROP COLUMN timing_samples');
     db.exec('ALTER TABLE arkg_named_flows DROP COLUMN content_hash');
+    db.exec('ALTER TABLE arkg_components DROP COLUMN id_source');
     arkg.closeArkg();
 
     const migrated = arkg.openArkg(path);
     const edgeColumns = rows(migrated, 'PRAGMA table_info(arkg_edges)').map((c) => c.name);
     const flowColumns = rows(migrated, 'PRAGMA table_info(arkg_named_flows)').map((c) => c.name);
+    const componentColumns = rows(migrated, 'PRAGMA table_info(arkg_components)').map((c) => c.name);
 
     expect(edgeColumns).toContain('timing_samples');
     expect(flowColumns).toContain('content_hash');
+    expect(componentColumns).toContain('id_source');
     expect(() => arkg.ingestFlow(fullFlow())).not.toThrow();
+  });
+});
+
+// ── Component identity ───────────────────────────────────────────────────────
+
+/**
+ * The join, which is the graph's whole claim about components.
+ *
+ * The extension keys a component by a hash of its compiled function source, and
+ * a pick from the panel cannot carry that hash: the source it is taken over
+ * never leaves the page. So the two halves of the evidence about one component
+ * arrive under two different keys, and everything the graph counts — frequency,
+ * failure rate, every percentile — is worth nothing unless they land on one
+ * row. What is asserted below is always the same two things: how many rows
+ * there are, and whether the surviving one counted both sightings.
+ */
+
+/** The 16 hex characters of a sha256 prefix — the shape this server mints. */
+const MINTED_ID = 'a1b2c3d4e5f60718';
+
+/** A row as a version before `id_source` existed would have written it. */
+function legacyComponent(db: Db, over: Record<string, unknown>): void {
+  db.prepare(`
+    INSERT INTO arkg_components
+      (id, display_name, source_file, source_line, first_observed_at, last_observed_at,
+       frequency, failure_rate, timing_p50_ms, timing_p95_ms, timing_samples, id_source)
+    VALUES
+      (@id, @display_name, @source_file, @source_line, @first_observed_at, @last_observed_at,
+       @frequency, @failure_rate, @timing_p50_ms, @timing_p95_ms, @timing_samples, NULL)
+  `).run({
+    source_file: null,
+    source_line: null,
+    first_observed_at: NOW,
+    last_observed_at: NOW,
+    frequency: 1,
+    failure_rate: 0,
+    timing_p50_ms: null,
+    timing_p95_ms: null,
+    timing_samples: null,
+    ...over,
+  });
+}
+
+function legacyEdge(db: Db, over: Record<string, unknown>): void {
+  db.prepare(`
+    INSERT INTO arkg_edges
+      (type, from_node_type, from_node_id, to_node_type, to_node_id, flow_id,
+       frequency, failure_rate, timing_p50_ms, timing_p95_ms, timing_samples,
+       first_observed_at, last_observed_at)
+    VALUES
+      (@type, @from_node_type, @from_node_id, @to_node_type, @to_node_id, @flow_id,
+       @frequency, @failure_rate, NULL, NULL, NULL, @first_observed_at, @last_observed_at)
+  `).run({
+    from_node_type: 'component',
+    to_node_type: 'component',
+    flow_id: null,
+    frequency: 1,
+    failure_rate: 0,
+    first_observed_at: NOW,
+    last_observed_at: NOW,
+    ...over,
+  });
+}
+
+const components = (db: Db): Row[] => rows(db, 'SELECT * FROM arkg_components');
+
+describe('a component seen in a flow and picked in the panel', () => {
+  const pick = (over: Json = {}) =>
+    arkg.ingestComponentPick({ name: 'CartButton', sourceFile: 'src/Cart.tsx', sourceLine: 12, ...over });
+
+  it('is one node, flow first', () => {
+    const db = open();
+    arkg.ingestFlow(fullFlow());
+    pick();
+
+    const all = components(db);
+    expect(all).toHaveLength(1);
+    expect(all[0].id).toBe('cart-1');
+    expect(all[0].frequency).toBe(2);
+  });
+
+  it('is one node the other way round, pick first', () => {
+    const db = open();
+    pick();
+    arkg.ingestFlow(fullFlow());
+
+    const all = components(db);
+    expect(all).toHaveLength(1);
+    expect(all[0].frequency).toBe(2);
+    // The flow's id was minted in a page this process cannot see, so it is
+    // recorded as another name for the row rather than as another row.
+    expect(arkg.getComponent('cart-1')!.id).toBe(all[0].id);
+    // …and the flow's edges were written against that row, not against the id
+    // it arrived under, which would have pointed at nothing.
+    const edge = one(db, "SELECT * FROM arkg_edges WHERE type = 'calls'");
+    expect(edge.from_node_id).toBe(all[0].id);
+  });
+
+  /*
+   * The production-build case, and the reason a name alone has to be able to
+   * join at all: React's `_debugSource` is a development-build fact, so a pick
+   * on a built app knows the component's name and nothing else, while the flow
+   * knows the file because the panel resolved it through a source map.
+   */
+  it('joins on the name when only one side resolved the file', () => {
+    const db = open();
+    arkg.ingestFlow(fullFlow());
+    pick({ sourceFile: undefined, sourceLine: undefined });
+
+    const all = components(db);
+    expect(all).toHaveLength(1);
+    expect(all[0].frequency).toBe(2);
+    expect(all[0].source_file).toBe('src/Cart.tsx');
+  });
+
+  it('keeps the file the pick knew when the flow never resolved one', () => {
+    const db = open();
+    pick();
+    arkg.ingestFlow(flow({
+      react: { detected: true, components: { 'cart-1': source('CartButton', null) } },
+    }));
+
+    const all = components(db);
+    expect(all).toHaveLength(1);
+    expect(all[0].frequency).toBe(2);
+    expect(all[0].source_file).toBe('src/Cart.tsx');
+    expect(all[0].source_line).toBe(12);
+  });
+
+  it('counts a rebuild that re-keyed the component once, not twice', () => {
+    const db = open();
+    arkg.ingestFlow(fullFlow());
+    // The id is a hash over compiled source, so editing the component changes
+    // it. A graph that took that as a new component would restart its history
+    // on every commit and never accumulate anything.
+    arkg.ingestFlow(flow({
+      id: 'flow-2',
+      react: { detected: true, components: { 'cart-2': source('CartButton', 'src/Cart.tsx', 14) } },
+    }));
+
+    const all = components(db);
+    expect(all).toHaveLength(1);
+    expect(all[0].frequency).toBe(2);
+  });
+});
+
+describe('what the join refuses to guess', () => {
+  it('keeps two components apart when they share a name but not a file', () => {
+    const db = open();
+    arkg.ingestFlow(flow({
+      react: {
+        detected: true,
+        components: { a: source('Row', 'src/A.tsx', 1), b: source('Row', 'src/B.tsx', 2) },
+      },
+    }));
+
+    expect(components(db)).toHaveLength(2);
+  });
+
+  /*
+   * The one that would be silently wrong. A minified build calls every
+   * component `e`, and a recording of one carries several of them under
+   * several ids and no resolved source. The ids are real identity — that is
+   * what the hash is for — so a bare name may never fold one into another.
+   */
+  it('keeps two extension-minted ids apart when neither resolved a file', () => {
+    const db = open();
+    arkg.ingestFlow(flow({
+      react: { detected: true, components: { e1: source('e', null), e2: source('e', null) } },
+    }));
+
+    expect(components(db)).toHaveLength(2);
+  });
+
+  it('gives an ambiguous pick a row of its own rather than a coin toss', () => {
+    const db = open();
+    arkg.ingestFlow(flow({
+      react: {
+        detected: true,
+        components: { a: source('Row', 'src/A.tsx', 1), b: source('Row', 'src/B.tsx', 2) },
+      },
+    }));
+    arkg.ingestComponentPick({ name: 'Row' });
+
+    expect(components(db)).toHaveLength(3);
+    expect(rows(db, 'SELECT * FROM arkg_components WHERE frequency > 1')).toHaveLength(0);
+
+    // And a pick that does name a file lands on the right one of the two.
+    arkg.ingestComponentPick({ name: 'Row', sourceFile: 'src/B.tsx' });
+    expect(components(db)).toHaveLength(3);
+    expect(one(db, "SELECT frequency FROM arkg_components WHERE id = 'b'").frequency).toBe(2);
+  });
+});
+
+describe('merging two rows that turn out to be one component', () => {
+  /** The split as an older version of this file wrote it, with edges on both halves. */
+  function split(db: Db): void {
+    legacyComponent(db, {
+      id: 'cart-1', display_name: 'CartButton', source_file: 'src/Cart.tsx', source_line: 12,
+      frequency: 3, failure_rate: 1, timing_samples: JSON.stringify([10, 20, 30]), timing_p50_ms: 20, timing_p95_ms: 30,
+      first_observed_at: NOW, last_observed_at: NOW + 10,
+    });
+    legacyComponent(db, {
+      id: MINTED_ID, display_name: 'CartButton', source_file: 'src/Cart.tsx', source_line: 12,
+      frequency: 1, failure_rate: 0, timing_samples: JSON.stringify([90]), timing_p50_ms: 90, timing_p95_ms: 90,
+      first_observed_at: NOW + 5, last_observed_at: NOW + 20,
+    });
+    legacyEdge(db, { type: 'maps_to', from_node_id: 'cart-1', to_node_type: 'source_file', to_node_id: 'src/Cart.tsx', frequency: 3 });
+    legacyEdge(db, { type: 'maps_to', from_node_id: MINTED_ID, to_node_type: 'source_file', to_node_id: 'src/Cart.tsx', frequency: 1 });
+    legacyEdge(db, { type: 'renders', from_node_id: MINTED_ID, to_node_id: 'page-1' });
+  }
+
+  it('folds a database that was already split, on the next open', () => {
+    const { db, path } = openFile();
+    split(db);
+    arkg.closeArkg();
+
+    const migrated = arkg.openArkg(path);
+    const all = components(migrated);
+
+    expect(all).toHaveLength(1);
+    expect(all[0].id).toBe('cart-1');
+    // Both halves counted real observations. The sum is what the graph was
+    // always supposed to be holding.
+    expect(all[0].frequency).toBe(4);
+    // The failure rate folds by how many observations each side stands for.
+    expect(all[0].failure_rate).toBeCloseTo(0.75, 10);
+    // The history is as long as the longer of the two.
+    expect(all[0].first_observed_at).toBe(NOW);
+    expect(all[0].last_observed_at).toBe(NOW + 20);
+    // The timing windows are one window, so the percentiles are over every
+    // sample either half ever took.
+    expect(JSON.parse(String(all[0].timing_samples))).toEqual([90, 10, 20, 30]);
+    expect(all[0].timing_p95_ms).toBe(90);
+  });
+
+  it('re-points the merged-away node’s edges rather than dropping them', () => {
+    const { db, path } = openFile();
+    split(db);
+    arkg.closeArkg();
+
+    const migrated = arkg.openArkg(path);
+
+    // The two maps_to edges were the same fact recorded twice, so they are one
+    // edge counting both.
+    const mapsTo = rows(migrated, "SELECT * FROM arkg_edges WHERE type = 'maps_to'");
+    expect(mapsTo).toHaveLength(1);
+    expect(mapsTo[0].from_node_id).toBe('cart-1');
+    expect(mapsTo[0].frequency).toBe(4);
+
+    // The edge only the merged-away half had now hangs off the survivor.
+    const renders = rows(migrated, "SELECT * FROM arkg_edges WHERE type = 'renders'");
+    expect(renders).toHaveLength(1);
+    expect(renders[0].from_node_id).toBe('cart-1');
+  });
+
+  it('keeps the merged-away id resolving, so nothing that quoted it breaks', () => {
+    const { db, path } = openFile();
+    split(db);
+    arkg.closeArkg();
+
+    const migrated = arkg.openArkg(path);
+    expect(arkg.getComponent(MINTED_ID)!.id).toBe('cart-1');
+    expect(one(migrated, 'SELECT * FROM arkg_component_aliases WHERE alias_id = ?', MINTED_ID)
+      .component_id).toBe('cart-1');
+  });
+
+  it('folds a legacy split where only the pick had resolved a file', () => {
+    const { db, path } = openFile();
+    legacyComponent(db, { id: 'btn-1', display_name: 'Button', frequency: 4 });
+    legacyComponent(db, { id: MINTED_ID, display_name: 'Button', source_file: 'src/Button.tsx', source_line: 7, frequency: 2 });
+    arkg.closeArkg();
+
+    const migrated = arkg.openArkg(path);
+    const all = components(migrated);
+
+    expect(all).toHaveLength(1);
+    expect(all[0].frequency).toBe(6);
+    expect(all[0].source_file).toBe('src/Button.tsx');
+    expect(all[0].source_line).toBe(7);
+  });
+
+  /*
+   * The provenance that decides the case above is read back off the key: this
+   * file mints sixteen hex characters and the extension never does. Two
+   * extension ids and no resolved file is the minified-build case again, and
+   * migrating a database must not do what a live write would refuse to.
+   */
+  it('leaves a legacy pair alone when both ids came from the extension', () => {
+    const { db, path } = openFile();
+    legacyComponent(db, { id: 'e1a2b3c4d5', display_name: 'e', frequency: 4 });
+    legacyComponent(db, { id: 'f9e8d7c6b5', display_name: 'e', frequency: 2 });
+    arkg.closeArkg();
+
+    expect(components(arkg.openArkg(path))).toHaveLength(2);
+  });
+
+  it('does not leave a component rendering itself', () => {
+    const { db, path } = openFile();
+    legacyComponent(db, { id: 'cart-1', display_name: 'CartButton', source_file: 'src/Cart.tsx' });
+    legacyComponent(db, { id: MINTED_ID, display_name: 'CartButton', source_file: 'src/Cart.tsx' });
+    legacyEdge(db, { type: 'renders', from_node_id: MINTED_ID, to_node_id: 'cart-1' });
+    arkg.closeArkg();
+
+    const migrated = arkg.openArkg(path);
+    expect(rows(migrated, "SELECT * FROM arkg_edges WHERE type = 'renders'")).toHaveLength(0);
+  });
+
+  it('is a no-op on a database with nothing to fold', () => {
+    const { path } = openFile();
+    arkg.ingestFlow(fullFlow());
+    const before = components(arkg.openArkg(path));
+    arkg.closeArkg();
+
+    expect(components(arkg.openArkg(path))).toEqual(before);
+  });
+});
+
+describe('getComponentByName', () => {
+  it('finds a component nothing but a pick has ever reported', () => {
+    open();
+    arkg.ingestComponentPick({ name: 'SoloWidget', sourceFile: 'src/Solo.tsx', sourceLine: 3 });
+
+    const found = arkg.getComponentByName('SoloWidget')!;
+    expect(found.source_file).toBe('src/Solo.tsx');
+    expect(found.edges).toEqual([]);
+  });
+
+  it('matches the name as it is written, not as it is cased', () => {
+    open();
+    arkg.ingestFlow(fullFlow());
+    expect(arkg.getComponentByName('cartbutton')!.id).toBe('cart-1');
+    expect(arkg.getComponentByName('  CartButton  ')!.id).toBe('cart-1');
+  });
+
+  it('takes the most observed when a name really does belong to several', () => {
+    open();
+    arkg.ingestFlow(flow({
+      react: {
+        detected: true,
+        components: { a: source('Row', 'src/A.tsx', 1), b: source('Row', 'src/B.tsx', 2) },
+      },
+    }));
+    for (let i = 0; i < 3; i++) arkg.ingestComponentPick({ name: 'Row', sourceFile: 'src/B.tsx' });
+
+    expect(arkg.getComponentByName('Row')!.id).toBe('b');
+  });
+
+  it('is null for a name nobody has observed, and for no name at all', () => {
+    open();
+    arkg.ingestFlow(fullFlow());
+    expect(arkg.getComponentByName('NoSuchThing')).toBeNull();
+    expect(arkg.getComponentByName('')).toBeNull();
   });
 });
 
@@ -706,9 +1065,30 @@ describe('getAnomalies', () => {
 });
 
 describe('getAppArchitecture', () => {
-  it('is null until a flow has been ingested', () => {
+  it('is null only when nothing at all has been observed', () => {
     open();
     expect(arkg.getAppArchitecture()).toBeNull();
+  });
+
+  /*
+   * This used to answer null whenever no flow had been ingested, which made a
+   * graph built entirely from panel picks invisible to every tool that reads
+   * it — including, until `getComponentByName`, the name lookup that ran
+   * through this. Picks are the half of the evidence that arrives while
+   * somebody is reading code rather than recording, and "no flows yet" is a
+   * state to report, not a reason to report nothing.
+   */
+  it('reports a graph that has components but no flows', () => {
+    open();
+    arkg.ingestComponentPick({ name: 'SoloWidget', sourceFile: 'src/Solo.tsx', sourceLine: 3 });
+
+    const arch = arkg.getAppArchitecture()!;
+    expect(arch.totalFlows).toBe(0);
+    expect(arch.totalComponents).toBe(1);
+    expect(arch.totalEndpoints).toBe(0);
+    // Dated from the observation itself, since there is no flow to date it by.
+    expect(arch.lastSeen).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(arch.topComponents[0]).toMatchObject({ name: 'SoloWidget', source: 'src/Solo.tsx', frequency: 1 });
   });
 
   it('summarises the components, their calls and the busiest endpoints', () => {
@@ -817,6 +1197,7 @@ describe('with no database open', () => {
     expect(() => arkg.ingestFlow(fullFlow())).not.toThrow();
     expect(() => arkg.ingestComponentPick({ name: 'A' })).not.toThrow();
     expect(arkg.getComponent('a')).toBeNull();
+    expect(arkg.getComponentByName('A')).toBeNull();
     expect(arkg.getComponentHistory('a')).toEqual([]);
     expect(arkg.getAnomalies()).toEqual([]);
     expect(arkg.getBlastRadius('src/A.tsx')).toEqual([]);

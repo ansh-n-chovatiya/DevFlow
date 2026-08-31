@@ -115,9 +115,13 @@
         </div>
       </section>
 
-      <!-- A finished flow waiting to be opened. -->
+      <!--
+        A finished flow, waiting. It is only ever shown when nothing is
+        recording, and until it is archived it exists in one place and is
+        deleted by the next recording — so the label says so.
+      -->
       <section id="s-flow" class="card flow hidden">
-        <p class="label">Current flow</p>
+        <p class="label">Unsaved flow</p>
         <div class="flow__count">
           <span id="flow-count" class="flow__value">0</span>
           <span class="flow__unit">steps</span>
@@ -125,13 +129,17 @@
         <p id="flow-when" class="meta"></p>
         <div id="flow-thumbs" class="thumbs"></div>
         <div class="flow__actions">
+          <button id="btn-save" class="btn btn--secondary btn--compact" type="button">
+            <span data-icon="folder-plus"></span>
+            <span>Save to library</span>
+          </button>
           <button id="btn-view" class="btn btn--ghost btn--compact" type="button">
             <span>Open flow</span>
             <span data-icon="chevron-right"></span>
           </button>
           <button
             id="btn-clear"
-            class="btn btn--ghost btn--icon btn--compact"
+            class="btn btn--ghost btn--icon btn--compact flow__discard"
             type="button"
             aria-label="Discard flow"
             title="Discard flow"

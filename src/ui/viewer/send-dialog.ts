@@ -13,6 +13,7 @@
  */
 
 import { sendFlow, type SendResult } from '../../features/mcp/send.js';
+import { checkMcp } from '../../features/mcp/health.js';
 import { openingOptions, sendDefaults } from '../../features/export/defaults.js';
 import { load as loadSettings } from '../../features/settings/index.js';
 import { getLocal, setLocal } from '../../chrome/storage.js';
@@ -24,15 +25,23 @@ import { setIcon } from '../icons.js';
 import { showToast } from '../toast.js';
 import { clone, el, find, show } from './dom.js';
 import { driftFromDefaults, type IncludeRow } from './export-view.js';
-import { deriveSendView, type SendView } from './send-view.js';
+import { deriveSendView, type SendProbe, type SendView } from './send-view.js';
 
 const dom = {
   dialog: el<HTMLDialogElement>('send-dialog'),
   subtitle: el('send-subtitle'),
+  target: el('send-target'),
+  targetStatus: el('send-target-status'),
+  targetProblem: el('send-target-problem'),
+  targetProblemTitle: el('send-target-problem-title'),
+  targetProblemText: el('send-target-problem-text'),
+  recheck: el<HTMLButtonElement>('send-recheck'),
   close: el<HTMLButtonElement>('send-close'),
   includes: el('send-includes'),
   defaults: el('send-defaults'),
   note: el('send-note'),
+  credentials: el('send-credentials'),
+  credentialsText: el('send-credentials-text'),
   warning: el('send-warning'),
   context: el('send-context'),
   total: el('send-total'),
@@ -58,6 +67,12 @@ interface Session {
   settings: Overrides | undefined;
   /** What `export.send*` says this dialog opens on — see the export dialog. */
   configured: ExportOptions;
+  /** `mcpServerUrl`, read once at open: the address this POST goes to. */
+  target: string;
+  /** `mcp.healthTimeoutMs`, so the pre-flight waits as long as Settings says. */
+  healthTimeoutMs: number;
+  /** What the pre-flight has answered, or `null` before it has been asked. */
+  probe: SendProbe | null;
 }
 
 let session: Session | null = null;
@@ -72,6 +87,7 @@ function paint(): void {
     steps: session.steps,
     options: session.options,
     react: session.react,
+    target: { url: session.target, probe: session.probe },
     // Both feed the context estimate, which is the walkthrough rendered rather
     // than guessed: the stamp supplies the body and console caps it is rendered
     // under, and the name is its title line.
@@ -88,8 +104,26 @@ function paint(): void {
     .filter(Boolean)
     .join(' · ');
 
+  if (view.target) {
+    dom.target.textContent = view.target.url;
+    // The line truncates, and an address whose port is the thing being checked
+    // is the worst possible place to lose the tail of.
+    dom.target.title = view.target.url;
+
+    show(dom.targetStatus, view.target.status !== null);
+    dom.targetStatus.textContent = view.target.status ?? '';
+
+    const problem = view.target.problem;
+    show(dom.targetProblem, problem !== null);
+    dom.targetProblemTitle.textContent = problem?.title ?? '';
+    dom.targetProblemText.textContent = problem?.text ?? '';
+  }
+
   dom.includes.replaceChildren(...view.includes.map((row) => buildInclude(row, view)));
   paintDefaults();
+
+  show(dom.credentials, view.credentials !== null);
+  dom.credentialsText.textContent = view.credentials?.text ?? '';
 
   show(dom.note, view.note !== null);
   dom.note.textContent = view.note ?? '';
@@ -208,6 +242,38 @@ function buildInclude(row: IncludeRow, view: SendView): HTMLElement {
 
 // ── Wiring ───────────────────────────────────────────────────────────────────
 
+/**
+ * The pre-flight.
+ *
+ * One GET against a loopback address, answered long before the dialog has
+ * finished being read, and it is the difference between "this will not work,
+ * and here is which of the four reasons it is" and an eight-second toast that
+ * arrives after a multi-megabyte upload and names one cause for all four.
+ *
+ * It never blocks Send. The reading can be stale by the time the button is
+ * pressed — a server started in the second in between — and a dialog that
+ * refuses on a stale reading is worse than one that warns on a fresh one.
+ */
+function probeTarget(): void {
+  const active = session;
+  if (!active) return;
+
+  active.probe = { kind: 'checking' };
+  paint();
+
+  void checkMcp(active.target, active.healthTimeoutMs).then((health) => {
+    // The dialog may have been closed and reopened on another flow while this
+    // was in the air — the same guard the export dialog's session needs.
+    if (session !== active) return;
+
+    active.probe = health.ok
+      ? { kind: 'ok', service: health.value.service, mode: health.value.mode }
+      : { kind: 'failed', detail: health.error.detail };
+    paint();
+  });
+}
+
+dom.recheck.addEventListener('click', () => probeTarget());
 dom.close.addEventListener('click', () => dom.dialog.close());
 dom.cancel.addEventListener('click', () => dom.dialog.close());
 dom.run.addEventListener('click', () => void run());
@@ -239,6 +305,16 @@ async function run(): Promise<void> {
   );
 
   session.busy = false;
+  /*
+   * A failed send has just learned what the pre-flight asks, so it answers in
+   * the same place and in the same words. The toast stays — it is what a person
+   * who has scrolled away sees — but the sentence that has to be right about
+   * *which* of the four causes this was is the banner, not a canned line that
+   * can only name one of them.
+   */
+  if (!sent.ok && sent.error.code === 'MCP_UNREACHABLE') {
+    session.probe = { kind: 'failed', detail: sent.error.detail };
+  }
   paint();
 
   if (!sent.ok) {
@@ -300,9 +376,15 @@ export function openSend({ steps, name, id, react, recordedAt, settings }: OpenS
       react: react ?? undefined,
       recordedAt: recordedAt ?? undefined,
       settings: settings ?? undefined,
+      // Read from the same `load()` the four switches came from, so the address
+      // on screen and the defaults beside it describe one moment.
+      target: settingsNow.mcpServerUrl,
+      healthTimeoutMs: settingsNow['mcp.healthTimeoutMs'],
+      probe: null,
     };
 
     paint();
     dom.dialog.showModal();
+    probeTarget();
   })();
 }

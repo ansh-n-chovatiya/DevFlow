@@ -24,6 +24,7 @@ import {
   loadRecordingSettings,
   readRecordingStamp,
   renderedOverrides,
+  snapshotForRecording,
 } from '../features/settings/recording.js';
 import { applyPending } from '../features/settings/pending.js';
 import { isMachineKey } from '../features/settings/fields.js';
@@ -32,6 +33,7 @@ import type { RecordingSettings } from '../features/settings/fields.js';
 import { shotPatch, sweep as sweepShots, withoutImages } from '../features/flows/shots.js';
 import { captureVisibleTab, sendToTab } from '../chrome/tabs.js';
 import { fetchText } from '../chrome/fetch.js';
+import { openPopup, paintAction as paint } from '../chrome/action.js';
 import type { Result } from '../shared/result.js';
 import type {
   ComponentSourceResponse,
@@ -43,17 +45,20 @@ import type {
 import { isEditorScheme } from '../core/react/editor.js';
 import {
   BADGE_COLOR,
+  BADGE_PAUSED_COLOR,
+  BADGE_WAITING_COLOR,
 } from '../shared/constants.js';
 import { flowError, type FlowError } from '../shared/errors.js';
 import type {
   BoundingBox,
   DraftStep,
   PickResult,
+  RecordingState,
   Step,
 } from '../shared/types.js';
 import type { CapturedComponent } from '../shared/messages.js';
 import { stripReactRef } from '../core/react/attribution.js';
-import { mergeTrailing, stepKey, type Pending } from '../core/flow/index.js';
+import { flowHost, mergeTrailing, stepKey, type Pending } from '../core/flow/index.js';
 import { mergeComponents } from '../core/react/table.js';
 import { mergeScripts } from '../features/react/inventory.js';
 import { clearResolverCaches, resolvePending } from '../features/react/resolver.js';
@@ -61,6 +66,7 @@ import { ingestComponentPick } from '../features/arkg/ingest.js';
 import { buildPayload, pruneSteps } from '../features/mcp/send.js';
 import { sendDefaults } from '../features/export/defaults.js';
 import { readCurrentReact } from '../features/flows/store.js';
+import { prepare } from '../features/recording/preflight.js';
 import { renumber } from '../core/flow/index.js';
 
 /** Serialises captures so concurrent clicks never clobber each other's write. */
@@ -76,9 +82,87 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function updateBadge(count: number): void {
-  void chrome.action.setBadgeText({ text: count > 0 ? String(count) : '' });
-  void chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
+/**
+ * The toolbar tooltip when there is nothing to say. Kept identical to the
+ * manifest's `default_title`, which is what Chrome shows until the first
+ * `setTitle` of a browser session.
+ */
+const IDLE_TITLE = 'DevFlow — record a flow';
+
+/**
+ * The other two badge colours.
+ *
+ * `BADGE_COLOR` is the red of a live recording and is Tier 3 for the reason
+ * stated where it is declared: a recording nobody noticed starting is the most
+ * expensive thing this extension can do. Pause and stop are the other two things
+ * the toolbar has to be able to say, and saying them in the same red is how the
+ * toolbar came to mean "something happened here at some point". These are the
+ * `--warn` and `--fg-muted` of the light theme, so the toolbar agrees with the
+ * on-page indicator rather than inventing a third palette.
+ */
+
+function stepsLabel(count: number): string {
+  return count === 1 ? '1 step' : `${count} steps`;
+}
+
+/**
+ * Say which of the three states the recorder is in, on the one surface that is
+ * visible when the recorded tab is not.
+ *
+ * The count alone cannot do it: `23` on a stopped recording and `23` on a live
+ * one were the same badge, so the toolbar answered "am I still recording?" with
+ * the number of steps and nothing else. The number is still the most useful
+ * thing to show — it is what the user is watching climb — so what carries the
+ * state is the colour and the tooltip, and the tooltip names the host so a
+ * recording running in another window is attributable without switching to it.
+ */
+function paintAction(state: RecordingState, count: number, host: string): void {
+  const where = host ? ` on ${host}` : '';
+
+  const title =
+    state === 'recording'
+      ? `Recording${where} · ${stepsLabel(count)}`
+      : state === 'paused'
+        ? `Recording paused${where} · ${stepsLabel(count)}`
+        : count === 0
+          ? IDLE_TITLE
+          : `${stepsLabel(count)} recorded${where} · not saved to the library`;
+
+  paint({
+    // `0` while recording, and nothing at all when idle with nothing waiting:
+    // an empty badge is the only way to say "there is no flow here".
+    text: state === 'idle' && count === 0 ? '' : String(count),
+    color:
+      state === 'recording'
+        ? BADGE_COLOR
+        : state === 'paused'
+          ? BADGE_PAUSED_COLOR
+          : BADGE_WAITING_COLOR,
+    title,
+  });
+}
+
+/**
+ * Repaint the toolbar from storage.
+ *
+ * Driven from the storage change rather than from each of the six writes that
+ * can alter it. Three of those writes are the popup's and the viewer's, not the
+ * worker's — pausing, discarding, archiving — and every one of them used to
+ * leave the badge saying whatever the last capture had said. One reconciler on
+ * the keys the answer is made of is the only version a caller cannot forget.
+ */
+async function refreshAction(): Promise<void> {
+  const stored = await getLocal(['recordingActive', 'recordingPaused', 'recordedSteps']);
+  if (!stored.ok) return;
+
+  const steps = stored.value.recordedSteps ?? [];
+  const state: RecordingState = stored.value.recordingActive
+    ? stored.value.recordingPaused
+      ? 'paused'
+      : 'recording'
+    : 'idle';
+
+  paintAction(state, steps.length, flowHost(steps));
 }
 
 /**
@@ -189,7 +273,6 @@ async function captureAndSave(
       recordedSteps,
     });
     if (!written.ok) await reportError(written.error);
-    updateBadge(recordedSteps.length);
     return;
   }
 
@@ -351,8 +434,6 @@ async function captureAndSave(
     return;
   }
 
-  updateBadge(recordedSteps.length);
-
   if (merged?.changed) scheduleResolve();
 }
 
@@ -417,6 +498,12 @@ async function finishRecording(): Promise<void> {
     recordingTabId: null,
   });
   if (!written.ok) await reportError(written.error);
+
+  // The reconciler on the change above would repaint anyway. Awaited here as
+  // well because Stop is the one moment the toolbar was wrong for as long as the
+  // browser stayed open: the badge kept the red and the count of a recording
+  // that had ended, and no other path came back to correct it.
+  await refreshAction();
 }
 
 /**
@@ -551,7 +638,6 @@ async function flushTrailing(recording: RecordingSettings): Promise<void> {
 
   const written = await setLocal({ recordedSteps });
   if (!written.ok) await reportError(written.error);
-  else updateBadge(recordedSteps.length);
 }
 
 // ── React source resolution ──────────────────────────────────────────────────
@@ -998,16 +1084,105 @@ async function autoExportToMcp(steps: Step[]): Promise<void> {
   }
 }
 
+// ── The keyboard ─────────────────────────────────────────────────────────────
+
+/**
+ * Begin a recording without a popup to press.
+ *
+ * The same write the popup makes, for the same reasons — the settings snapshot
+ * is read before it and batched with it so no capture can find a live recording
+ * with no snapshot to describe it, and `lastMcpFlowId` is cleared so a Send from
+ * the review tab cannot overwrite the previous recording on the MCP server.
+ * `prepare` resolves the tab and injects the content script if the page predates
+ * the extension, which is what makes the shortcut work on a tab that has been
+ * open all morning.
+ */
+async function startRecording(): Promise<void> {
+  const ready = await prepare();
+  if (!ready.ok) {
+    await reportError(ready.error);
+    return;
+  }
+
+  // The previous recording's images are keyed independently of its steps, so
+  // emptying the array does not free them.
+  await sweepShots();
+
+  const settings = await snapshotForRecording();
+
+  const written = await setLocal({
+    recordingActive: true,
+    recordingPaused: false,
+    recordedSteps: [],
+    recordingStartedAt: Date.now(),
+    recordingSettings: settings,
+    lastError: null,
+    lastMcpFlowId: '',
+  });
+  if (!written.ok) await reportError(written.error);
+}
+
+/**
+ * The command, and the one thing it will not do.
+ *
+ * Start and Stop are the two most repeated gestures in the product and both were
+ * mouse-only, which meant dismissing the popup before the page could be used —
+ * the reason `beginRecording` closes its own window.
+ *
+ * A recording that has stopped and not been archived lives in `recordedSteps`
+ * and nowhere else, and starting a new one deletes it. The popup asks before it
+ * does that; a keystroke has nowhere to ask, so it does not start. It opens the
+ * popup instead, where the question and both answers already are — and where
+ * Chrome is too old to let an extension do that, it does nothing at all rather
+ * than throwing away work. The badge and its tooltip are already saying there
+ * are steps waiting, which is the state the user has to resolve either way.
+ */
+async function toggleRecording(): Promise<void> {
+  const stored = await getLocal(['recordingActive', 'recordedSteps']);
+  if (!stored.ok) {
+    await reportError(stored.error);
+    return;
+  }
+
+  if (stored.value.recordingActive) {
+    await finishRecording();
+    return;
+  }
+
+  if ((stored.value.recordedSteps ?? []).length > 0) {
+    // Ask, exactly as the button does. Never start over the top of a recording
+    // nobody saved — a keystroke that silently deleted one would be the single
+    // path around the confirmation the popup grew for that very reason.
+    await openPopup();
+    return;
+  }
+
+  await startRecording();
+}
+
+chrome.commands.onCommand.addListener((command) => {
+  if (command !== 'toggle-recording') return;
+  void toggleRecording();
+});
+
 // ── Wiring ───────────────────────────────────────────────────────────────────
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !('recordingActive' in changes)) return;
+  if (area !== 'local') return;
 
-  if (changes.recordingActive.newValue === true) {
-    void chrome.action.setBadgeText({ text: '0' });
-    void chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
-    return;
+  // Three keys make up what the toolbar says, and only one of them is written
+  // exclusively by this worker. Pause is the popup's, and discarding and
+  // archiving are the popup's and the viewer's.
+  if (
+    'recordingActive' in changes ||
+    'recordingPaused' in changes ||
+    'recordedSteps' in changes
+  ) {
+    void refreshAction();
   }
+
+  if (!('recordingActive' in changes)) return;
+  if (changes.recordingActive.newValue === true) return;
 
   /*
    * Whatever ended this recording, storage must stop naming a tab as the one
@@ -1302,7 +1477,6 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
           }),
         )
         .then((written) => {
-          updateBadge(0);
           sendResponse({ ok: written.ok });
         });
       return true;
@@ -1449,6 +1623,13 @@ chrome.runtime.onStartup.addListener(() => {
  * the tab is open and that something is still recording.
  */
 void reconcileRecordingTab();
+
+/*
+ * And the toolbar with it. A badge does not survive a browser restart, so
+ * without this a recording that was live when Chrome closed comes back with the
+ * red and the count gone — the one state that must never be quiet.
+ */
+void refreshAction();
 
 /**
  * The popup's locate answer, from the release that had one.

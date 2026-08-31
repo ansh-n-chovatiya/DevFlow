@@ -1647,10 +1647,13 @@ const httpServer = http.createServer(async (req, res) => {
    *     arrived. `name` is required and everything else is read out of it one
    *     key at a time, so a caller cannot reach a column this endpoint has no
    *     business writing — and cannot key a row itself. `id` is dropped on
-   *     purpose: letting the sender name the node is how a pick lands on top of
-   *     a component the flow ingester keyed differently, and a graph whose
-   *     frequencies are the sum of two identities for one component is worse
-   *     than one that never saw the pick.
+   *     purpose, and it is not the extension withholding one: the id a flow
+   *     carries is a hash of the compiled function source, which lives in the
+   *     page and is never sent here. A pick is identified the only way a pick
+   *     can be — by its name and the file it was found in — and the graph joins
+   *     that onto the node a flow made, or makes a provisional one for a flow
+   *     to adopt later. Letting the sender name the node would only put a third
+   *     identity beside those two.
    *
    * Nothing in the body names a file this server opens — the path travels as a
    * string into a column and is never resolved — so there is no traversal to
@@ -2673,9 +2676,22 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       const arch = arkgTry('architecture', (graph) => graph.getAppArchitecture());
       if (!arch) return text(EMPTY_GRAPH);
 
+      /*
+       * A graph with components and no flows is a real state, not an empty one:
+       * every component below was picked in the panel while somebody read the
+       * code. Saying "0 flows observed" and then listing them would read as a
+       * contradiction, so the header names what this graph is made of and what
+       * is missing from it — the endpoints and the edges between them, which
+       * only a recording carries.
+       */
       const lines = [
-        `Knowledge graph — ${arch.totalFlows} flow${arch.totalFlows === 1 ? '' : 's'} observed` +
-          `${arch.lastSeen ? `, latest ${arch.lastSeen}` : ''}.`,
+        arch.totalFlows
+          ? `Knowledge graph — ${arch.totalFlows} flow${arch.totalFlows === 1 ? '' : 's'} observed` +
+            `${arch.lastSeen ? `, latest ${arch.lastSeen}` : ''}.`
+          : `Knowledge graph — no recorded flow yet, and ${arch.totalComponents} component` +
+            `${arch.totalComponents === 1 ? '' : 's'} seen by picking in the DevTools panel` +
+            `${arch.lastSeen ? `, latest ${arch.lastSeen}` : ''}. Send a recording to Claude and ` +
+            'the endpoints each one calls, and the flows they appear in, are added to what is below.',
       ];
 
       if (arch.topComponents.length) {
@@ -2729,21 +2745,15 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
        * another call before it can be used at all, which on a 20-component
        * summary is 500 tokens spent to ask one question.
        *
-       * The name is resolved through the summary, which is the only lookup the
-       * graph module exposes, so it reaches what that summary covers: the most
-       * seen components, and nothing at all until one flow has arrived. An id
-       * always works. Both facts are the graph's, not this file's — a
-       * `getComponentByName` there would replace this whole paragraph.
+       * Both lookups are the graph's own. The name used to be resolved through
+       * `getAppArchitecture`, which reached only the twenty busiest components
+       * and only once a flow had been ingested — so a component known solely
+       * from picks could not be asked about by either argument.
        */
       const wanted = asked.replace(/^#/, '');
-      let component = arkgTry('component', (graph) => graph.getComponent(wanted));
-      if (!component) {
-        const arch = arkgTry('architecture', (graph) => graph.getAppArchitecture());
-        const named = arch?.topComponents.find(
-          (candidate) => candidate.name.toLowerCase() === wanted.toLowerCase(),
-        );
-        if (named) component = arkgTry('component', (graph) => graph.getComponent(named.id));
-      }
+      const component =
+        arkgTry('component', (graph) => graph.getComponent(wanted)) ??
+        arkgTry('component by name', (graph) => graph.getComponentByName(wanted));
 
       if (!component) {
         return text(

@@ -28,10 +28,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pos0, pos1 } from '../src/core/react/positions.js';
 import type { ComponentSource, ComponentStatus } from '../src/shared/types.js';
 import {
+  actionFor,
   ambiguityText,
   detailText,
   pathText,
   resultCard,
+  STATUS_ACTION,
   STATUS_DETAIL,
   viaLabel,
 } from '../src/ui/components/result-card.js';
@@ -377,6 +379,83 @@ describe('resultCard', () => {
     expect(
       resultCard({ source: resolved() }).querySelector('.result-card__ambiguity'),
     ).toBeNull();
+  });
+
+  // ── Advice ─────────────────────────────────────────────────────────────────
+
+  /*
+   * The defect these pin: every failure diagnosed and none of them advised.
+   * `detail` said *most likely a lazy chunk that was never fetched* and stopped
+   * at the comma, which is the half of the sentence that describes the problem
+   * and not the half that ends it. The four statuses below are the ones a reader
+   * can actually do something about, so each of them has to say what.
+   */
+  it('advises, and not only diagnoses, on every outcome a reader can act on', () => {
+    for (const status of ['not-found', 'skipped', 'no-map', 'compiled-only'] as const) {
+      const action = STATUS_ACTION[status];
+      expect(action, status).not.toBeNull();
+      expect(action?.text.length, status).toBeGreaterThan(0);
+    }
+
+    // `ambiguous` too: an answer that may be the wrong one of several is the
+    // outcome most worth not acting on blindly.
+    expect(STATUS_ACTION.ambiguous).not.toBeNull();
+  });
+
+  it('gives no advice for a resolved component, which needs none', () => {
+    expect(actionFor(resolved())).toBeNull();
+    expect(resultCard({ source: resolved() }).querySelector('.result-card__action')).toBeNull();
+  });
+
+  it('tells a not-found component’s reader to load the route and pick again', () => {
+    const card = resultCard({ source: component({ status: 'not-found' }) });
+    const advice = text(card, '.result-card__action');
+    expect(advice).toContain('Load the route');
+    expect(advice).toContain('pick it again');
+  });
+
+  it('names the missing .map files rather than only the missing file', () => {
+    for (const status of ['no-map', 'compiled-only'] as const) {
+      const card = resultCard({ source: component({ status }) });
+      expect(text(card, '.result-card__action'), status).toContain('source maps');
+      expect(text(card, '.result-card__action'), status).toContain('.map');
+    }
+  });
+
+  it('reads the advice after the sentence it finishes', () => {
+    const card = resultCard({ source: component({ status: 'not-found' }) });
+    const children = [...card.children];
+    const detail = children.findIndex((node) => node.classList.contains('result-card__detail'));
+    const advice = children.findIndex((node) => node.classList.contains('result-card__action'));
+    expect(detail).toBeGreaterThanOrEqual(0);
+    expect(advice).toBe(detail + 1);
+  });
+
+  it('offers a live switch for a component nobody looked up', () => {
+    const onEnableSourceLookup = vi.fn();
+    const card = resultCard({ source: component({ status: 'skipped' }), onEnableSourceLookup });
+
+    const button = card.querySelector<HTMLButtonElement>('.result-card__action-btn');
+    expect(button?.textContent).toContain('Turn on source lookup');
+
+    button?.click();
+    expect(onEnableSourceLookup).toHaveBeenCalled();
+  });
+
+  it('degrades to advice alone on a surface that cannot write settings', () => {
+    // Exactly what `onOpenEditor` already does: a callback nobody supplied is a
+    // control nobody sees, rather than a control that does nothing.
+    const card = resultCard({ source: component({ status: 'skipped' }) });
+    expect(card.querySelector('.result-card__action-btn')).toBeNull();
+    expect(text(card, '.result-card__action')).toContain('Turn source lookup back on');
+  });
+
+  it('never renders a control on advice that has none', () => {
+    const card = resultCard({
+      source: component({ status: 'not-found' }),
+      onEnableSourceLookup: vi.fn(),
+    });
+    expect(card.querySelector('.result-card__action-btn')).toBeNull();
   });
 
   it('warns without a script count, which the flow review never has', () => {

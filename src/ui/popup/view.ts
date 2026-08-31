@@ -21,11 +21,31 @@
  * what they can do.
  */
 
+import { flowHost } from '../../core/flow/index.js';
 import type { Preflight } from '../../features/recording/preflight.js';
 import type { RecordingState, Step, StoredError } from '../../shared/types.js';
+import { formatDateTime } from '../format.js';
 
 /** How many screenshot thumbnails the current-flow card shows before counting. */
 export const THUMBNAIL_LIMIT = 3;
+
+/**
+ * What to call a flow the popup archives, before anyone renames it.
+ *
+ * The popup's Save does not stop to ask. Naming is the one part of archiving
+ * that can be undone from the library at any time, and making a name the price
+ * of not losing the recording is how `Save to library` ended up being the thing
+ * people skipped. The page's own title first — "ChatGPT" says what the flow is
+ * about in a way that "chatgpt.com" does not — then the host, then the moment,
+ * so two saves in one session are never the same name.
+ */
+export function suggestFlowName(steps: Step[], now: number): string {
+  const title = steps.find((step) => step.title?.trim())?.title?.trim();
+  if (title) return title.slice(0, 80);
+
+  const host = flowHost(steps);
+  return host || `Recording — ${formatDateTime(now, now)}`;
+}
 
 export interface PopupInput {
   /** `null` while the active tab is still being resolved. */
@@ -57,6 +77,14 @@ export interface PopupInput {
    * frozen — "is this failure still worth mentioning" is a question about now.
    */
   errorTtlMs: number;
+  /**
+   * The flow just archived, by name, or `null`.
+   *
+   * Archiving empties `recordedSteps`, so the card the user pressed the button
+   * on disappears out from under them — which on its own reads as the discard
+   * they did not press. This is the one line that says where it went.
+   */
+  savedName: string | null;
 }
 
 export interface NoticeView {
@@ -126,6 +154,15 @@ function errorNotice(error: StoredError | null, now: number, ttlMs: number): Not
     tone: error.code === 'STORAGE_QUOTA' ? 'danger' : 'warn',
     title: error.code === 'STORAGE_QUOTA' ? 'The disk is full' : "That didn't save",
     body: error.message,
+  };
+}
+
+function savedNotice(name: string | null): NoticeView | null {
+  if (!name) return null;
+  return {
+    tone: 'info',
+    title: 'Saved to library',
+    body: `“${name}” is in the library. Recording again will not delete it.`,
   };
 }
 
@@ -247,8 +284,9 @@ export function derivePopupView(input: PopupInput): PopupView {
     offerReload: needsAttach,
     live: null,
     flow,
-    // A real failure is more urgent than an explanation of what will be missing.
-    notice: error ?? (needsAttach ? ATTACH_NOTICE : null),
+    // A real failure is more urgent than an explanation of what will be missing,
+    // and both outrank the confirmation of something that has already worked.
+    notice: error ?? savedNotice(input.savedName) ?? (needsAttach ? ATTACH_NOTICE : null),
     storage,
   };
 }

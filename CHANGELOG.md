@@ -2,6 +2,78 @@
 
 ## Unreleased
 
+**The send dialog says where the flow is going, and checks before you commit.**
+It shows the address it will post to, and probes it as it opens rather than
+after uploading the whole recording. When that fails it says what actually
+failed: nothing listening on the port, something else answering on it, an
+address that is not this machine, or a server that did not answer in time —
+each with the remedy that fits, instead of one guess that "the server is not
+running, open Claude Code". An address that is not loopback is offered no local
+remedy at all, because none of them applies.
+
+**A warning about credentials in step URLs that is not gated on a switch.**
+Credential-bearing query and fragment parameters are masked as a step is
+captured, but the mask is a list and a list is never complete — `state` and
+`nonce` are deliberately left alone as CSRF machinery, and a flow recorded
+before that masking existed still holds what it held. The dialog warned about
+this only when network data was being included, which is unrelated: step URLs
+travel whatever the Include switches say. So turning *everything* off used to
+make the warning disappear and replace it with "Claude will get the steps and
+their URLs, and nothing else." The warning is now ungated and counts what it
+found, and that reassurance only appears when the URLs are genuinely clean.
+
+**A component DevFlow could not locate now says what to do about it.** The card
+explained the failure and stopped: *most likely a lazy chunk that was never
+fetched* did not go on to say "load that route and pick it again", and *source
+lookup is turned off* offered no way to turn it back on. Each failure now
+carries the next action beneath the explanation, and where the panel can act on
+it itself — switching source lookup back on and re-locating what is already on
+screen — there is a button rather than an instruction.
+
+**The panel says what to set before you need it.** `Open in Editor` cannot work
+without a project root, and nothing ever mentioned that until you pressed the
+button and it did nothing. While no project root is set, the idle panel carries
+a line pointing at the setting, and opens the drawer that holds it. It removes
+itself once set, and can be dismissed.
+
+**`Pick Element` is `Pick component`**, which is what `docs/CONTRACTS.md` §4.4
+freezes it as — a component is React's and an element is the DOM's, and the
+panel's own button had been saying the wrong one of the two. `npm run
+lint:vocab` now checks the frozen labels, so this drifts back only deliberately.
+
+**One component is one node in the knowledge graph.** A component seen in a
+recorded flow and the same component picked in the panel were filed under two
+different id schemes, so they became two nodes sharing a name, each holding half
+the evidence — and because the flow-side id is a hash of the compiled function,
+editing a component started a third. Identity is now the component's name and
+the file it was written in, which is the one pair both halves can always
+produce; older ids are kept as aliases, so every id already written into an edge
+or an answer still resolves, and databases that already hold a split merge on
+open. The graph now also answers for a component you have only ever picked,
+which it previously could not report at all until a flow had been sent, and
+`get_component_history` takes a name rather than requiring a 16-character hash.
+
+**The toolbar says whether you are recording.** The badge showed the step count
+while recording and then kept showing it after you stopped, so a finished
+recording and a live one looked identical, and pausing changed nothing at all.
+Recording is red, paused is amber, and a stopped recording waiting to be saved
+is grey — and the tooltip names the site being recorded and says, when that is
+the case, that the steps are not in the library yet. Pause, discard and archive
+all repaint it now, which they did not before.
+
+**Recording has a keyboard shortcut.** `Alt+Shift+R` starts and stops it, and
+Chrome lets you rebind it. It will not start over the top of a recording you
+have not saved — it opens the popup and asks, the same as the button does.
+In Flow review, `Ctrl+Enter` sends the flow, `Ctrl+S` saves it to the library
+and `?` shows the list, which now includes all three.
+
+**`Save to library` is in the popup.** It used to be five interactions away
+behind a `…` menu in another tab, while Export and Send sat as primary buttons —
+so the one action that stops a recording being thrown away was the hardest to
+reach. The popup card now says `Unsaved flow` rather than `Current flow`, and
+saves in one press, naming the flow after where it was recorded. Rename it in
+the library if that is not what you wanted.
+
 **Auto-send now obeys the four switches that say what may leave the browser.**
 `Include screenshots`, `network`, `console` and `components` were read by the
 Send dialog and by nothing else, so turning `Send flows to Claude Code
