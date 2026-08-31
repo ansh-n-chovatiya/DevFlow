@@ -50,10 +50,22 @@ Then record a flow in DevFlow and press **Send to Claude**. It lands in
 | Tool | Use it for |
 | --- | --- |
 | `list_flows` | What has been recorded, newest first, with a count of failing steps |
-| `get_flow_errors` | Only the steps that broke — the first call when debugging |
+| `get_flow_summary` | One flow in under 400 tokens — what it was, what broke, what to open |
+| `get_flow_errors` | Only the steps that broke |
+| `get_step_detail` | One part of one step: its network, console, element, component or text change |
+| `get_flow_step` | One step entire, with bodies kept four times longer |
+| `get_source_snippet` | The lines a component was written on, read off this machine |
 | `get_flow` | The whole recording: walkthrough, step data, screenshot paths |
 | `get_flow_screenshots` | Images inline, when reading files from disk isn't possible |
 | `get_latest_flow` | The recording you just made |
+| `compare_flows` | A run that worked beside one that did not |
+| `get_app_architecture` | What every recording together says about the app |
+| `get_component_history` | Everything observed about one component |
+| `get_anomalies` | What has started failing or slowing recently |
+
+They are meant to be used in that order rather than all at once:
+`get_flow_summary` costs about a fiftieth of `get_flow`, so finding out whether a
+recording is the one you want is nearly free.
 
 Screenshots are written to disk and referenced by absolute path. Claude Code
 reads them with its own file tools, one at a time, so a 500-step recording costs
@@ -72,6 +84,21 @@ nothing until a specific image is opened.
 ```
 
 Set `DEVFLOW_DIR` to put them somewhere else.
+
+## Reading your source
+
+`get_source_snippet` opens files, which nothing else here does. A component's
+source path is whatever the recorded page's source map claimed, and any page
+your browser visits can post a flow to this server, so that path is never joined
+to a directory and opened on trust: it is resolved underneath **one** project
+root, re-checked after symlinks are followed, and refused if it lands anywhere
+else.
+
+The root is the directory the server was started in — which, under Claude Code,
+is the project you are working in. Set `DEVFLOW_PROJECT_ROOT` if it is somewhere
+else, or pass `root` on the call. In remote mode the tool is off unless
+`DEVFLOW_PROJECT_ROOT` is set, because the machine running the server is not the
+machine the caller is working on.
 
 Not inside the npm package: under `npx` that directory is a cache which gets
 cleared without warning, and it would take every recording with it.

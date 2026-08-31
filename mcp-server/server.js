@@ -40,12 +40,14 @@ import {
   describeStamp,
   exportToMarkdown,
   fieldFor,
+  flowHost,
   flowRendering,
   formatSource,
   MACHINE_KEYS,
   renderComponents,
   renderStep,
   resolve as resolveSettings,
+  snippet,
   urlPath,
 } from './core.js';
 
@@ -782,19 +784,9 @@ function generateMarkdown(flow, dir) {
  * Costs about forty tokens and is computed from data already in hand.
  */
 function failureSummary(flow) {
-  const failing = flow.steps
-    .map((step, i) => ({ step, number: i + 1 }))
-    .filter(({ step }) => consoleErrors(step).length > 0 || failedCalls(step).length > 0);
+  const failing = failingSteps(flow);
 
   if (!failing.length) return null;
-
-  const shapes = new Map();
-  for (const { step } of failing) {
-    for (const call of failedCalls(step)) {
-      const key = `${call.method || 'GET'} ${urlPath(call.url) || call.url} → ${call.status ?? 'no response'}`;
-      shapes.set(key, (shapes.get(key) ?? 0) + 1);
-    }
-  }
 
   const messages = new Set();
   for (const { step } of failing) {
@@ -804,7 +796,7 @@ function failureSummary(flow) {
   const first = failing[0];
   const parts = [`${failing.length} of ${flow.steps.length} steps failed`];
 
-  const ranked = [...shapes.entries()].sort((a, b) => b[1] - a[1]);
+  const ranked = failedShapes(failing);
   if (ranked.length === 1) {
     // "all" only when it is genuinely all of them — a summary that overstates
     // its own certainty is worse than one that lists two shapes.
@@ -1762,6 +1754,443 @@ httpServer.listen(HTTP_PORT, REMOTE ? '0.0.0.0' : '127.0.0.1', () => {
   log(`listening on ${HTTP_PORT} (${REMOTE ? 'remote/SSE' : 'local/stdio'}) — flows in ${FLOWS_DIR}`);
 });
 
+// ── The drill-down tools ───────────────────────────────────────────────────
+
+/*
+ * `get_flow_summary`, `get_step_detail` and `get_source_snippet` are one
+ * gesture in three sizes: is this the recording, which part of that step, what
+ * does that line actually say. Everything above them answers a question about a
+ * flow; the first of these answers whether there is a question worth asking,
+ * and it is only useful if asking it of the wrong flow costs nothing.
+ */
+
+/**
+ * A string cut to fit a column, rather than cut and annotated.
+ *
+ * `truncate` appends how many characters it removed, which is what a body wants
+ * and the opposite of what a label wants: a 50-character label cut to 46 comes
+ * back at 66 and takes the column it was cut to fit with it.
+ */
+const ellipsis = (value, max) => (value.length <= max ? value : `${value.slice(0, max - 1)}…`);
+
+/** The ceiling `get_flow_summary` is named after, in estimated tokens. */
+const SUMMARY_TOKENS = 400;
+
+/** Steps that logged a console error or a failed request, with their numbers. */
+function failingSteps(flow) {
+  return flow.steps
+    .map((step, i) => ({ step, number: i + 1 }))
+    .filter(({ step }) => consoleErrors(step).length > 0 || failedCalls(step).length > 0);
+}
+
+/** `METHOD /path → status`, counted, commonest first. What broke, by shape. */
+function failedShapes(failing) {
+  const shapes = new Map();
+  for (const { step } of failing) {
+    for (const call of failedCalls(step)) {
+      const key = `${call.method || 'GET'} ${urlPath(call.url) || call.url} → ${call.status ?? 'no response'}`;
+      shapes.set(key, (shapes.get(key) ?? 0) + 1);
+    }
+  }
+  return [...shapes.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+/**
+ * A flow in under 400 tokens: what it was, whether it broke, what to open next.
+ *
+ * The budget is a ceiling, not a target, and it is kept by dropping whole facts
+ * rather than by cutting the text — a summary that ends mid-sentence is exactly
+ * the silent truncation the rest of this file exists to refuse. So each optional
+ * line is added only if the *finished* response still fits with it, which is
+ * measured rather than estimated a piece at a time.
+ *
+ * Three things are never dropped: what the flow is, the verdict on it, and the
+ * call to make next. A triage summary that says a recording broke without saying
+ * how to look at the break has cost a call to save nothing.
+ */
+function flowSummary(flow) {
+  const id = String(flow.id ?? '').slice(0, 128);
+  const failing = failingSteps(flow);
+  const host = flowHost(flow.steps);
+  const total = flow.steps.length;
+
+  const header =
+    `${ellipsis(String(flow.name ?? ''), 80)} — ${id}\n` +
+    `${day(flow.timestamp)} · ${total} step${total === 1 ? '' : 's'}${host ? ` · ${host}` : ''}`;
+
+  const next = failing.length
+    ? `Next: get_flow_errors({"id":"${id}"}) for the failures themselves · ` +
+      `get_source_snippet({"id":"${id}","step":${failing[0].number}}) for the code behind the first one · ` +
+      `get_flow({"id":"${id}"}) for the whole recording.`
+    : `Next: get_flow({"id":"${id}"}) for the walkthrough · ` +
+      `get_step_detail({"id":"${id}","step":1}) for one step, one part at a time.`;
+
+  /*
+   * Priced before anything optional is considered, because the verdict is the
+   * one line whose length this function does not control: `failureSummary`
+   * grows with the number of distinct failures, and `withheld` is a paragraph.
+   */
+  const reserved = estimateTokens(`${header}\n\n\n\n\n\n${next}`);
+
+  /*
+   * The withheld sentence outranks the failure count, and by some distance. A
+   * recording sent without its network data has no failed calls to find, so
+   * "nothing failed" is true of what arrived and false about what happened —
+   * the most misleading answer this server can give, to the question this tool
+   * exists to answer.
+   */
+  const verdict = truncate(
+    withheld(flow) ??
+      failureSummary(flow) ??
+      'Nothing failed: no step logged a console error or a failed request.',
+    Math.max(200, (SUMMARY_TOKENS - reserved - 8) * 4),
+  );
+
+  const optional = [];
+
+  if (failing.length) {
+    const shown = failing.slice(0, 12).map((entry) => entry.number);
+    optional.push(
+      `Steps that failed: ${shown.join(', ')}` +
+        (failing.length > shown.length ? ` (+${failing.length - shown.length} more)` : ''),
+    );
+  }
+
+  const ranked = failedShapes(failing);
+  if (ranked.length) {
+    const shown = ranked.slice(0, 3);
+    optional.push(
+      `Failed calls: ${shown.map(([shape, count]) => `${shape} ×${count}`).join(' · ')}` +
+        (ranked.length > shown.length ? ` (+${ranked.length - shown.length} more)` : ''),
+    );
+  }
+
+  /*
+   * The components behind the failures first, then the rest of the journey. A
+   * name and a file is what turns "something broke" into somewhere to look, and
+   * on a flow that failed the component behind step 40 is worth more than the
+   * component behind step 1.
+   */
+  const components = flow.react?.components ?? {};
+  const seen = [];
+  const add = (componentId) => {
+    const component = componentId ? components[componentId] : null;
+    if (!component || seen.some((other) => other.name === component.name)) return;
+    seen.push(component);
+  };
+  for (const { step } of failing) {
+    add(step.element?.react?.owner);
+    add(step.element?.react?.within);
+  }
+  for (const step of flow.steps) add(step.element?.react?.owner);
+
+  if (seen.length) {
+    const shown = seen.slice(0, 5);
+    optional.push(
+      `Components: ${shown
+        .map((component) => {
+          const where = formatSource(component);
+          return where ? `${component.name} ${where}` : component.name;
+        })
+        .join(' · ')}` + (seen.length > shown.length ? ` (+${seen.length - shown.length} more)` : ''),
+    );
+  }
+
+  /*
+   * Last, and it earns being last. The settings stamp is the longest line here
+   * on a flow recorded with several switches moved, and it is the only one the
+   * reader can get elsewhere for nothing — `get_flow`'s header repeats it. A
+   * component and its file cannot be got anywhere cheaper, so on a recording
+   * where only one of the two fits, this is the one that goes.
+   */
+  const stamp = describeStamp(flow.settings);
+  if (stamp.length) optional.push(`Recorded with non-default settings: ${stamp.join(' · ')}`);
+
+  const assemble = (lines) =>
+    [header, '', verdict, ...(lines.length ? ['', ...lines] : []), '', next].join('\n');
+
+  // Each line gets first refusal in priority order, and a line that does not fit
+  // does not stop a cheaper one behind it from fitting.
+  const kept = [];
+  for (const line of optional) {
+    if (estimateTokens(assemble([...kept, line])) <= SUMMARY_TOKENS) kept.push(line);
+  }
+
+  return assemble(kept);
+}
+
+/**
+ * The parts of a step, in the order `get_step_detail` lists them.
+ *
+ * `get_flow_step` returns all of it at once and is the right call when the step
+ * is already known to be the answer. This split exists for the move before that
+ * one: a step with three hundred network calls costs thousands of tokens to
+ * look at whole, and the question is usually "what did it log", which is thirty.
+ */
+const STEP_PARTS = ['component', 'network', 'console', 'element', 'dom', 'screenshot'];
+
+/**
+ * Each part of one step, rendered once, with a one-line description of itself.
+ *
+ * Both halves come from here so the index cannot advertise a part differently
+ * from the way the part reads when it is asked for, and so the cost quoted in
+ * the index is the cost of the text the next call actually returns.
+ */
+function stepParts(flow, dir, step, render) {
+  const origin = flowOrigin(flow);
+  /*
+   * An offset from the first step, signed. A network call can be captured a
+   * moment *before* the step it is attributed to — the click is timestamped
+   * when it is handled, the request when it left — so the delta is genuinely
+   * negative sometimes, and `+-815ms` is not a time anybody can read.
+   */
+  const at = (timestamp) => {
+    if (typeof origin !== 'number' || typeof timestamp !== 'number') return '';
+    const delta = timestamp - origin;
+    return ` ${delta < 0 ? '' : '+'}${delta}ms`;
+  };
+
+  const parts = {};
+
+  // ── component ──
+  {
+    const owner = stepComponent(flow, step);
+    const within = stepEnclosing(flow, step);
+    const lines = [];
+
+    if (owner) {
+      const where = formatSource(owner);
+      lines.push(`${owner.name}${where ? `  ${where}` : ''}${owner.dependency ? '  (node_modules)' : ''}`);
+      if (owner.detail) lines.push(`  ${owner.detail}`);
+      if (within) {
+        const outer = formatSource(within);
+        lines.push(`within ${within.name}${outer ? `  ${outer}` : ''}`);
+      }
+      const chain = step.element?.react?.chain ?? [];
+      if (chain.length > 1) {
+        const names = chain
+          .map((componentId) => flow.react?.components?.[componentId]?.name)
+          .filter(Boolean);
+        if (names.length > 1) lines.push(`chain, outermost first: ${names.join(' › ')}`);
+      }
+    }
+
+    parts.component = {
+      have: owner
+        ? `${owner.name}${within ? ` within ${within.name}` : ''}`
+        : flow.react?.detected
+          ? 'no component attributed to this step'
+          : 'this flow carries no React data',
+      lines,
+    };
+  }
+
+  // ── network ──
+  {
+    const calls = step.networkCalls ?? [];
+    const failed = failedCalls(step);
+    const lines = [];
+
+    for (const call of calls) {
+      const diagnostic = callFailed(call);
+      lines.push(
+        `${call.method || 'GET'} ${call.url} → ${call.status ?? 'no response'} ` +
+          `(${call.durationMs || 0}ms)${at(call.timestamp)}`,
+      );
+      const request = compactCall(
+        call.requestBody,
+        bodyMeta(call, 'request'),
+        diagnostic,
+        render.bodyLimit,
+        render.limits,
+      );
+      const response = compactCall(
+        call.responseBody,
+        bodyMeta(call, 'response'),
+        diagnostic,
+        render.bodyLimit,
+        render.limits,
+      );
+      if (request) lines.push(`  request:  ${request}`);
+      if (response) lines.push(`  response: ${response}`);
+    }
+
+    parts.network = {
+      have: calls.length
+        ? `${calls.length} call${calls.length === 1 ? '' : 's'}${failed.length ? `, ${failed.length} failed` : ''}`
+        : 'no network calls',
+      lines,
+    };
+  }
+
+  // ── console ──
+  {
+    const entries = step.consoleLogs ?? [];
+    const cap = render.limits.consoleEntries;
+    const shown = Number.isFinite(cap) && cap > 0 ? entries.slice(0, cap) : entries;
+    const lines = shown.map(
+      (entry) => `[${entry.level}]${at(entry.timestamp)} ${truncate(entry.args.join(' '), render.bodyLimit)}`,
+    );
+    if (entries.length > shown.length) {
+      lines.push(`… ${entries.length - shown.length} more entries, above this flow's console cap`);
+    }
+
+    const errors = entries.filter((entry) => entry.level === 'error').length;
+    parts.console = {
+      // Every level, unlike the walkthrough: a reader who names this part is
+      // asking what the page said, and a debug line is often what says it.
+      have: entries.length
+        ? `${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}${errors ? `, ${errors} error${errors === 1 ? '' : 's'}` : ''}`
+        : 'no console output',
+      lines,
+    };
+  }
+
+  // ── element ──
+  {
+    const element = step.element;
+    const lines = [];
+    if (element) {
+      lines.push(`<${element.tag}>${element.role ? `  role=${element.role}` : ''}${element.type ? `  type=${element.type}` : ''}`);
+      if (element.label) lines.push(`label: ${element.label}`);
+      if (element.text) lines.push(`text: ${element.text}`);
+      if (element.ariaLabel) lines.push(`aria-label: ${element.ariaLabel}`);
+      lines.push(`selector: ${element.cssSelector}`);
+      if (element.xpath) lines.push(`xpath: ${element.xpath}`);
+      if (element.boundingBox) {
+        const box = element.boundingBox;
+        lines.push(`box: ${Math.round(box.x)},${Math.round(box.y)} ${Math.round(box.width)}×${Math.round(box.height)}`);
+      }
+      if (step.value !== undefined) lines.push(`value: ${truncate(String(step.value), render.bodyLimit)}`);
+    }
+    parts.element = {
+      have: element ? element.cssSelector : 'this step has no element — it is a navigation or a note',
+      lines,
+    };
+  }
+
+  // ── dom ──
+  {
+    const delta = step.domDelta;
+    parts.dom = {
+      /*
+       * "Nothing changed" and "nobody was looking" are different facts and the
+       * step cannot tell them apart, so the reply names both rather than
+       * letting the quieter one pass as the louder.
+       */
+      have: delta ? 'the text around the element changed' : 'no text change recorded',
+      lines: delta
+        ? [`before: ${truncate(delta.before, render.bodyLimit)}`, `after:  ${truncate(delta.after, render.bodyLimit)}`]
+        : [
+            'No text change was recorded on this step. Either nothing around the element visibly ' +
+              'changed, or text deltas were switched off when this flow was recorded — the header of ' +
+              'get_flow says which settings were non-default.',
+          ],
+    };
+  }
+
+  // ── screenshot ──
+  {
+    const file = screenshotPath(dir, step);
+    parts.screenshot = {
+      have: file ? path.basename(file) : (step.screenshotOmitted ?? 'no screenshot'),
+      lines: file
+        ? [file, 'Read that file directly — get_flow_screenshots is only for a reader that cannot.']
+        : step.screenshotOmitted
+          ? [step.screenshotOmitted]
+          : [],
+    };
+  }
+
+  return parts;
+}
+
+/**
+ * How much of the project root a source path may name, and where that root is.
+ *
+ * A component's `source` came off a web page — it is whatever that page's source
+ * map claimed, and any page the browser visits can POST a flow to this server on
+ * loopback. Everywhere else in this file that string is printed and never
+ * opened. This tool is the one place it names a file, so it names one only
+ * underneath a single directory, and only after `realpath` has been asked
+ * whether a symlink leaves it.
+ *
+ * Claude Code launches this server with the project it is working in as the
+ * working directory, which is the right answer for nearly every installation.
+ * `DEVFLOW_PROJECT_ROOT` is for the ones where it is not, and it is an
+ * environment variable rather than a `config.json` key on purpose: `POST /config`
+ * is reachable by any page the browser visits, and a page that could move this
+ * would be choosing which directory the next snippet is read out of.
+ */
+const PROJECT_ROOT_ENV = process.env.DEVFLOW_PROJECT_ROOT
+  ? path.resolve(process.env.DEVFLOW_PROJECT_ROOT)
+  : null;
+
+/** Nothing this big is a source file, and reading it would be the whole point of not doing so. */
+const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
+
+/** Lines either side of the target. Twelve is a function; a hundred is a file. */
+const SNIPPET_RADIUS = 12;
+const MAX_SNIPPET_RADIUS = 100;
+
+/** `target` is somewhere strictly beneath `root` — not `root` itself, not beside it. */
+function contained(root, target) {
+  const rel = path.relative(root, target);
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/**
+ * One untrusted source path, resolved to a readable file under the project root.
+ *
+ * Returns a reason rather than throwing, because each of these is a different
+ * thing to tell the reader and only one of them is "no such file": a path that
+ * escapes the root is a recording made against another checkout, and a root that
+ * does not exist is a misconfigured server.
+ */
+async function resolveSource(root, candidate) {
+  const rootReal = await fs.realpath(root).catch(() => null);
+  if (!rootReal) return { reason: 'no-root' };
+
+  // `path.resolve` lets an absolute candidate win outright, which is exactly why
+  // containment is judged on the result rather than on what was written.
+  const target = path.resolve(rootReal, candidate);
+  if (target === rootReal) return { reason: 'not-a-file', root: rootReal, what: 'the project root itself' };
+
+  /*
+   * Canonicalised before it is judged, and judged once.
+   *
+   * Both halves of that matter. Symlinks are the reason containment cannot be
+   * decided on the written path — a link inside the root pointing out of it
+   * passes any string comparison. But the root was canonicalised too, and
+   * checking the written path *as well* refuses a candidate that is the same
+   * file by another name: a source map that recorded `/tmp/app/src/X.tsx` under
+   * a root that canonicalises to `/private/tmp/app` is the same file on every
+   * macOS, and a second, weaker test that runs first can only ever refuse
+   * something the real test would allow.
+   */
+  const real = await fs.realpath(target).catch(() => null);
+  if (!real) {
+    /*
+     * Nothing to canonicalise, so the written path is all there is to judge —
+     * and the two answers are not interchangeable. A path that climbs out of
+     * the root is refused as an escape even when nothing is there, because the
+     * reader's next move differs: one of them is "point me at the right root",
+     * the other is "this checkout is not what was recorded".
+     */
+    return contained(rootReal, target)
+      ? { reason: 'missing', root: rootReal, tried: target }
+      : { reason: 'outside', root: rootReal };
+  }
+  if (!contained(rootReal, real)) return { reason: 'outside', root: rootReal };
+
+  const stat = await fs.stat(real).catch(() => null);
+  if (!stat) return { reason: 'missing', root: rootReal, tried: target };
+  if (!stat.isFile()) return { reason: 'not-a-file', root: rootReal, what: 'a directory' };
+  if (stat.size > MAX_SOURCE_BYTES) return { reason: 'too-big', root: rootReal, bytes: stat.size };
+
+  return { file: real, root: rootReal };
+}
+
 // ── MCP server (server → Claude) ───────────────────────────────────────────
 
 const mcpServer = new Server({ name: 'devflow', version: VERSION }, { capabilities: { tools: {} } });
@@ -1860,6 +2289,70 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: 'First step to return, 1-based. Omit to start at the beginning.',
           },
           raw: { type: 'boolean', description: 'Also return the step JSON. See get_flow.' },
+        },
+      },
+    },
+    {
+      name: 'get_flow_summary',
+      description:
+        'One recording in under 400 tokens: when it was made, how many steps, whether anything broke and what broke, the components behind it and the call to make next. The cheapest tool here and the one to start from once list_flows has named a flow — it costs about a fiftieth of get_flow, so asking it of the wrong recording costs nothing. Omit "id" for the most recent one.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'Flow ID from list_flows. Omit for the most recent recording.',
+          },
+        },
+      },
+    },
+    {
+      name: 'get_step_detail',
+      description:
+        'One part of one step, rather than all of it. Omit "include" and it lists the parts this step has — its component, network calls, console output, element, text change and screenshot — with what each would cost, so the next call asks for the one that answers the question. get_flow_step returns every part at once and is the right call when the step is already known to be the answer; this is for the move before that, on a step whose network alone runs to thousands of tokens.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+          step: { type: 'number', description: 'Step number, 1-based, as the other tools report it' },
+          include: {
+            type: 'array',
+            items: { type: 'string', enum: STEP_PARTS },
+            description: `Parts to return: ${STEP_PARTS.join(', ')}. Omit to list what this step has and what each part costs.`,
+          },
+        },
+        required: ['id', 'step'],
+      },
+    },
+    {
+      name: 'get_source_snippet',
+      description:
+        'The lines around a component\'s source, read off this machine. Pass a flow id and a step to get the code behind the component that step happened in, or a file and a line directly. Saves the round trip of reading a path out of get_flow_errors and opening it yourself, and says plainly when the file named by the recording is not in the checkout — which is what a stale bundle looks like from here. Source files are read only from underneath the project root, which is the directory this server was started in unless DEVFLOW_PROJECT_ROOT says otherwise.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows. With "step" or "component".' },
+          step: {
+            type: 'number',
+            description: 'Step number, 1-based. The source of the component this step happened in.',
+          },
+          component: {
+            type: 'string',
+            description: 'A component name in that flow, instead of a step. Use when a step names one you want to read.',
+          },
+          file: {
+            type: 'string',
+            description: 'A source path instead of a flow, relative to the project root. Absolute is accepted if it is inside it.',
+          },
+          line: { type: 'number', description: '1-based line to centre on. Defaults to the component\'s own line, or 1.' },
+          radius: {
+            type: 'number',
+            description: `Lines either side of it. Default ${SNIPPET_RADIUS}, maximum ${MAX_SNIPPET_RADIUS}.`,
+          },
+          root: {
+            type: 'string',
+            description: 'Project root to read under, if it is not the directory this server was started in.',
+          },
         },
       },
     },
@@ -2659,6 +3152,364 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
           ? failure(error.message)
           : failure('The most recent flow could not be read.');
       }
+    }
+
+    case 'get_flow_summary': {
+      /*
+       * The id is optional and its absence means "the latest", which is the
+       * shape `get_latest_flow` already established. A triage tool that
+       * insisted on an id would need `list_flows` in front of it to answer the
+       * commonest question there is — did the thing I just recorded break.
+       */
+      let id = args.id;
+      if (typeof id !== 'string' || !id) {
+        const flows = await listAllFlows();
+        if (!flows.length) {
+          return text(
+            `No flows recorded yet (looking in ${FLOWS_DIR}). Record one in the DevFlow Chrome extension and press Send — it will appear here.`,
+          );
+        }
+        id = flows[0].id;
+      }
+
+      try {
+        const { json } = await readFlow(id);
+        return text(flowSummary(json));
+      } catch (error) {
+        return readFailure(error, id);
+      }
+    }
+
+    case 'get_step_detail': {
+      let flow;
+      try {
+        flow = await readFlow(args.id);
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+
+      const render = renderingFor(flow.json);
+      const total = flow.json.steps.length;
+      const number = Math.trunc(Number(args.step));
+      const step = Number.isFinite(number) ? flow.json.steps[number - 1] : undefined;
+
+      if (!step) {
+        return failure(
+          `"${flow.json.name}" has no step ${args.step}. It has ${total} step${total === 1 ? '' : 's'}, numbered 1 to ${total}.`,
+        );
+      }
+
+      const parts = stepParts(flow.json, flow.dir, step, render);
+      const heading =
+        `## Step ${number} of ${total} — ${flow.json.name}\n` +
+        `${step.action}${urlPath(step.url) ? `  ·  ${urlPath(step.url)}` : ''}`;
+
+      /** One part as it is returned, so the index prices what the next call sends. */
+      const section = (name) => {
+        const part = parts[name];
+        return `### ${name}\n\n${part.lines.length ? part.lines.join('\n') : part.have}`;
+      };
+
+      const asked = Array.isArray(args.include)
+        ? args.include.filter((name) => typeof name === 'string')
+        : [];
+      const unknown = asked.filter((name) => !STEP_PARTS.includes(name));
+      if (unknown.length) {
+        return failure(
+          `get_step_detail has no part called ${unknown.map((name) => `"${name}"`).join(', ')}. ` +
+            `The parts are ${STEP_PARTS.join(', ')}.`,
+        );
+      }
+
+      /*
+       * The index, when nothing was asked for. It is the whole point of the
+       * tool: a reader who knows the step made two calls and logged nothing
+       * does not spend a thousand tokens finding out which.
+       */
+      if (!asked.length) {
+        // A column, so the labels have a width. The sentence a part has to say
+        // about itself when it is empty belongs in the part, not in the table.
+        const LABEL = 46;
+        const rows = STEP_PARTS.map((name) => {
+          const label = ellipsis(parts[name].have, LABEL);
+          return `  ${name.padEnd(11)}${label.padEnd(LABEL + 2)}~${estimateTokens(section(name))} tokens`;
+        });
+
+        const owner = stepComponent(flow.json, step);
+        const where = owner ? formatSource(owner) : null;
+
+        return text(
+          `${heading}\n` +
+            (owner ? `${owner.name}${where ? `  ${where}` : ''}\n` : '') +
+            `\nParts of this step, and what each one costs:\n\n${rows.join('\n')}\n\n` +
+            `get_step_detail({"id":"${flow.json.id}","step":${number},"include":["network"]}) returns one or more of them. ` +
+            'get_flow_step returns the whole step at once, with bodies kept four times longer.',
+        );
+      }
+
+      /**
+       * One part, cut on a line boundary, saying what it lost.
+       *
+       * Reached when a single part exceeds the whole budget on its own — a step
+       * that made three hundred requests is thirty thousand tokens of `network`
+       * before anything else is asked for. Dropping the part instead would
+       * answer a direct question with nothing; sending it whole is the failure
+       * this file exists to prevent, because every MCP client applies its cap by
+       * truncating the string and the response would arrive cut at an arbitrary
+       * character with nothing anywhere saying so.
+       */
+      const fitPart = (name, budget) => {
+        const part = parts[name];
+        const head = `### ${name}\n\n`;
+        const kept = [];
+        // Room reserved for the omission line, which has to fit inside the
+        // budget too — an accounting that says what was cut and then overruns
+        // to say it has cut nothing.
+        let used = estimateTokens(head) + 40;
+
+        for (const line of part.lines) {
+          const cost = estimateTokens(`${line}\n`);
+          if (used + cost > budget) break;
+          kept.push(line);
+          used += cost;
+        }
+
+        const dropped = part.lines.length - kept.length;
+        return (
+          head +
+          (kept.length ? `${kept.join('\n')}\n` : '') +
+          `… ${dropped} of ${part.lines.length} lines omitted — this part alone exceeds the response budget`
+        );
+      };
+
+      /*
+       * Budgeted like every other multi-part response here, and cut on a part
+       * boundary with the cut named. The first part asked for is always
+       * returned, shrunk if it has to be, for the same reason `get_flow` always
+       * returns its first step: a reader who asked a direct question and got an
+       * empty document has no way to ask a smaller one.
+       */
+      const sections = [];
+      let used = estimateTokens(heading);
+      let cut = null;
+      for (const name of STEP_PARTS) {
+        if (!asked.includes(name)) continue;
+
+        const rendered = section(name);
+        const cost = estimateTokens(rendered);
+        const remaining = render.maxTokens - used;
+
+        if (cost <= remaining) {
+          sections.push(rendered);
+          used += cost;
+          continue;
+        }
+
+        if (sections.length > 0) {
+          cut = name;
+          break;
+        }
+
+        const fitted = fitPart(name, Math.max(200, remaining));
+        sections.push(fitted);
+        used += estimateTokens(fitted);
+      }
+
+      const tail = cut
+        ? `\n\nStopped before "${cut}" — the parts above already fill this response. Ask for it on its own.`
+        : '';
+
+      return text(`${heading}\n\n${sections.join('\n\n')}${tail}`);
+    }
+
+    case 'get_source_snippet': {
+      /*
+       * Refused outright when this server is reachable over a network.
+       *
+       * Everything else here answers out of `~/.devflow/flows`, which is the
+       * data the caller sent in the first place. This one reads the machine's
+       * own source, and in remote mode the caller is not the person sitting at
+       * that machine. `DEVFLOW_PROJECT_ROOT` is the deployment saying otherwise
+       * deliberately, and it is the only thing that can — a `root` argument
+       * would let the caller choose, which is the whole of the problem.
+       */
+      if (REMOTE && !PROJECT_ROOT_ENV) {
+        return failure(
+          'get_source_snippet is off on a remote server: it reads source files from the machine the ' +
+            'server runs on, which is not the machine the caller is working on. Set DEVFLOW_PROJECT_ROOT ' +
+            'on the deployment if the source really is there. Every other tool answers from the ' +
+            'recordings and is unaffected.',
+        );
+      }
+
+      const root = REMOTE
+        ? PROJECT_ROOT_ENV
+        : typeof args.root === 'string' && args.root.trim()
+          ? path.resolve(args.root.trim())
+          : (PROJECT_ROOT_ENV ?? process.cwd());
+
+      let file = typeof args.file === 'string' ? args.file.trim() : '';
+      let line = Math.trunc(Number(args.line));
+      let label = '';
+      /** The component's own absolute path, tried when the repo-relative one does not resolve. */
+      let alternate = '';
+
+      if (!file) {
+        if (typeof args.id !== 'string' || !args.id) {
+          return failure(
+            'get_source_snippet needs either a "file" — a path under the project root, with an ' +
+              'optional "line" — or an "id" and a "step", naming the recording and the step whose ' +
+              'component you want to read.',
+          );
+        }
+
+        let flow;
+        try {
+          flow = await readFlow(args.id);
+        } catch (error) {
+          return readFailure(error, args.id);
+        }
+
+        const components = flow.json.react?.components ?? {};
+        let component = null;
+
+        if (typeof args.component === 'string' && args.component.trim()) {
+          const wanted = args.component.trim().replace(/^#/, '');
+          component =
+            components[wanted] ??
+            Object.values(components).find((entry) => entry.name === wanted) ??
+            null;
+          if (!component) {
+            return failure(
+              `"${flow.json.name}" records no component called "${args.component}". ` +
+                'get_flow lists the components a recording met, each with its source.',
+            );
+          }
+        } else {
+          const total = flow.json.steps.length;
+          const number = Math.trunc(Number(args.step));
+          const step = Number.isFinite(number) ? flow.json.steps[number - 1] : undefined;
+          if (!step) {
+            return failure(
+              `"${flow.json.name}" has no step ${args.step}. It has ${total} step${total === 1 ? '' : 's'}, numbered 1 to ${total}.`,
+            );
+          }
+          component = stepComponent(flow.json, step);
+          if (!component) {
+            return failure(
+              `Step ${number} of "${flow.json.name}" has no component attributed to it, so there is no ` +
+                'source to read. Pass "file" and "line" directly, or get_flow_step for what the step does carry.',
+            );
+          }
+          label = `step ${number}`;
+        }
+
+        if (!component.source) {
+          /*
+           * A component that was picked but never located is the case the
+           * `detail` sentence on `ComponentSource` exists for, and repeating it
+           * here is the difference between "there is no file" and "the file is
+           * in a chunk that never loaded".
+           */
+          return failure(
+            `${component.name} was never resolved to a source file` +
+              (component.detail ? `: ${component.detail.replace(/\.?$/, '.')}` : '.') +
+              (component.compiled ? ` The bundle position is ${formatSource(component)}.` : ''),
+          );
+        }
+
+        file = component.source;
+        if (typeof component.absolutePath === 'string') alternate = component.absolutePath;
+        if (!Number.isFinite(line) || line < 1) line = Number(component.line) || 1;
+        label = label ? `${component.name}, ${label}` : component.name;
+      }
+
+      if (!Number.isFinite(line) || line < 1) line = 1;
+      const asked = Number(args.radius);
+      const radius = Number.isFinite(asked)
+        ? Math.min(MAX_SNIPPET_RADIUS, Math.max(0, Math.trunc(asked)))
+        : SNIPPET_RADIUS;
+
+      /*
+       * The map's absolute path is a second candidate, never a second rule: it
+       * came off the same web page and goes through the same guard. The first
+       * candidate's refusal is the one reported, because it is the path the
+       * recording actually names and the one the reader is holding.
+       */
+      let found = await resolveSource(root, file);
+      /** The candidate that actually resolved — which is what the heading may name. */
+      let named = file;
+      let fellBack = false;
+
+      if (!found.file && alternate && alternate !== file) {
+        fellBack = true;
+        const other = await resolveSource(root, alternate);
+        if (other.file) {
+          found = other;
+          // The heading names what was read. Printing the recorded path above
+          // the contents of the file the fallback found asserts a filename that
+          // was not opened, which is the one thing a snippet must never do.
+          named = alternate;
+        }
+      }
+
+      /*
+       * The fallback is named only when it was tried and refused. Each refusal
+       * here says what caused it, and "no such file" over a second candidate
+       * that was silently rejected for a different reason is one cause short.
+       */
+      const alsoTried = fellBack && !found.file
+        ? ` The absolute path the same source map recorded, ${alternate}, does not resolve under it either.`
+        : '';
+
+      if (found.reason === 'no-root') {
+        return failure(
+          `The project root ${root} does not exist, so there is nowhere to read ${file} from. ` +
+            'Pass "root", or start the server in the project, or set DEVFLOW_PROJECT_ROOT.',
+        );
+      }
+      if (found.reason === 'outside') {
+        return failure(
+          `${file} resolves outside the project root ${found.root}, and this tool reads nothing from ` +
+            'outside it. That path came from the recorded page\'s own source map, so it describes ' +
+            'wherever that application was built, not this checkout. Pass "root" if the source is ' +
+            `somewhere else on this machine.${alsoTried}`,
+        );
+      }
+      if (found.reason === 'not-a-file') {
+        return failure(`${file} is ${found.what}, not a source file. Name the file you want to read.`);
+      }
+      if (found.reason === 'too-big') {
+        return failure(
+          `${file} is ${Math.round(found.bytes / 1024)}KB, which is a bundle rather than a source file. ` +
+            'Nothing that size is read here.',
+        );
+      }
+      if (found.reason === 'missing') {
+        return failure(
+          `${file} was not found under the project root ${found.root}. The recording names it because that is ` +
+            'what the page\'s source map said, so either this checkout is not the application that was ' +
+            `recorded, or it has moved since. Pass "root" to point at the right one.${alsoTried}`,
+        );
+      }
+
+      const contents = await fs.readFile(found.file, 'utf8').catch(() => null);
+      if (contents === null) {
+        return failure(`${found.file} could not be read.`);
+      }
+
+      const window = snippet(contents, line, radius);
+      const heading = `${named}:${line}${label ? ` — ${label}` : ''}`;
+      const stale = window.beyondEnd
+        ? `\n\nLine ${line} is past the end of this file (${window.range}). The recording was made ` +
+          'against a different build of this application than the one at this project root, so the ' +
+          'lines below are the end of the file rather than the component.'
+        : '';
+
+      return text(
+        `${heading}\n${found.file} · ${window.range}${stale}\n\n` +
+          (window.lines.length ? `\`\`\`\n${window.lines.join('\n')}\n\`\`\`` : '(the file is empty)'),
+      );
     }
 
     /*

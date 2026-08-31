@@ -96,6 +96,7 @@ Nothing below is ticked on the strength of that branch.
 - [ ] **React DevTools Global Hook Reader**
 - [ ] **Non-Invasive State Store Interceptor:** Zustand, Redux, TanStack Query, React Context
 - [ ] **Subscription Discovery**
+- [ ] **RFC 6902 state deltas and `get_state_patch`,** moved here from Work Stream 1.5. The differ and the tool are one deliverable with whatever captures the state, because what a patch has to decide — which subtrees are worth diffing at all, and how one is bounded to a token budget — is a question about the shape of what is captured, and there is no shape to answer it against until the three items above exist.
 
 ### Work Stream 1.3: Causal Threading in the Flow Recorder
 - [ ] **Causal DAG Construction:** `causedBy` does not exist in `src/shared/types.ts`. Not started.
@@ -112,7 +113,10 @@ Nothing below is ticked on the strength of that branch.
 ### Work Stream 1.5: High-Density Token-Efficient MCP Interface
 - [x] **Shipped and covered:** `list_flows`, `get_flow`, `get_flow_errors`, `get_flow_step`, `get_latest_flow`, `get_flow_screenshots`, `compare_flows`
 - [x] **Out-of-band Screenshots:** written to `~/.devflow/flows/<id>/` and referenced by absolute path.
-- [ ] `get_flow_summary` (<400 token triage), `get_step_detail`, `get_state_patch` (RFC 6902), `get_source_snippet`
+- [x] `get_flow_summary` — one flow in under 400 estimated tokens, budget enforced by dropping whole facts rather than cutting text, and tested against a deliberately hostile recording.
+- [x] `get_step_detail` — one named part of one step (component, network, console, element, dom, screenshot), with an index that prices each part before it is asked for.
+- [x] `get_source_snippet` — the lines a component was written on, read only from underneath one project root, re-checked after symlinks, and off in remote mode unless `DEVFLOW_PROJECT_ROOT` says otherwise.
+- [ ] `get_state_patch` (RFC 6902) — **deferred to Work Stream 1.2, deliberately.** `Step` has no state field and nothing captures one, so the tool would have nothing to read and the differ behind it would be a module in `src/core/` with no caller. That is the exact shape of what the `v3.2.0` audit deleted, and shipping it to tick a box is the habit that made the previous attempt worthless. RFC 6902 generation is well specified and does not depend on the state shape; what does depend on it is the part that matters here — which subtrees are worth diffing and how a patch is bounded to a token budget — and that cannot be designed against a shape that does not exist. Build it in 1.2, with the captured state in hand.
 
 ---
 
