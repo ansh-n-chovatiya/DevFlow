@@ -6,13 +6,19 @@ handoff; the roadmap is the truth about what is done.
 
 ## Where the project actually is
 
-`main` @ the merge of `phase-1/render-blame`, clean. `npm run verify` is green:
-**121 test files, 2406 tests**.
+`main` @ the merge of `phase-2/time-travel-recorder`, clean. `npm run verify` is
+green: **129 test files, 2581 tests** (was 121 / 2406).
 
 > **Run `npm run verify` and read its exit code, not its tail.**
 > `npm run verify 2>&1 | tail -20` reports *`tail`'s* exit code, which is always
 > 0. Use `npm run verify > /tmp/v.log 2>&1; echo "EXIT=$?"` and believe the
-> number. It has already produced two false "green" readings in this campaign.
+> number.
+>
+> One new trap, seen this session: a stray file dropped into the repo root — an
+> exported `*.spec.ts` a browser download had left there — makes `eslint .` fail
+> with `parserOptions.project` and nothing else, on a tree `git status` calls
+> clean. If lint fails for a file you do not recognise, look for it before you
+> look at your own diff.
 
 A previous AI ("Antygravity") built Phase 0–2 badly and it shipped as v3.2.0. An
 audit found the MCP server would not boot, typecheck was red, 29 tests failed,
@@ -25,30 +31,44 @@ source of *ideas*, never of code to copy.
 
 ## What shipped last session
 
-**The two unverified Phase 0 items were audited and both now tick.** Each
-survived the hard question and each turned out to be one defect lighter.
+Four work streams, each of which v3.2.0 had ticked and none of which survived
+its audit. Read `ROADMAP_AND_PHASES.md` §2.1, §2.2, §2.3 and §2.5 in full before
+touching anything nearby — the reasoning is there, not here.
 
-`caused_by` projects honestly — a link reaches the graph only when *both* ends
-land on a node the ARKG keys stably, a console entry projects onto nothing and
-its links are dropped rather than given an invented node, and neither the
-self-loop nor the component↔endpoint pair (which is `calls` drawn twice from one
-fact) is written. The defect: the projection is many-to-one, so a response
-echoed into two keys of one store was counted as two observations of one edge,
-contradicting the rule stated in `ingestFlow`'s own comment. Fixed with a
-per-flow dedupe on the full edge identity.
+**2.1 — the recorder.** A `MutationObserver` over the whole document for the
+length of each step, folded into a handful of facts and bounded by **two**
+numbers because there are two costs: `recording.domMutationCap` bounds the work
+and disconnects the observer, `recording.domMaxChanges` bounds the recording
+after folding. Ranking is structural → text → attribute → `style`, never by
+count. It sits beside `StepBase.domDelta` rather than replacing it and neither
+is derivable from the other. **Periodic layout snapshots are refused**, with the
+reason in the roadmap. `causedBy` stamping is refused, with the reason in the
+roadmap. State changes now reach the exported Playwright/Cypress specs as
+comments; a generated store reader is refused, and the generated file says why.
 
-`getAnomalies` is a real per-entity σ baseline and does not dress a threshold as
-one — failure rate keeps `basis: 'threshold'` and says so in words. The defect:
-`getAnomalyReport` existed precisely so "not enough observations" and "nothing is
-wrong" could be told apart, and the MCP tool was still calling the bare array
-while hedging in prose that it could not tell which it held. The tool now spends
-`examined` and `tooNew`.
+**2.2 — `get_value_provenance`.** A search for one value across four
+independent observations of a recording, reported in the direction data flows
+and repeatedly described as a search rather than a trace. The roadmap's
+`domNodeId` argument does not exist and could not: a recording describes an
+element and addresses none.
 
-**Work Stream 1.4 shipped in full.** Render blame is sampled off the two
-readings 1.2 already takes — nothing is installed on the page — and the
-"Autopilot" bullet shipped narrowed to wasted-render detection, which is what
-two readings can carry. Read `ROADMAP_AND_PHASES.md` §1.4 for the whole of it
-before touching anything nearby.
+**2.3 — `suggest_actions`.** What people have actually done on a page, folded
+across recordings. It takes **no** graph argument, because the graph holds no
+selectors. **The headless replay harness is refused**, and the reason matters
+for your planning: the artifact it would run already exists, what is missing is
+a runner, and where that runner lives is a decision that belongs with 2.4.
+
+**2.5 — `explain_feature`.** Lexical matching that says it is lexical matching,
+expanded one hop through the graph — which is the half that reaches an endpoint
+whose name carries none of your words.
+
+**And an adversarial review of all of it found five defects, all fixed.** That
+review was worth more than any of the four streams. Read the pattern rather than
+the list: every one of the five was a *claim* the code did not support, not a
+crash. Describing four hundred groups to print twelve was the reverted v3.2.0
+cost profile relocated one function along. A `<style>` written through was
+reported as content. A withheld send option was reported as a recording that
+never sampled. **Run one.**
 
 ---
 
@@ -57,103 +77,103 @@ before touching anything nearby.
 Phase 0's three remaining items — `git_commits` nodes, the `changed_in` edge,
 the `git_sha` columns — **cannot be done in this campaign at all.** They need
 Phase 3's git integration. They stay `[ ]`. If you find yourself about to tick
-one, you are about to repeat the exact failure that made v3.2.0 worthless. Say
-the item is Phase-3-blocked and move on.
+one, you are about to repeat the exact failure that made v3.2.0 worthless.
 
-### 1 · Work Stream 2.1 — Time-travel recorder 2.0
+### 1 · Work Stream 2.4 — Closed-loop AI code repair
 
-Three open bullets, and they are not equally ready.
+The last open item in Phase 2, and **the item on this roadmap most likely to be
+faked under time pressure.** The v3.2.0 version was a hardcoded fake diff in a
+file that did not parse.
 
-**DOM MutationObserver deltas and periodic layout snapshots.** *The landmine:*
-the reverted attempt pushed every mutation on the whole document, unbounded and
-unthrottled, into an array with no cap. **Design the budget before the
-implementation** — what is observed, what is dropped, what the cap is, and what
-the recording says when the cap bites. `src/injected/render.ts` is now the
-closest pattern: a bounded walk, gated on recording, that reports the fact it
-was cut. Note that `StepBase.domDelta` already exists and is something *else* —
-the text of the region around the touched element, before and after. Do not
-conflate them, and say plainly how the new thing relates to it.
+It has three bullets and they are not equally ready.
 
-**All events carry `causedBy` references.** Unblocked but narrower than it
-reads: 1.3 derives the chain at read time, so what is left is the decision to
-*stamp* it at capture. That is worth doing only if something needs it before the
-flow reaches a reader — and nothing does yet. The honest move is probably to
-leave it and write why into the roadmap.
+- **Diagnostic causal tracing.** Unblocked — 1.3 built the graph and 2.2 and 2.3
+  now sit beside it. What this adds is a *diagnosis*, which is a much stronger
+  claim than any of `get_causal_chain`'s four bases makes on its own: "these
+  events are linked by this evidence" is not "this link is the fault". Decide
+  what evidence would justify the stronger claim **before** writing anything
+  that makes it, and if the answer is that the recording cannot justify it, say
+  so in the roadmap and build the weaker thing honestly.
+- **Patch generation & in-memory application.** Not started.
+- **Replay verification & test runner.** This is where 2.3's refused harness
+  comes back, and where its decision has to be made rather than deferred again:
+  putting a runner in the MCP server means either shipping a browser in a
+  package installed by `npx`, or executing the user's own test runner against a
+  live application on a model's say-so. The second is defensible *with a
+  confirmation and a failure story designed for it*. Design those first.
 
-**State assertions from before/after store diffs** (the E2E compiler's last
-bullet). Unblocked by 1.2 but not built. It needs a decision about which of a
-patch's operations are worth asserting on, which is a question about a real
-app's patches and not one to answer from a fixture.
+### 2 · Then
 
-### 2 · Then, in dependency order
-
-- **2.2 — Provenance engine** (`get_value_provenance`). *The landmine:* the
-  previous one was unreachable dead code. Wire the tool first and let it fail
-  honestly, then fill it in.
-- **2.5 — NL navigator** (`explain_feature`). Needs only the ARKG. *The
-  landmine:* the previous one was stopword-matching substring filtering dressed
-  as understanding. If what you build is lexical matching, the tool description
-  must say it is lexical matching.
-- **2.3 — Sandbox execution.** *The landmine:* the previous generator returned
-  hardcoded buttons and ignored the ARKG argument it was given. If the generator
-  cannot use the graph yet, it takes no graph argument.
-- **2.4 — Closed-loop repair.** Last: it needs 1.3 and 2.3 both, and it is the
-  item most likely to be faked under time pressure.
-- **1.1 — `@devflow/compiler-plugin`.** Marked *strictly optional*. Last of all.
-  Invariant 1 is that DevFlow needs no app changes; a plugin must never become
-  the path that works properly.
+- **1.1 — `@devflow/compiler-plugin`.** Marked *strictly optional*, and last.
+  Invariant 1 is that DevFlow needs no app changes. The risk is not that a
+  plugin would fail — it is that it would work *better*, making the
+  zero-dependency path the degraded one and losing the invariant without anyone
+  deciding to lose it. Any build of it starts by writing down what it may not
+  improve.
 
 ---
 
 ## Non-negotiables
 
 - `src/core/` is pure — no `chrome.*`, no DOM, no `fetch`, no clock. It is
-  bundled into `mcp-server/core.js` and imported by a Node process.
+  bundled into `mcp-server/core.js` and imported by a Node process. (`core/dom`,
+  `core/selector` and `core/describe` take DOM nodes as *arguments* and are not
+  in `mcp-bundle.ts`; that is the line.)
 - Every `chrome.*` call goes through `src/chrome/`.
 - The ARKG stays additive, via the guarded `arkgTry` funnel.
 - Anything published must be in `mcp-server/package.json` `files`.
 - Any change touching `src/` or `public/` needs a `## Unreleased` changelog entry.
 - Strings obey the frozen `docs/CONTRACTS.md` §4. It is frozen — if it is wrong,
-  say so; do not fix it locally. §3.6 enumerates the settings prefixes each group
-  owns, which is why state capture and render sampling are both under
-  `recording.` rather than prefixes of their own.
+  say so; do not fix it locally.
 - A setting that is not in `src/features/settings/fields.ts` does not exist.
   After touching that table run `npm run build:settings` — and note that
   `tests/settings-defaults.test.ts` has a `SOURCE` table naming every field, and
-  `tests/settings-advanced.test.ts` asserts **counts with the number written into
-  the test name and the prose**. Update the sentences, not just the integers.
+  `tests/settings-advanced.test.ts` asserts **counts with the number written
+  into the test name and the prose**. Both numbers were stale when this session
+  found them; they are correct now (39 Tier 2, 23 frozen). Update the sentences,
+  not just the integers.
 - Comments say **why**, not what.
 
 ## How to work
 
 - **Do not tick a checkbox unless `npm run verify` proves it** — and unless you
-  have read the thing it claims. That habit is what made the previous attempt
-  worthless. `[~]` is always available and is never a failure.
-- **Do not build a module with no caller.** If the thing that would consume it
-  does not exist yet, say so and defer, with the reasoning written into the
-  roadmap rather than left implicit.
-- **Write tests that would fail against the bug.** After writing a test, break
-  the code it covers and confirm it goes red, then revert. A test that passes
-  against both the correct code and the obvious defect is worse than no test,
-  because it reports safety.
-- **Test at the layer that can lose the data, not below it.** There are now
-  **two** by-name flow-level copies that silently drop new fields — `buildPayload`
-  in `src/features/mcp/send.ts` and `saveFlow` in `mcp-server/server.js`. Both
-  have already eaten a shipped feature once (`state` last session; `renders`
-  would have been next). Steps are spread and survive; flow-level fields are
-  listed by name and do not. A test that hands the renderer a fixture passes
-  against both bugs — start in storage, or at the POST.
-- **The write and the renderer are one deliverable.** A field no tool prints does
-  not exist from outside. This failure has now happened three times:
-  `subscribes_to`, `topStateKeys`, and `moreChanges` last session.
-- **Use subagents in parallel with explicit file ownership**, tell them not to
-  run `verify` or `build*` concurrently, and have them report bugs in files they
-  do not own rather than fixing them. **Freeze the shared contract yourself
-  first** — types, settings, function signatures — or they will each guess at it.
-- **Verify their results independently.** A plausible report can still be wrong.
-  Last session one subagent's own test *asserted the defect that same subagent
-  had reported in its summary*, and it was green. Re-run their red-checks
-  yourself on the claims that matter.
+  have read the thing it claims. `[~]` is always available and is never a
+  failure. Four of the sixteen bullets touched this session are refusals with
+  reasons; that is the mechanism working.
+- **Do not build a module with no caller.**
+- **Write tests that would fail against the bug.** Break the code the test
+  covers, confirm it goes red, revert. This session ran roughly ninety such
+  checks across its own work and its subagents'; **five survived**, and every
+  one of the five was a weak *test*, not a curiosity. Two examples worth
+  carrying: a "the tool is reachable" test that called the tool but never
+  checked `tools/list` was green against a tool that was never declared — the
+  exact v3.2.0 bug it was written to prevent; and a tie-break test whose
+  fixtures happened to sort the same way under both the correct rule and the
+  broken one.
+- **A source-text test (`expect(source).toContain(...)`) is the weakest kind
+  and sometimes the only kind** — a content script and a service worker both
+  register listeners at import and cannot be loaded. When you write one, assert
+  the **exact expression**, not a nearby phrase. A grep for a comment passes
+  against the deletion of the line under it.
+- **Test at the layer that can lose the data, not below it.** Two by-name
+  flow-level copies still silently drop new fields — `buildPayload` in
+  `src/features/mcp/send.ts` and `saveFlow` in `mcp-server/server.js`. Step
+  fields are spread and survive; flow-level fields are listed by name. Start in
+  storage, or at the POST.
+- **The write and the renderer are one deliverable.** A field no tool prints
+  does not exist from outside.
+- **Use subagents in parallel with explicit file ownership.** Freeze the shared
+  contract yourself first — types, settings, signatures — or they will each
+  guess at it. Tell them not to run `verify` or `build*`.
+  - **And do not authorise a subagent to mutate-and-restore a file you are
+    editing.** This session lost a wired MCP tool that way: a reviewer snapshotted
+    `mcp-server/server.js`, and its restore wrote the file back to `HEAD` over an
+    edit made in between. It was found only because a test that had passed
+    started failing. Give reviewers read-only access, or give them a worktree.
+- **Verify their results independently.** Re-run the red-checks on the claims
+  that matter. Every subagent this session reported accurately — including two
+  that reported their own tests as inadequate and fixed them — and the spot
+  checks are what makes that knowable rather than hoped for.
 - Run `graphify update .` after modifying code.
 - Commit on a branch and merge; never commit straight to `main`.
 
