@@ -342,21 +342,24 @@ describe('asking for one part', () => {
 });
 
 describe('a part the step has nothing in', () => {
-  it('says a text change was not recorded, and that the setting may be why', async () => {
+  it('says no change was recorded, and that the settings may be why', async () => {
     const detail = await call('get_step_detail', { id: 'flow-detail', step: 2, include: ['dom'] });
 
     expect(sectionAt(detail, 'dom')).toBeGreaterThan(-1);
-    expect(detail).toContain('No text change was recorded on this step');
+    expect(detail).toContain('No change was recorded on this step');
     // "Nothing changed" and "nobody was looking" are different facts, and an
-    // empty section quietly reports the second as the first.
-    expect(detail).toContain('text deltas were switched off when this flow was recorded');
+    // empty section quietly reports the second as the first. Two settings can
+    // be the reason now — the region read and the mutation observer — and the
+    // sentence names both, because naming one would send a reader to check the
+    // switch that was already on.
+    expect(detail).toContain('were switched off when this flow was recorded');
     expect(detail).not.toMatch(/### dom\s*$/);
   });
 
   it('says the same in the index rather than leaving the row blank', async () => {
     const index = await call('get_step_detail', { id: 'flow-detail', step: 2 });
 
-    expect(index).toMatch(/^ {2}dom\s+no text change recorded/m);
+    expect(index).toMatch(/^ {2}dom\s+no DOM change recorded/m);
     expect(index).toMatch(/^ {2}network\s+no network calls/m);
   });
 });

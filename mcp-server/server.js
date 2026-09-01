@@ -1980,6 +1980,27 @@ function renderChangeSide(change, side) {
   return encoded.length <= RENDER_VALUE_CHARS ? encoded : `‹${sketchValue(value)}›`;
 }
 
+/**
+ * One folded group of DOM mutations, on one line.
+ *
+ * `in` for a structural or text change and `on` for an attribute, because the
+ * selector means two different things: a node was added *inside* that element,
+ * and an attribute was written *on* it. Getting that wrong reads as a node
+ * having been added to the button rather than to the list the button opened.
+ *
+ * Every field is treated as untrusted: a flow arrives over loopback from a page
+ * the browser visited, and a `where` that is not a string is a reply that
+ * crashes rather than one that says less.
+ */
+function domChangeLine(change, limit) {
+  const kind = typeof change.kind === 'string' ? change.kind : 'changed';
+  const where = typeof change.where === 'string' && change.where ? change.where : '(unknown)';
+  const what = typeof change.what === 'string' && change.what ? change.what : '';
+  const count = Number.isInteger(change.count) && change.count > 1 ? ` ×${change.count}` : '';
+  const preposition = kind === 'attribute' ? 'on' : 'in';
+  return `${kind}${count} ${preposition} ${truncate(where, limit)}${what ? `: ${truncate(what, limit)}` : ''}`;
+}
+
 /** `itemCount: 3 → 4`, or why there is no arrow. */
 function renderChangeLine(entry) {
   /*
@@ -2148,21 +2169,91 @@ function stepParts(flow, dir, step, render) {
 
   // ── dom ──
   {
+    /*
+     * Two observations of one step, in one part, because a reader asking what
+     * the page did is asking one question.
+     *
+     * They are not two views of one fact and neither implies the other. The
+     * delta is the *text* of the region around the element that was touched,
+     * read twice; the changes are the *structure* of the whole document, folded
+     * over the same window. A click that opens a banner in the page header has
+     * nothing in the first and one line in the second, and a button whose label
+     * became "Saving…" has the reverse.
+     */
     const delta = step.domDelta;
-    parts.dom = {
+    const shape =
+      step.domChanges && typeof step.domChanges === 'object' && !Array.isArray(step.domChanges)
+        ? step.domChanges
+        : null;
+    const changes = Array.isArray(shape?.changes)
+      ? shape.changes.filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
+      : [];
+    const capped = shape?.capped === true;
+    const more = Number.isInteger(shape?.more) && shape.more > 0 ? shape.more : 0;
+
+    const lines = [];
+
+    if (delta) {
+      lines.push(`text before: ${truncate(delta.before, render.bodyLimit)}`);
+      lines.push(`text after:  ${truncate(delta.after, render.bodyLimit)}`);
+    }
+
+    if (changes.length) {
+      if (lines.length) lines.push('');
+      for (const change of changes) lines.push(domChangeLine(change, render.bodyLimit));
+    }
+
+    if (more) {
+      lines.push(
+        `… ${more} more change${more === 1 ? '' : 's'} were observed and did not fit this ` +
+          "flow's per-step budget. The budget is spent on structural changes first, then " +
+          'text, then attributes, so what is missing is the least of what was seen.',
+      );
+    }
+
+    /*
+     * The cap is a statement about the observer and not about the page, and it
+     * is said last so it qualifies everything above it. A step that lists three
+     * changes under this listed three changes *before the observer stopped*.
+     */
+    if (capped) {
+      lines.push(
+        'The observer stopped early on this step — it reached "recording.domMutationCap" ' +
+          'and disconnected — so anything that changed after that point was never seen. ' +
+          'This is not a claim that nothing else changed.',
+      );
+    }
+
+    if (!delta && !changes.length && !capped) {
       /*
        * "Nothing changed" and "nobody was looking" are different facts and the
        * step cannot tell them apart, so the reply names both rather than
        * letting the quieter one pass as the louder.
        */
-      have: delta ? 'the text around the element changed' : 'no text change recorded',
-      lines: delta
-        ? [`before: ${truncate(delta.before, render.bodyLimit)}`, `after:  ${truncate(delta.after, render.bodyLimit)}`]
-        : [
-            'No text change was recorded on this step. Either nothing around the element visibly ' +
-              'changed, or text deltas were switched off when this flow was recorded — the header of ' +
-              'get_flow says which settings were non-default.',
-          ],
+      lines.push(
+        'No change was recorded on this step. Either nothing in the page changed, or the ' +
+          'text delta and the mutation observer were switched off when this flow was ' +
+          'recorded — the header of get_flow says which settings were non-default.',
+      );
+    }
+
+    /*
+     * Shorter when there are two of them, because the index prints this in a
+     * fixed-width column and truncates. The half that gets cut is the second,
+     * which is the half that says this part holds more than one thing — so a
+     * reader deciding whether to spend on it would be deciding against the
+     * cheaper of the two answers without knowing the other was there.
+     */
+    const said = [];
+    if (delta) said.push(changes.length ? 'a text change' : 'a text change around the element');
+    if (changes.length) {
+      said.push(`${changes.length} change${changes.length === 1 ? '' : 's'} in the page`);
+    }
+    if (!said.length && capped) said.push('nothing seen before the observer stopped');
+
+    parts.dom = {
+      have: said.length ? said.join(', ') : 'no DOM change recorded',
+      lines,
     };
   }
 

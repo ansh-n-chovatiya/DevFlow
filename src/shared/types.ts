@@ -384,6 +384,82 @@ export interface FlowRenders {
   note?: string;
 }
 
+/**
+ * What kind of change one folded group of DOM mutations was.
+ *
+ * `added` and `removed` are elements appearing and going; `text` is the text
+ * inside one element changing, however it changed — a `characterData` mutation
+ * and a text node swapped out are the same fact to a reader and are folded
+ * together; `attribute` is one attribute of one element being written.
+ */
+export type DomChangeKind = 'added' | 'removed' | 'attribute' | 'text';
+
+/**
+ * One thing that changed in the document across one step, with its repeats
+ * folded in.
+ *
+ * Folded, not listed. Ten rows appended to one table is one entry with a count
+ * of ten, because the reader's question is *what did this interaction do* and
+ * ten near-identical entries answer it ten times. The fold is by the element it
+ * happened to and, for an attribute, the attribute's name — so a menu button
+ * whose `class` was rewritten sixty times by a transition is one entry saying
+ * sixty, not sixty entries.
+ */
+export interface DomChange {
+  kind: DomChangeKind;
+  /**
+   * The element this happened to, or the one it happened inside — a selector,
+   * built the same way `ElementRef.cssSelector` is.
+   *
+   * For `added` and `removed` it is the *parent*, because a node that has been
+   * removed has no selector that would find it again and one written as if it
+   * did is worse than none.
+   */
+  where: string;
+  /**
+   * The node that appeared or went; the attribute and the value it settled at;
+   * or the text the element settled on.
+   *
+   * Settled, not before-and-after: the window is closed once, and a value read
+   * at close is the one the step ended with. An attribute written sixty times
+   * has sixty befores and one after, and the after is the one that is true.
+   */
+  what?: string;
+  /** Mutation records folded into this entry. Absent when there was one. */
+  count?: number;
+}
+
+/**
+ * What the document did across one step.
+ *
+ * Present only on steps that had an interaction to watch, and only when
+ * something changed. The window it describes runs from the interaction until
+ * `recording.domDeltaMs` later **or until the next interaction, whichever comes
+ * first** — so every mutation belongs to exactly one step, and a burst that
+ * spans two clicks is not reported twice as if it had happened twice.
+ */
+export interface StepDomChanges {
+  changes: DomChange[];
+  /**
+   * The observer stopped at `recording.domMutationCap` and disconnected, so
+   * changes after that point in the step were never seen.
+   *
+   * The same warning `FlowRenders.capped` carries and for the same reason: a
+   * step that says three things changed while this is set is saying three
+   * things changed *before the observer stopped looking*.
+   */
+  capped?: true;
+  /**
+   * Distinct changes that were observed and did not fit
+   * `recording.domMaxChanges`.
+   *
+   * Counted rather than dropped silently — the budget is spent structural
+   * changes first, then text, then attributes, and `style` last of all, so what
+   * this number hides is the least of what was seen and never all of it.
+   */
+  more?: number;
+}
+
 export type ConsoleLevel = 'log' | 'warn' | 'error' | 'info' | 'debug';
 
 export interface ConsoleEntry {
@@ -476,6 +552,27 @@ interface StepBase {
    * useful field becomes noise.
    */
   domDelta?: { before: string; after: string };
+  /**
+   * What changed structurally anywhere in the document across this step.
+   *
+   * The other half of the question `domDelta` answers, and deliberately not a
+   * larger version of it. `domDelta` reads *one region* — the container around
+   * the element that was touched — and reports its text before and after.
+   * This watches the *whole document* over the same window and reports what
+   * appeared, what went, and what was re-attributed, wherever it happened. A
+   * click on a form's submit button that opens an error banner in the page
+   * header produces nothing in `domDelta` and one entry here.
+   *
+   * Neither contains the other and neither is derivable from the other: a
+   * button whose label changed from "Save" to "Saving…" is a text delta and
+   * would be one folded `text` entry here with the settled value and none of
+   * the before; a dialog that mounted is one entry here and nothing there.
+   *
+   * Absent when nothing changed, when the observer was switched off, and on
+   * steps that never had one — a navigation is a new document, and a window
+   * opened on the old one has nothing to say about it.
+   */
+  domChanges?: StepDomChanges;
   /**
    * What the app's stores did across this step, one entry per store that moved.
    *

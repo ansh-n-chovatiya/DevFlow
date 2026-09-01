@@ -17,6 +17,7 @@
 import type {
   BoundingBox,
   ComponentNeedle,
+  DomChange,
   DraftStep,
   FlowReact,
   PickResult,
@@ -70,6 +71,33 @@ export interface StepDomDelta {
   key: string;
   before: string;
   after: string;
+}
+
+/**
+ * What the document did across one step, structurally.
+ *
+ * Sent separately from the step and merged in by key, exactly as
+ * `StepDomDelta` is — and beside it rather than inside it because the two are
+ * separate observations that happen to share a window. The text delta reads one
+ * region twice; this watches the whole document over the same window. Either
+ * can be switched off without the other, so either can be the only one that
+ * arrives.
+ *
+ * `capped` travels even when `changes` is empty, for `StepRendersMessage`'s
+ * reason: a step that saw nothing after its observer stopped is reporting on
+ * the stop, and a message withheld because it looked empty is where that fact
+ * would be lost.
+ */
+export interface StepDomChangesMessage {
+  type: 'STEP_DOM_CHANGES';
+  /** `timestamp:type`, exactly as `stepKey` builds it. */
+  key: string;
+  /** Folded and ranked already — see `core/dom/changes.ts`. May be empty. */
+  changes: DomChange[];
+  /** The observer stopped at `recording.domMutationCap` — see `StepDomChanges.capped`. */
+  capped?: true;
+  /** Distinct changes that did not fit `recording.domMaxChanges`. */
+  more?: number;
 }
 
 /**
@@ -329,6 +357,7 @@ export type WorkerRequest =
   | ReadComponentSource
   | HighlightComponent
   | StepDomDelta
+  | StepDomChangesMessage
   | StepStateDeltaMessage
   | StepRendersMessage
   | FinishRecording
@@ -396,6 +425,7 @@ export interface ResponseByType {
   /** Resolves once the capture is done, so the page can restore its indicator. */
   CAPTURE_AND_SAVE_STEP: OkResponse;
   STEP_DOM_DELTA: OkResponse;
+  STEP_DOM_CHANGES: OkResponse;
   STEP_STATE_DELTA: OkResponse;
   STEP_RENDERS: OkResponse;
   PRECAPTURE: OkResponse;

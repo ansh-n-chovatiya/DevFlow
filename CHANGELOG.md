@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+**A recording can say what the interaction did to the page, and not only to the
+region around the button.** A MutationObserver watches the whole document for
+the length of each step and reports what appeared, what went, and what was
+rewritten, anywhere in it — a click on a form's submit button that opens an
+error banner in the page header produces nothing in the existing text delta and
+one line here. It sits beside that delta rather than replacing it: one reads the
+text of one region twice, the other reads the structure of the document once,
+and neither is derivable from the other. Off with `recording.domMutations`.
+
+**Its budget is two numbers because there are two costs.** The v3.2.0 attempt at
+this pushed every mutation record on the document into an array with no cap and
+no throttle. `recording.domMutationCap` bounds the *work* — the observer
+disconnects itself when it reaches it, so a page running a sixty-frames-a-second
+transition costs a step that many records and no more — and
+`recording.domMaxChanges` bounds the *recording*, after repeats are folded, so a
+hundred rows appended to one list is one line saying a hundred rather than a
+hundred lines. What survives the second is structural change first, then text,
+then attributes, and `style` last of all: ordering by how *often* something
+changed puts the CSS transition above the dialog that opened, and does it worst
+on the steps somebody opened because something happened.
+
+**A step whose observer stopped says so, and never that nothing else changed.**
+The window runs from the interaction until `recording.domDeltaMs` later or until
+the next interaction, whichever comes first, so a mutation belongs to exactly
+one step. DevFlow's own recording indicator is refused by name — it is removed
+and re-added around every screenshot, so without that every step of every flow
+would open with a div appearing and going in `<body>` — and so are the `<style>`
+and `<script>` tags a CSS-in-JS runtime and a code-split route append. Attribute
+values are reported as they settled, not as they passed through.
+
+**`get_step_detail`'s `dom` part now carries both observations, priced as one.**
+Each folded change is a line naming what changed and the element it changed in —
+or *on*, for an attribute, because the two prepositions mean different things —
+with its count when it was folded, the number of changes that did not fit the
+budget, and, last so it qualifies everything above it, whether the observer was
+cut short.
+
+**A flow compiled to a Playwright or Cypress spec now carries what the app's
+stores did, beside the step that did it.** As comments, and the file says why:
+DevFlow reads a store by walking React's fiber tree from inside the page, a test
+runner has no handle on that, and generating the walk into a spec would tie a
+suite to React internals — where the failure mode is a red test reporting a bug
+in the application that is not there. The observation is what the compiler can
+honestly carry, and it is the answer to *what should I assert here*. Both of the
+flags that change what a patch means travel with it: a snapshot cut at its caps
+is a bounded view of the store, and folded operations are coarser than the ones
+the app made.
+
 **A recording can say which components re-rendered across each step, and it
 learns it by looking rather than by joining in.** The page agent takes the two
 readings of the fiber tree it already takes for state — one inside the click,

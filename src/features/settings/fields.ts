@@ -32,6 +32,7 @@ import {
   BUNDLE_CACHE_ENTRIES,
   CAPTURE_BODIES,
   CAPTURE_DOM_DELTA,
+  CAPTURE_DOM_MUTATIONS,
   CAPTURE_MIN_INTERVAL_MS,
   CAPTURE_SCREENSHOTS,
   CAPTURE_RENDERS,
@@ -45,6 +46,8 @@ import {
   CONTAINER_TEXT_CAP,
   DEFAULT_MCP_URL,
   DOM_DELTA_MS,
+  DOM_MAX_CHANGES,
+  DOM_MUTATION_CAP,
   ERROR_TTL_MS,
   EXPORT_DEFAULT_FORMAT,
   EXPORT_DEFAULT_IMAGES,
@@ -296,7 +299,8 @@ interface NumberField extends Common {
     | "ops"
     | "fibers"
     | "components"
-    | "changes";
+    | "changes"
+    | "records";
 }
 
 interface BooleanField extends Common {
@@ -473,6 +477,61 @@ export const FIELDS = [
     // The one consequence in the table that is true at both ends, which is why
     // `below` and `above` are OR-ed rather than being alternatives.
     consequenceWhen: { below: 300, above: 2000 },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.domMutations",
+    group: "recording",
+    tier: 1,
+    type: "boolean",
+    default: CAPTURE_DOM_MUTATIONS,
+    title: "Record what changed in the page",
+    // Its own switch rather than a mode of the one above, because the two
+    // answer different questions and either is worth having alone: the region
+    // read says what the button now says, and this says the dialog opened.
+    description:
+      "What appeared, went or was rewritten anywhere in the document across each interaction — not just the region around it. Watched for the same window as the change above, and folded, so a hundred rows appended is one line.",
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.domMutationCap",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: DOM_MUTATION_CAP,
+    min: 20,
+    max: 5000,
+    unit: "records",
+    title: "Mutations watched per step",
+    description: "How many changes the observer looks at before it stops.",
+    // The one of the two whose cost lands on the page rather than on the
+    // recording, which is why it is the one with the consequence written from
+    // the page's side.
+    consequence:
+      "The observer disconnects when it reaches this, so a page that animates costs a step this much work and no more. Past it nothing is seen, and the step says it was capped rather than that nothing else changed.",
+    consequenceWhen: { above: DOM_MUTATION_CAP },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.domMaxChanges",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: DOM_MAX_CHANGES,
+    min: 1,
+    max: 100,
+    unit: "changes",
+    title: "Changes kept per step",
+    description: "Distinct changes one step reports, after repeats are folded.",
+    consequence:
+      "Spent structural changes first, then text, then attributes, and style last — so what a low number drops is the least of what was seen. The step says how many it did not print.",
+    consequenceWhen: { below: DOM_MAX_CHANGES },
     consumers: ["content"],
     recorded: true,
     wired: true,

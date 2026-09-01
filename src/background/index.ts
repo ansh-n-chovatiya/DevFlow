@@ -51,6 +51,7 @@ import {
 import { flowError, type FlowError } from '../shared/errors.js';
 import type {
   BoundingBox,
+  DomChange,
   DraftStep,
   FlowRenders,
   PickResult,
@@ -463,6 +464,41 @@ async function attachDomDelta(key: string, before: string, after: string): Promi
   if (index === -1) return;
 
   recordedSteps[index] = { ...recordedSteps[index], domDelta: { before, after } };
+
+  const written = await setLocal({ recordedSteps });
+  if (!written.ok) await reportError(written.error);
+}
+
+/**
+ * Attach what the document did to the step it belongs to.
+ *
+ * `attachDomDelta`'s twin, one field over and for the same reasons: it arrives
+ * after the step because it is a fact about what the interaction *did*, and it
+ * is queued behind the capture queue because that queue owns `recordedSteps`.
+ *
+ * Written even when `changes` is empty, provided the observer was cut. An empty
+ * list under `capped` is the one thing this feature must be able to say and the
+ * one thing a "nothing to attach" shortcut would delete: it is the difference
+ * between a step where nothing happened and one where nobody was still looking.
+ */
+async function attachDomChanges(
+  key: string,
+  changes: DomChange[],
+  capped?: true,
+  more?: number,
+): Promise<void> {
+  const stored = await getLocal(['recordedSteps', 'recordingActive']);
+  if (!stored.ok || !stored.value.recordingActive) return;
+
+  const recordedSteps = stored.value.recordedSteps ?? [];
+  const index = recordedSteps.findIndex((step) => stepKey(step) === key);
+  if (index === -1) return;
+  if (!changes.length && !capped) return;
+
+  recordedSteps[index] = {
+    ...recordedSteps[index],
+    domChanges: { changes, ...(capped ? { capped } : {}), ...(more ? { more } : {}) },
+  };
 
   const written = await setLocal({ recordedSteps });
   if (!written.ok) await reportError(written.error);
@@ -1455,6 +1491,17 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
       captureQueue = captureQueue.then(() =>
         attachDomDelta(message.key, message.before, message.after).catch((error: unknown) =>
           console.warn('DevFlow: DOM delta not attached', error),
+        ),
+      );
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    case 'STEP_DOM_CHANGES': {
+      // Behind the capture queue, for `STEP_DOM_DELTA`'s reason.
+      captureQueue = captureQueue.then(() =>
+        attachDomChanges(message.key, message.changes, message.capped, message.more).catch(
+          (error: unknown) => console.warn('DevFlow: DOM changes not attached', error),
         ),
       );
       sendResponse({ ok: true });

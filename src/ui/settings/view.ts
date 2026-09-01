@@ -194,6 +194,16 @@ const DEPENDENCIES: readonly Dependency[] = [
     reason: 'Applies while on-screen changes are being recorded.',
   },
   {
+    key: 'recording.domMutationCap',
+    met: (settings) => settings['recording.domMutations'],
+    reason: 'Applies while changes in the page are being recorded.',
+  },
+  {
+    key: 'recording.domMaxChanges',
+    met: (settings) => settings['recording.domMutations'],
+    reason: 'Applies while changes in the page are being recorded.',
+  },
+  {
     key: 'network.bodyCap',
     met: (settings) => settings['network.captureBodies'],
     reason: 'Applies while request and response bodies are being captured.',
