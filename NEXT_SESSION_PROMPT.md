@@ -95,31 +95,134 @@ The refusals, so you do not re-open them by accident:
 If a future session wants any of these, the argument to beat is in the roadmap,
 not here.
 
-## Your task, in order
+## Your task: Work Stream 1.1 — `@devflow/compiler-plugin`
 
 Phase 0's three remaining items — `git_commits` nodes, the `changed_in` edge,
 the `git_sha` columns — **cannot be done in this campaign at all.** They need
-Phase 3's git integration. They stay `[ ]`. If you find yourself about to tick
-one, you are about to repeat the exact failure that made v3.2.0 worthless.
+Phase 3's git integration. They stay `[ ]`.
 
-### 1 · Work Stream 1.1 — `@devflow/compiler-plugin`
+**This is a decision that has already been made, and the argument against it has
+already been heard.** The previous session recommended *not* building this, on
+the grounds below; the user considered that and chose to build it. So build it,
+and build it properly — do not re-open the question, and do not build a
+half-hearted version to honour an objection that has been overruled.
 
-The last item left in Phases 0–2, and marked *strictly optional*. Invariant 1 is
-that DevFlow needs no app changes. The risk is not that a plugin would fail —
-it is that it would work **better**, making the zero-dependency path the
-degraded one and losing the invariant without anyone deciding to lose it. Any
-build of it starts by writing down what it may not improve.
+The argument, recorded so you build against it rather than into it: a build-time
+stamp fixes **every** failure mode `src/features/react/resolver.ts` reports — no
+bundles seen, bundles unreadable, not found in the loaded chunks, no source map,
+a map with no mapping, and *"matched in N places; this is the first — the path
+may be the wrong one"*. It does not complement the standalone path, it replaces
+it. And `src/core/react/fiber.ts:181` records that **React 19 dropped
+`_debugSource`**, so bundle search is already the primary path rather than the
+fallback. The risk is therefore not that the plugin fails; it is that it works so
+well that the zero-app-dependency path becomes the degraded one people are told
+to upgrade from, and Invariant 1 quietly becomes a sentence in a README.
 
-If you conclude it should not be built, say so in the roadmap with the argument,
-and Phases 0–2 are done.
+Everything in step 0 exists to make that outcome structurally hard rather than a
+matter of anyone's discipline.
 
-### 2 · Then Phase 3
+### Step 0 · Write the rule before you write any code
 
-`ROADMAP_AND_PHASES.md` §3.1 onward, and it is where the three Phase 0 items
-finally unblock. Note that 3.1's trace-header injection is the first thing in
-this project that would **write to a page's outbound requests** — read §1.2's
-header on why the state reader samples rather than intercepts before designing
-it, because that argument applies here with more force, not less.
+Into `ROADMAP_AND_PHASES.md` §1.1, as part of the same commit as the first line
+of plugin code. **If you cannot write this rule honestly, stop and say so** —
+that is a real outcome and it is the signal the objection was right.
+
+Proposed rule, to sharpen rather than to accept unread:
+
+1. **The plugin may make an existing answer exact. It may not produce an answer
+   the standalone path cannot.** Same `ComponentSource` shape, same statuses, no
+   new field only it can fill. The moment it carries something extra, the
+   standalone path is missing something rather than merely approximating.
+2. **No feature may require it.** Everything must work with it absent, and the
+   existing suite — which runs without it — is the standing proof. Add one test
+   that says so on purpose, so a later refactor cannot make the stamp
+   load-bearing without going red.
+3. **Every attribution says which path answered it.** `ComponentSource.via`
+   gains `'plugin'` beside `'debug-source'` and `'bundle-search'`, so no
+   recording silently depends on the plugin and any reader can tell.
+4. **The standalone path stays the tested default.** The plugin gets its own
+   tests; it does not get to become the fixture of an existing one.
+5. **The documentation may not present it as the fix for poor attribution.** It
+   is for builds the standalone path cannot answer for, and the README says
+   which those are.
+
+### Step 1 · The package — `compiler-plugin/`
+
+At the repo root, mirroring `mcp-server/`, which is the precedent for a second
+published package in this tree.
+
+- **A Babel plugin**, and Vite first: `@vitejs/plugin-react` takes
+  `babel.plugins`. **Name the gap in the README rather than discovering it
+  later** — `@vitejs/plugin-react-swc` and Next.js use SWC and take no Babel
+  plugin, so a Babel-only build serves a real but partial audience. An SWC port
+  is a second piece of work; say so rather than implying coverage.
+- **Stamp the component function, not the JSX.** For `function Cart() {}`, emit
+  `Cart.__devflow = { f: "src/Cart.tsx", l: 12 }`. Reasons, in order: a JSX prop
+  would reach the DOM and change the user's app, which Invariant 1 forbids
+  outright; a static property on the user's own function is inert; and DevFlow
+  already holds component functions off the fibers (`componentFn` in
+  `src/injected/render.ts`, `describeEntry` in `src/injected/agent.ts`), so
+  reading it needs **no React internals at all** — which is the one part of this
+  feature that cannot rot when React moves something.
+- Cover function declarations, function expressions and arrow consts with a
+  capitalised name, plus `forwardRef(...)` and `memo(...)` wrappers. Skip
+  everything else; a stamp on a non-component is a row in the table that names
+  nothing.
+- `f` is repo-relative with POSIX separators; `l` is 1-based, which is `Pos1`.
+- **Default to development builds only.** Stamping ships source paths in the
+  bundle, and shipping a customer's directory layout to every visitor is a
+  decision they should make deliberately. An `includeInProduction` option, off.
+
+### Step 2 · The reader — `src/core/react/stamp.ts`, pure
+
+`readStamp(fn: unknown): { source: string; line: Pos1 } | null`.
+
+Validate hard and return `null` rather than throwing: the stamp is a property on
+an object out of a page DevFlow does not control, so `f` must be a non-empty
+string and `l` a positive integer or there is no stamp. This is the one edge
+where `pos1()` is asserted — see the positions invariant in `CLAUDE.md`.
+
+### Step 3 · The wiring
+
+- `CapturedComponent` (`src/shared/messages.ts`) gains `stamp?: { source, line } | null`,
+  beside `debugSource` and for the same documented reason — they are different
+  facts. `debugSource` is where the JSX was *written* (a position in the
+  parent's file); a stamp is where the component was *defined*, which is what
+  `ComponentSource` has always claimed to be. **The stamp is the better match
+  for the contract, and `debug-source` is the compromise** — say so where the
+  precedence is decided.
+- `describeEntry` (`src/injected/agent.ts:791`) reads it, cached per function
+  exactly as the needle already is.
+- `src/core/react/table.ts:104` is where precedence lives: **stamp, then
+  `debugSource`, then needle.** Keep the `isPlaceholderId` guard for the stamp
+  too — the hazard it names (one row winning under an id every unnamed component
+  shares) is unchanged by where the location came from.
+- `ComponentSource.via` in `src/shared/types.ts` gains `'plugin'`.
+- `src/ui/locator/locate.ts` has its own `via` assignments for the picker path;
+  it needs the same precedence, or picking and recording will disagree about one
+  component.
+
+### Step 4 · Tests
+
+- `compiler-plugin/` own suite: source in, transformed source out. Include a
+  file with a component, a non-component, a `forwardRef`, and a lowercase
+  function that must **not** be stamped.
+- `tests/react-stamp.test.ts`: the reader, including every malformed stamp
+  shape returning `null`.
+- Extend the existing table test with the precedence, all three ways round.
+- **The invariant test from rule 2**: a captured component with no stamp still
+  resolves by the existing path, asserted on purpose rather than by accident.
+
+### Step 5 · Version and publishing
+
+- `scripts/sync-version.mjs` keeps `public/manifest.json` and
+  `mcp-server/package.json` (and its lockfile) at the root version. A third
+  package has to be added there **and** to `tests/versions.test.ts`, which
+  asserts the sync and the `files` list of anything published.
+- Decide and record whether it publishes now or stays `private: true` until it
+  has been used on a real app. Either is defensible; leaving it undecided is not.
+
+### Step 6 · Roadmap and changelog, in the same commits
 
 ## Two things this session learned the hard way
 
