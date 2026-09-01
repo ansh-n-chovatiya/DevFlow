@@ -49,6 +49,7 @@ import {
   generatePlaywrightTest,
   flowRendering,
   formatSource,
+  sourceProvenance,
   MACHINE_KEYS,
   planActions,
   planReplay,
@@ -2067,7 +2068,14 @@ function stepParts(flow, dir, step, render) {
 
     if (owner) {
       const where = formatSource(owner);
-      lines.push(`${owner.name}${where ? `  ${where}` : ''}${owner.dependency ? '  (node_modules)' : ''}`);
+      // The provenance only when it is the plugin's — see `sourceProvenance`.
+      // A model reading this has to be able to see that an answer came out of a
+      // build step in the application rather than out of DevFlow.
+      const how = sourceProvenance(owner);
+      lines.push(
+        `${owner.name}${where ? `  ${where}` : ''}${how ? `  (${how})` : ''}` +
+          `${owner.dependency ? '  (node_modules)' : ''}`,
+      );
       if (owner.detail) lines.push(`  ${owner.detail}`);
       if (within) {
         const outer = formatSource(within);

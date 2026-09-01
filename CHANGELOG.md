@@ -21,10 +21,13 @@ to React and to the page. Development builds only unless you ask otherwise:
 stamping ships your repository's directory layout in the bundle, and shipping
 that to every visitor is a decision to make deliberately.
 
-**Every attribution says which path answered it.** `ComponentSource.via` gained
-`plugin` beside `debug-source` and `bundle-search`, and the panel spells it
-`build stamp`, so no recording can depend on the plugin without a reader being
-able to tell. A stamp beats React's `_debugSource` where both exist, and for a
+**Every attribution says which path answered it, to a person and to a model.**
+`ComponentSource.via` gained `plugin` beside `debug-source` and `bundle-search`;
+the panel spells it `build stamp` and so does `get_step_detail`, so no recording
+can depend on the plugin without whoever reads it being able to tell. DevFlow's
+own two paths stay unlabelled there — a reader has no decision to make between
+them, and a stamp is the one that means the answer came out of a build step in
+the application itself. A stamp beats React's `_debugSource` where both exist, and for a
 reason that is not about which is newer: `_debugSource` is where a component's
 JSX was *written*, a position in its parent's file, and a stamp is where the
 component was *defined* — which is what the source of a component has always

@@ -199,10 +199,57 @@ function writeBudgetFlow(): void {
   });
 }
 
+/**
+ * The same journey recorded on an app built with `@devflow/compiler-plugin`.
+ *
+ * A separate flow rather than a field on the one above, because the claim is a
+ * contrast: the detail flow must stay silent about provenance and this one must
+ * not, and one fixture can only show one of those.
+ */
+function writeStampedFlow(): void {
+  writeFlow(home, {
+    id: 'flow-stamped',
+    name: 'Checkout, on a stamped build',
+    timestamp: NOW,
+    startUrl: 'https://shop.example.com/cart',
+    errorCount: 0,
+    schemaVersion: 1,
+    react: {
+      detected: true,
+      components: {
+        'cart-1': {
+          name: 'CartButton',
+          status: 'resolved',
+          via: 'plugin',
+          source: 'src/components/Cart.tsx',
+          line: 34,
+        },
+      },
+    },
+    steps: [
+      {
+        type: 'click',
+        url: 'https://shop.example.com/cart',
+        timestamp: NOW,
+        action: 'Clicked "Place order"',
+        stepNumber: 1,
+        element: {
+          tag: 'button',
+          cssSelector: 'button#place-order',
+          react: { owner: 'cart-1', chain: ['cart-1'] },
+        },
+        consoleLogs: [],
+        networkCalls: [],
+      },
+    ],
+  });
+}
+
 beforeAll(async () => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'devflow-test-'));
   writeDetailFlow();
   writeBudgetFlow();
+  writeStampedFlow();
 
   server = await startServer({ home });
 }, 20_000);
@@ -338,6 +385,27 @@ describe('asking for one part', () => {
 
     expect(detail).toContain('CartButton  src/components/Cart.tsx:34');
     expect(detail).toContain('within Cart  src/components/Cart.tsx:10');
+    // DevFlow's own two paths cost no words here; only the plugin's does.
+    expect(detail).not.toContain('build stamp');
+  });
+
+  /*
+   * `ROADMAP_AND_PHASES.md` §1.1 rule 3, at the surface that matters most.
+   *
+   * A recording is read by a model, and a model that cannot tell a stamped
+   * attribution from a searched one cannot tell that this flow depended on a
+   * build step somebody added to their own application. `via` has never been
+   * rendered by any tool here, so before this the plugin was invisible from
+   * outside — which is the shape of a rule that quietly stops holding.
+   */
+  it('says when an attribution came out of the application’s build rather than DevFlow', async () => {
+    const detail = await call('get_step_detail', {
+      id: 'flow-stamped',
+      step: 1,
+      include: ['component'],
+    });
+
+    expect(detail).toContain('CartButton  src/components/Cart.tsx:34  (build stamp)');
   });
 });
 
