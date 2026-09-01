@@ -1,0 +1,39 @@
+{
+  "name": "@devflow/compiler-plugin",
+  "version": "3.1.1",
+  "private": true,
+  "description": "Optional Babel plugin that stamps each React component with the file and line it was defined in, so DevFlow can name a source exactly instead of searching for it.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "license": "MIT",
+  "author": "Ansh Chovatiya",
+  "keywords": [
+    "babel-plugin",
+    "react",
+    "devflow",
+    "source",
+    "debugging"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ansh-n-chovatiya/DevFlow.git",
+    "directory": "compiler-plugin"
+  },
+  "homepage": "https://github.com/ansh-n-chovatiya/DevFlow#readme",
+  "bugs": {
+    "url": "https://github.com/ansh-n-chovatiya/DevFlow/issues"
+  },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "peerDependencies": {
+    "@babel/core": "^7.0.0 || ^8.0.0"
+  }
+}
