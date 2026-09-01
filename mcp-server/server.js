@@ -43,6 +43,7 @@ import {
   effectsOf,
   exportToMarkdown,
   fieldFor,
+  findFeature,
   flowHost,
   flowRendering,
   formatSource,
@@ -51,7 +52,9 @@ import {
   renderStep,
   resolve as resolveSettings,
   snippet,
+  traceValue,
   urlPath,
+  valueOfStep,
 } from './core.js';
 
 /*
@@ -2505,6 +2508,299 @@ async function resolveSource(root, candidate) {
   return { file: real, root: rootReal };
 }
 
+// ── The navigator ──────────────────────────────────────────────────────────
+
+/*
+ * `explain_feature`, and the sentence it exists to keep saying.
+ *
+ * The v3.2.0 attempt at this item was stopword-matching substring filtering
+ * presented as understanding. What replaced it is still lexical matching —
+ * names and paths are what the graph holds, so names and paths are what can be
+ * matched — and the difference is that it says so, in the tool description and
+ * at the top of every answer, and that each match carries the *reason* it
+ * matched rather than a score.
+ *
+ * The second half is what makes it worth having: every match is expanded one
+ * hop through the graph's own edges, which reach the endpoint a component calls
+ * and the file it was written in whether or not those ever carried the word.
+ * The lexical match is the entry point; the graph is why the entry point is
+ * worth something. A grep gives line hits and stops.
+ */
+
+/** What each basis means, in the words the reader needs to judge the match. */
+const BASIS_REASON = {
+  'name-exact': 'its name is exactly your words',
+  'name-word': 'your word is one of the words in its name',
+  'name-part': 'your word is inside its name, but not a word of it — the weakest match here',
+  'text-word': 'your word is one of the words in its path or label',
+  'text-part': 'your word is inside its path or label as a fragment',
+};
+
+const KIND_TITLES = {
+  component: 'component',
+  endpoint: 'endpoint',
+  file: 'file',
+  flow: 'recorded flow',
+  store: 'store',
+  stateKey: 'state key',
+};
+
+/** `renders`, `calls`, `maps_to` — read out in the direction it was found. */
+function neighbourLine(neighbour) {
+  const failure =
+    typeof neighbour.failureRate === 'number' && neighbour.failureRate > 0
+      ? `, ${Math.round(neighbour.failureRate * 100)}% failed`
+      : '';
+  const seen = Number.isFinite(neighbour.frequency) ? `seen ${neighbour.frequency}×${failure}` : '';
+  return `      ${neighbour.direction === 'out' ? '→' : '←'} ${neighbour.edge}  ${neighbour.label}${seen ? `  (${seen})` : ''}`;
+}
+
+function renderFeature(description, query, neighbours, corpus) {
+  const lines = [
+    `What "${description}" points at`,
+    '',
+    'Matched by name. DevFlow does not know what your description means — it cut it into words and ' +
+      'looked for those words in the names and paths the graph holds. A name that carries the word ' +
+      'matches whether or not it is relevant, and a part of the app that uses different words is not ' +
+      'here at all.',
+  ];
+
+  if (query.terms.length) {
+    lines.push('', `Searched for: ${query.terms.join(', ')}`);
+  }
+  if (query.dropped.length) {
+    /*
+     * Reported, never hidden. "Your words narrowed nothing" and "this app has
+     * nothing by that name" are different answers, and a dropped list is the
+     * only thing that separates them for a caller who wrote a sentence of
+     * ordinary English.
+     */
+    lines.push(
+      `Ignored as too common to narrow anything: ${query.dropped.join(', ')}`,
+    );
+  }
+
+  if (!query.terms.length) {
+    lines.push(
+      '',
+      'Every word in that description is too common to search on, so nothing was looked for. Name the ' +
+        'thing the way the code probably names it — a component, a route, a field on the screen.',
+    );
+    return lines.join('\n');
+  }
+
+  if (!query.matches.length) {
+    lines.push(
+      '',
+      'Nothing in the graph carries those words.',
+      'That is a statement about vocabulary, not about the application: a checkout implemented as ' +
+        'PurchaseFlow and /api/orders answers to neither "checkout" nor "flow". Try a word you have ' +
+        'seen in the code or in a URL, or call get_app_architecture for the names the graph does hold.',
+    );
+    return lines.join('\n');
+  }
+
+  lines.push('', `${query.matches.length} match${query.matches.length === 1 ? '' : 'es'}, strongest first:`);
+
+  for (const match of query.matches) {
+    const kind = KIND_TITLES[match.entity.kind] ?? match.entity.kind;
+    lines.push(
+      '',
+      `  ${kind}  ${match.entity.name}`,
+      `      ${match.basis} — ${BASIS_REASON[match.basis] ?? 'it carries your words'} (${match.terms.join(', ')})`,
+    );
+    if (match.entity.text) lines.push(`      ${match.entity.text}`);
+
+    const linked = neighbours.get(`${match.entity.kind}:${match.entity.id}`) ?? [];
+    if (linked.length) {
+      // The half the word never had to reach. Labelled as observation, because
+      // an edge in this graph is something a recording saw rather than
+      // something the code declares.
+      lines.push('      connected to, from what has been observed:');
+      for (const neighbour of linked) lines.push(neighbourLine(neighbour));
+    }
+  }
+
+  if (query.more) {
+    lines.push(
+      '',
+      `${query.more} further match${query.more === 1 ? '' : 'es'} were not expanded. Raise "limit", or ` +
+        'narrow the description.',
+    );
+  }
+
+  if (corpus.truncated) {
+    /*
+     * A graph larger than the corpus cap. Said out loud because the alternative
+     * is answering "nothing matched" about a component the graph holds and this
+     * never looked at, which is the one wrong answer available here.
+     */
+    lines.push(
+      '',
+      `This graph holds more than ${corpus.perKind} of some kind of node, so the search covered the ` +
+        `${corpus.perKind} most-observed of each. Something rarely seen may exist and not be above.`,
+    );
+  }
+
+  lines.push(
+    '',
+    'get_component_history opens any component named above, get_app_architecture is the whole graph, ' +
+      'and list_flows finds the recordings behind it.',
+  );
+  return lines.join('\n');
+}
+
+// ── Provenance ─────────────────────────────────────────────────────────────
+
+/*
+ * `get_value_provenance`, and the sentence it must never stop saying.
+ *
+ * The mechanism is a search for one value across four independent observations
+ * of one recording — the bodies the server sent, the writes the stores took,
+ * the values components were handed, the text the page showed. It is not a
+ * data-flow trace, and the gap between those two matters most exactly when the
+ * answer looks best: four layers agreeing on `£42.00` is one value travelling,
+ * and four layers agreeing on `2` is a coincidence four times over. So the
+ * reply opens by saying what it did rather than closing with a caveat, and a
+ * short value is called short where the reader cannot miss it.
+ *
+ * The layer order is the direction data flows through a React application, and
+ * it is presentation only. Nothing here concludes that the response caused the
+ * render. `get_causal_chain` makes causal claims, out of evidence about events.
+ */
+
+/** The step's own number, or its position, exactly as `stepParts` reckons it. */
+function stepNumberOf(step, index) {
+  return typeof step?.stepNumber === 'number' ? step.stepNumber : index + 1;
+}
+
+/** A component id resolved to the name it was written under, when the flow says. */
+function componentLabel(flow, id) {
+  const named = flow.react?.components?.[id];
+  return named && typeof named.name === 'string' && named.name ? `${named.name} (${id})` : id;
+}
+
+const LAYER_TITLES = {
+  response: 'response — what the server sent',
+  store: 'store — what the app wrote down',
+  render: 'render — what a component was handed',
+  dom: 'dom — what the page showed',
+};
+
+function renderProvenance(flow, result, from) {
+  const lines = [
+    `Where ${JSON.stringify(result.value)} came from — "${flow.name}"${from ? `, traced from ${from}` : ''}`,
+    '',
+    'DevFlow did not watch this value move. It looked for the same value in four independent ' +
+      'observations of this recording and reports where it turned up, in the order data flows through ' +
+      'an application. Two sightings in adjacent layers are two sightings and not a link.',
+  ];
+
+  if (result.collides) {
+    /*
+     * Said before the findings rather than after them. A reader who has already
+     * read a four-layer answer has drawn the conclusion, and a caveat
+     * underneath it arrives too late to be the thing that stops them.
+     */
+    lines.push(
+      '',
+      `${JSON.stringify(result.value)} is short enough that an equal string is as likely to be a ` +
+        'coincidence as a sighting. Everything below may be unrelated. Trace something distinctive — ' +
+        'an order number, a formatted price, a name — if you can see one beside it.',
+    );
+  }
+
+  const byLayer = new Map();
+  for (const hit of result.hits) {
+    if (!byLayer.has(hit.layer)) byLayer.set(hit.layer, []);
+    byLayer.get(hit.layer).push(hit);
+  }
+
+  if (!result.hits.length) {
+    lines.push(
+      '',
+      'It was not found in any layer this recording carries.',
+      'That is a fact about the recording as much as about the value: a flow captures what it was ' +
+        'configured to capture, and the header of get_flow says which settings were non-default.',
+    );
+  }
+
+  for (const [layer, hits] of byLayer) {
+    lines.push('', LAYER_TITLES[layer] ?? layer);
+    for (const hit of hits) {
+      const where = layer === 'render' ? renderWhere(flow, hit.where) : hit.where;
+      lines.push(`  step ${hit.step}  ${where}`);
+      lines.push(`      ${hit.match === 'exact' ? 'the whole value' : 'inside a longer value'} — ${hit.detail}`);
+    }
+    const over = result.more?.[layer];
+    if (over) {
+      lines.push(
+        `  … ${over} more sighting${over === 1 ? '' : 's'} in this layer, above what one answer prints.`,
+      );
+    }
+  }
+
+  if (result.unsearched.length) {
+    /*
+     * The half of this tool that stops it lying. "The value is not in a
+     * response" and "this recording has no responses" are different answers,
+     * they look identical as an absent layer, and a reader with no way to tell
+     * takes the first — which is a claim about the server.
+     */
+    lines.push('', 'Not searched, because this recording carries nothing for it:');
+    for (const gap of result.unsearched) lines.push(`  ${gap.layer}  ${gap.reason}`);
+  }
+
+  lines.push(
+    '',
+    'get_causal_chain links events by evidence about the events themselves; this links nothing. ' +
+      'get_flow_step opens any step named above, and get_state_patch has the whole of any store write.',
+  );
+  return lines.join('\n');
+}
+
+/** A render hit's `where`, with the component id resolved to a name. */
+function renderWhere(flow, where) {
+  const cut = where.indexOf('  ');
+  if (cut === -1) return componentLabel(flow, where);
+  return `${componentLabel(flow, where.slice(0, cut))}${where.slice(cut)}`;
+}
+
+/**
+ * The steps with a value worth asking about.
+ *
+ * Cheap, and it is what makes the expensive call right: the caller is looking
+ * at a walkthrough or a screenshot, and what they need first is which of the
+ * things on it this recording can actually speak to.
+ */
+function renderProvenanceIndex(flow, steps) {
+  const lines = [
+    `Values this recording can trace — "${flow.name}"`,
+    '',
+    'Each step below showed or received text that get_value_provenance can look for across the ' +
+      'recording. Call it with "step" to trace one of these, or with "value" for anything else you ' +
+      'can see — a value in a screenshot, a number in a walkthrough.',
+    '',
+  ];
+
+  let found = 0;
+  steps.forEach((step, index) => {
+    const value = valueOfStep(step);
+    if (!value) return;
+    found++;
+    lines.push(`  step ${stepNumberOf(step, index)}  ${truncate(value, 80)}`);
+  });
+
+  if (!found) {
+    lines.push(
+      '  No step in this recording showed text to trace. Every step is a navigation, a note, or an ' +
+        'element with no label and no content — pass a "value" you can see instead.',
+    );
+  }
+
+  return lines.join('\n');
+}
+
 // ── State ──────────────────────────────────────────────────────────────────
 
 /*
@@ -2910,6 +3206,66 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           depth: { type: 'number', description: 'How many links to walk forward. Defaults to 8.' },
         },
         required: ['id'],
+      },
+    },
+    {
+      name: 'get_value_provenance',
+      description:
+        'Where one value on the screen came from, across one recording: the response body that carried ' +
+        'it, the store write that took it, the component that was handed it, and the element that showed ' +
+        'it. Read what it is before you read what it says — DevFlow did not watch the value move. It has ' +
+        'four independent observations of the recording and this looks for the same value in all four, so ' +
+        'a distinctive value found in three layers is overwhelmingly one value travelling, and a short one ' +
+        'found in three layers is a coincidence three times over. The reply says which, and names any ' +
+        'layer the recording never captured rather than letting it read as "not found there". Give it a ' +
+        '"value" to trace, or a "step" whose element text it should trace; with neither it lists the steps ' +
+        'that have a value worth asking about.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+          value: {
+            type: 'string',
+            description:
+              'The text to trace, as it appears on screen — "£42.00", an order number, a name. Compared as text, so a number typed here finds a number the server sent.',
+          },
+          step: {
+            type: 'number',
+            description:
+              'Trace what this step’s element said instead. Ignored when "value" is given. A recording has no node ids — an element is described, not addressed — so the value it showed is the handle that exists.',
+          },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'explain_feature',
+      description:
+        'Which parts of this application a description points at: the components, endpoints, source ' +
+        'files, recorded flows and stores whose names carry your words, and — through the graph’s own ' +
+        'edges — what each of those is connected to. Read how it works before you read what it says: the ' +
+        'match is **lexical**. It lower-cases your description, cuts it into words, and looks for those ' +
+        'words in names and paths. It does not know what checkout is. A component called Cart matches ' +
+        '"cart" whether or not it has anything to do with a shopping cart, and a feature written as ' +
+        'PurchaseFlow is not found by "checkout" at all — so silence here means your words did not ' +
+        'overlap the code’s, never that the feature is absent. What makes it worth more than a grep is ' +
+        'the second half: every match is expanded one hop through the accumulated graph, which reaches ' +
+        'the endpoint a component calls and the file it was written in whether or not those carried the ' +
+        'word. Each match says why it matched, in words rather than a score.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          description: {
+            type: 'string',
+            description:
+              'What you are looking for, in your own words — "the checkout flow", "cart badge", "invoice totals". Common words are dropped and the reply says which.',
+          },
+          limit: {
+            type: 'number',
+            description: 'Matches to expand. Defaults to 8; the reply counts anything beyond it.',
+          },
+        },
+        required: ['description'],
       },
     },
     {
@@ -4562,6 +4918,99 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
           'get_flow_step opens any step named above.',
       );
       return text(lines.join('\n'));
+    }
+
+    case 'get_value_provenance': {
+      let flow;
+      try {
+        flow = await readFlow(args.id);
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+
+      const steps = Array.isArray(flow.json.steps) ? flow.json.steps : [];
+      const asked = typeof args.value === 'string' ? args.value.trim() : '';
+
+      /*
+       * A step named instead of a value: trace what that element said.
+       *
+       * This is as close as a recording comes to the "DOM node id" the feature
+       * was planned around. A flow describes an element — tag, text, label,
+       * selector — and addresses none, so the value it showed is the handle
+       * that exists, and saying that out loud is cheaper than inventing an id
+       * scheme nothing else in the product uses.
+       */
+      let needle = asked;
+      let from = '';
+      if (!needle && Number.isFinite(Number(args.step))) {
+        const wanted = Math.trunc(Number(args.step));
+        const step = steps.find((entry, index) => stepNumberOf(entry, index) === wanted);
+        if (!step) {
+          return failure(
+            `"${flow.json.name}" has no step ${wanted}. It has ${steps.length} step${steps.length === 1 ? '' : 's'}; get_flow lists them.`,
+          );
+        }
+        needle = valueOfStep(step);
+        from = `step ${wanted}`;
+        if (!needle) {
+          return failure(
+            `Step ${wanted} of "${flow.json.name}" showed no text to trace — it is a navigation, a note, ` +
+              'or an element with no label and no content. Call get_value_provenance with a "value" ' +
+              'instead; get_flow_step returns what the step does carry.',
+          );
+        }
+      }
+
+      /*
+       * Neither: list what there is to ask about rather than refusing.
+       *
+       * `get_causal_chain`'s discipline — a tool whose first answer is "that is
+       * not valid" has made the caller guess. Here the caller has a screenshot
+       * or a walkthrough in front of them and needs to know which of the things
+       * on it this recording can actually speak to.
+       */
+      if (!needle) return text(renderProvenanceIndex(flow.json, steps));
+
+      const result = traceValue(flow.json, needle);
+      return text(renderProvenance(flow.json, result, from));
+    }
+
+    case 'explain_feature': {
+      if (!arkg) return failure(NO_GRAPH);
+
+      const description = typeof args.description === 'string' ? args.description.trim() : '';
+      if (!description) {
+        return failure(
+          'explain_feature needs a "description" — what you are looking for, in your own words. It ' +
+            'matches your words against the names in the graph, so name the thing the way the code ' +
+            'probably names it: "cart badge", "invoice totals", "the checkout flow".',
+        );
+      }
+
+      const corpus = arkgTry('navigator corpus', (graph) => graph.getNamedEntities());
+      if (!corpus || !corpus.entities.length) {
+        return failure(
+          'The knowledge graph holds nothing to search yet. Record a flow and send it, or pick a ' +
+            'component in the DevFlow panel; get_app_architecture says what the graph does hold.',
+        );
+      }
+
+      const limit = Number.isFinite(Number(args.limit)) && Number(args.limit) > 0
+        ? Math.min(40, Math.trunc(Number(args.limit)))
+        : 8;
+
+      const query = findFeature(description, corpus.entities, limit);
+      const neighbours = new Map();
+      for (const match of query.matches) {
+        neighbours.set(
+          `${match.entity.kind}:${match.entity.id}`,
+          arkgTry('navigator neighbours', (graph) =>
+            graph.getNeighbours(match.entity.kind, match.entity.id),
+          ) ?? [],
+        );
+      }
+
+      return text(renderFeature(description, query, neighbours, corpus));
     }
 
     case 'get_app_architecture': {

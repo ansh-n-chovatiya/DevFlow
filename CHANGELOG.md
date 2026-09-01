@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+**`explain_feature` turns a description into the parts of the app it points at,
+and is honest about how it got there.** Ask it for "the cart badge" or "invoice
+totals" and it returns the components, endpoints, source files, recorded flows
+and stores whose names carry those words — then expands each one hop through the
+accumulated graph, which is the half that reaches the endpoint a component calls
+and the file it was written in whether or not those ever carried the word. The
+match itself is lexical and the tool says so at the top of every answer rather
+than in a footnote: it splits names the way code writes them, so "cart" matches
+`CartBadge` as a word and `art` matches it only as a fragment and is ranked as
+one, and every match carries the reason it matched instead of a score. It says
+which of your words it ignored as too common, and it says that an empty answer
+means your words did not overlap the code's — never that the feature is absent.
+
+**`get_value_provenance` answers where one value on the screen came from — and
+says what kind of answer it is.** Given a price, an order number or the text of
+a step's element, it reports the response body that carried it, the store write
+that took it, the component that was handed it and the element that showed it,
+in the order data flows through an application. The mechanism is a search across
+four independent observations of one recording rather than a data-flow trace,
+and the reply opens with that rather than closing with it: a distinctive value
+found in three layers is overwhelmingly one value travelling, a short one found
+in three layers is a coincidence three times over, and the tool says which it is
+holding before it says what it found. Layers the recording never captured are
+named as unsearched, because "not in a response" and "this flow has no
+responses" look identical as an absent section.
+
 **A recording can say what the interaction did to the page, and not only to the
 region around the button.** A MutationObserver watches the whole document for
 the length of each step and reports what appeared, what went, and what was

@@ -166,8 +166,20 @@ Nothing below is ticked on the strength of that branch.
     - **The open question this narrows.** "Which of a patch's operations are worth asserting on" is still not answered and still cannot be answered from a fixture — so nothing here ranks them. The operations are printed in the differ's order, which is path order, because a reader scanning for a path they recognise is best served by an order they can predict, and a compiler that guessed would bury the operation they came for under one it chose. Capped at six per store, with the count of what was not printed and the name of the tool that has all of it.
 
 ### Work Stream 2.2: "Why Is This Value Here?" Provenance Engine
-- [ ] **Full Value Provenance Trace:** DOM text → React prop → component state → store selector → API response field
-- [ ] **MCP Tool:** `get_value_provenance(domNodeId)`
+> The `v3.2.0` attempt was **unreachable dead code** — a module nothing called,
+> behind a tool that was never declared. So the tool was wired first here, and
+> `tests/mcp-provenance.test.ts` asserts it against `tools/list` as well as by
+> calling it: a switch case answers a call whether or not anything ever
+> advertised the name, so a test that only calls it is green against precisely
+> the bug this was rebuilt to avoid. (That test was written the weak way first
+> and the mutation check caught it — which is the argument for the mutation
+> check.)
+- [x] **Full Value Provenance Trace:** response body → store write → component prop/state/context → the text on screen. `src/core/provenance/index.ts`, pure and derived at call time from what a flow already carries, so every recording on disk gets it.
+  - **What it is, stated where nobody can miss it.** This is a **search, not a trace.** DevFlow did not watch the value move; it holds four independent observations of one recording and looks for the same value in all four. A distinctive value found in three layers is overwhelmingly one value travelling; `2` found in three layers is a coincidence three times over. The tool description says so, the reply opens by saying so rather than closing with a caveat, and a value under four characters is called out as colliding **above** the findings — a reader who has already read a four-layer answer has drawn the conclusion, and a caveat underneath arrives too late to stop them.
+  - **Layer order is presentation, never causation.** Response → store → render → DOM is the direction data flows through a React app, so the answer reads as a journey. That is exactly why the reply says two sightings in adjacent layers are two sightings and not a link. `get_causal_chain` is the tool that makes causal claims, and it makes them out of evidence about *events* rather than the equality of two strings.
+  - **A layer the recording never captured is named, not left absent.** "The value is not in a response" and "this flow has no responses" look identical as a missing section, and a reader who cannot tell them apart takes the first — which is a claim about the server made out of a setting. `unsearched` carries the reason, in the words `FlowState` and `FlowRenders` already use.
+  - Response hits carry an RFC 6901 pointer into the parsed body (`~0`/`~1` escaped, which is the bug nobody notices — an unescaped pointer still *looks* like a pointer and addresses nothing); store hits carry the operation's path plus the pointer inside its value; render hits name the component by the name it was written under rather than by its id; DOM hits carry a selector. Primitives are compared as text, so a number typed into the tool finds a number the server sent. Eight hits per layer, with the overflow counted.
+- [x] **MCP Tool:** `get_value_provenance({ id, value, step })` — **and the departure from `domNodeId` is deliberate.** A recording has no node ids: an element is *described* (tag, text, label, selector), never addressed, so there is nothing for a `domNodeId` to name. `value` is the handle that exists, and `step` traces what that step's element showed, which is the same question asked the way the roadmap meant it. With neither, the tool lists the steps whose text is worth asking about — `get_causal_chain`'s discipline, that a tool whose first answer is "that is not valid" has made the caller guess.
 
 ### Work Stream 2.3: Autonomous Sandbox Execution Engine
 - [ ] **Headless Replay Harness**
@@ -179,8 +191,16 @@ Nothing below is ticked on the strength of that branch.
 - [ ] **Replay Verification & Test Runner**
 
 ### Work Stream 2.5: Natural Language Application Navigator
-- [ ] **Feature Understanding Query**
-- [ ] **MCP Tool:** `explain_feature(description)`
+> The `v3.2.0` attempt was stopword-matching substring filtering presented as
+> understanding. What replaced it **is still lexical matching** — names, URLs and
+> repo paths are what the graph holds — and the whole of the difference is that
+> it says so, in the tool description and at the top of every answer, and that
+> the lexical hit is only the entry point.
+- [x] **Feature Understanding Query** — `src/core/navigator/index.ts`, pure and tested, plus `getNamedEntities` and `getNeighbours` in `mcp-server/arkg.js`.
+  - **What it does.** Lower-cases the description, cuts it into terms, drops an explicit stop list (and reports every dropped term), splits each entity's name the way code names are written — camelCase and PascalCase boundaries plus `-`, `_`, `/`, `.` — and matches on that. The split is the one thing that makes it better than a substring scan: `cart` matches `CartBadge` as a **word** and `invoices` matches `/api/v1/invoices` as a **word**, while `art` matches `CartBadge` only as a fragment and is ranked as one. Each match carries a **named basis** rather than a score — `name-exact`, `name-word`, `name-part`, `text-word`, `text-part` — for `core/causal`'s reason: `0.72` cannot be argued with and *your word is inside its name but is not a word of it* can.
+  - **What makes it more than a grep, and it is not the matching.** Every match is expanded one hop through the graph's own edges, so a search for "cart" reaches `GET /api/v1/invoices` — which carries no cart word anywhere — because a recording observed `CartBadge` calling it. The lexical hit is the entry point; the accumulated graph is why the entry point is worth having. `tests/mcp-navigator.test.ts` asserts exactly that hop, against an endpoint deliberately named so that no string match could reach it.
+  - **The three things it refuses to imply.** That it understands the description — the answer opens by saying it matched names and does not know what the words mean. That a name carrying the word is relevant — `Cart` matches "cart" whether it is a shopping cart or a `CartesianGrid`. And, most importantly, that an empty answer is an absent feature: a checkout written as `PurchaseFlow` and `/api/orders` answers to neither "checkout" nor "flow", so the reply says in as many words that silence is a statement about vocabulary and not about the application. A graph larger than the per-kind corpus cap says so too, rather than reporting "nothing matched" about a node it never looked at.
+- [x] **MCP Tool:** `explain_feature({ description, limit })` — declared as well as answerable, which `tests/mcp-navigator.test.ts` asserts against `tools/list` for the reason 2.2's does.
 
 ---
 

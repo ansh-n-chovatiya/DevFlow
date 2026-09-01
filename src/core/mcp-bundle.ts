@@ -46,6 +46,29 @@ export {
 } from './causal/index.js';
 
 /*
+ * Where one value in a recording came from, searched on this side for the
+ * causal graph's reason: it is derived from what a flow already carries, so
+ * every recording on disk gets it and a rule sharpened later reaches all of
+ * them.
+ *
+ * Its header is the important part of this export. The mechanism is a search
+ * for the same value across four independent observations, not a data-flow
+ * trace, and the tool that prints it has to keep saying so.
+ */
+export { traceValue, valueOfStep } from './provenance/index.js';
+
+/*
+ * The lexical half of `explain_feature`, on this side for `traceValue`'s reason
+ * and for one of its own: what it does is easy to overstate, and a pure module
+ * with a header saying so is harder to overstate than a hundred lines of
+ * matching inlined into a tool handler.
+ *
+ * The graph half stays in `mcp-server/arkg.js`, which is where the database is.
+ */
+export type { EntityKind, NavigatorEntity, NavigatorMatch, NavigatorQuery } from './navigator/index.js';
+export { findFeature, readQuery } from './navigator/index.js';
+
+/*
  * The one exception to "core only", and it earns it.
  *
  * `describeStamp` turns a flow's `settings` into the sentences the walkthrough
