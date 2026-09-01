@@ -344,6 +344,15 @@ export interface StepRender {
    */
   wasted?: true;
   /**
+   * Changes observed on this component beyond the ones listed above.
+   *
+   * The lists are capped by `recording.renderMaxChanges` and the cap is spent
+   * across all three together. A component handed forty changed props is one
+   * fact about its parent, but the reader is told the number rather than shown
+   * eight and left to assume that was all of them.
+   */
+  moreChanges?: number;
+  /**
    * A value was cut at a snapshot cap, so a change below the cut reads as no
    * change.
    *
