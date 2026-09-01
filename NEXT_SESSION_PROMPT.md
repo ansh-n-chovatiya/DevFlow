@@ -6,7 +6,7 @@ handoff; the roadmap is the truth about what is done.
 
 ## Where the project actually is
 
-**You are on branch `phase-1/compiler-plugin`, eight commits ahead of `main`,
+**You are on branch `phase-1/compiler-plugin`, ten commits ahead of `main`,
 working tree clean, `npm run verify` green: 135 test files, 2732 tests** (was
 132 / 2665 at the start of the session).
 
