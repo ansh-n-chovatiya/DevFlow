@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+**An adversarial review of the three work streams above found five defects and
+they are fixed.** The mutation observer described every folded group and then
+kept twelve of them, which meant up to four hundred selectors built and three
+hundred and eighty-eight thrown away — each one a document query, synchronously
+inside the user's next click, which is the cost profile the reverted attempt was
+reverted for relocated one function along; the budget is now spent before the
+work rather than after it. The refusal of `<style>` and `<script>` applied only
+to nodes that came and went, so a stylesheet appended once and then written
+through — what Vite's HMR and styled-components do in development — was reported
+as a text change ranking above every attribute change. `get_value_provenance`
+told the reader a recording had never sampled renders when the sender had merely
+unchecked React, which is a claim about the recording manufactured from a
+checkbox. It also threw rather than answering on a flow whose fields were not
+the types they should be, which any page that can reach the loopback port can
+send. And describing a mutation ran unguarded ahead of the step being saved, so
+a page that made a node undescribable would have lost the step, its screenshot
+and its component chain along with the summary.
+
+Two claims that outran the code have been corrected rather than defended: the
+mutation window opens when the step is *written*, which for typing is after the
+input debounce and not at the first keystroke, and "closed by the next
+interaction" holds for element steps rather than for navigations and notes.
+
 **`suggest_actions` says what can be done on a page, out of what has been done
 on it.** Every click and every field somebody has recorded there, folded across
 recordings so an action three flows performed is one row saying three, with the
@@ -63,9 +86,12 @@ changed puts the CSS transition above the dialog that opened, and does it worst
 on the steps somebody opened because something happened.
 
 **A step whose observer stopped says so, and never that nothing else changed.**
-The window runs from the interaction until `recording.domDeltaMs` later or until
-the next interaction, whichever comes first, so a mutation belongs to exactly
-one step. DevFlow's own recording indicator is refused by name — it is removed
+The window opens when the step is written and closes `recording.domDeltaMs`
+later or when the next element step is written, whichever comes first, so a
+mutation belongs to exactly one step. For a click those two moments are the
+same; for typing the recorder commits a whole field as one step after the input
+debounce, so a typed step's window starts once the typing has stopped — the same
+schedule the existing text delta has always read its region on. DevFlow's own recording indicator is refused by name — it is removed
 and re-added around every screenshot, so without that every step of every flow
 would open with a div appearing and going in `<body>` — and so are the `<style>`
 and `<script>` tags a CSS-in-JS runtime and a code-split route append. Attribute

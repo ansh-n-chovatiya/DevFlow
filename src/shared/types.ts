@@ -432,11 +432,29 @@ export interface DomChange {
 /**
  * What the document did across one step.
  *
- * Present only on steps that had an interaction to watch, and only when
- * something changed. The window it describes runs from the interaction until
- * `recording.domDeltaMs` later **or until the next interaction, whichever comes
- * first** — so every mutation belongs to exactly one step, and a burst that
- * spans two clicks is not reported twice as if it had happened twice.
+ * Present only on steps that had an element to watch, and only when something
+ * changed.
+ *
+ * ## When the window actually opens, which is not quite when the step happened
+ *
+ * It opens when the step is *written*, and closes `recording.domDeltaMs` later
+ * or when the next element step is written, whichever comes first. For a click
+ * those are the same instant. For typing they are not: the recorder commits a
+ * whole field as one step after `recording.inputDebounceMs` of quiet, so the
+ * window over a typed step starts once the typing has stopped and misses what
+ * the keystrokes themselves caused — the validation message that appeared as
+ * the field was filled, the submit button that stopped being disabled. What it
+ * does catch is what the *finished* field caused, which is usually the thing
+ * being looked for and is not everything.
+ *
+ * `domDelta` has read its region on the same schedule since it shipped; this
+ * shares it deliberately rather than defining a second "settled".
+ *
+ * The one-window rule is unconditional — there is never more than one observer
+ * attached — but "closed by the next interaction" is not: a navigation and a
+ * synthesised note are not element steps and do not close an open window, which
+ * then runs to its timer. So a mutation still belongs to exactly one step; the
+ * step it belongs to is simply the last element step before it.
  */
 export interface StepDomChanges {
   changes: DomChange[];

@@ -61,12 +61,16 @@ import type { DomChange, DomChangeKind } from '../../shared/types.js';
  * `style` and parsing it back out of a formatted string is the kind of thing
  * that works until an attribute value contains an `=`.
  */
-export interface DomObservation {
+/** The fields the budget is spent on. A folded group has them before it is described. */
+export interface RankableChange {
   kind: DomChangeKind;
+  /** Only on an `attribute` change, and then always. */
+  attribute?: string;
+}
+
+export interface DomObservation extends RankableChange {
   where: string;
   what?: string;
-  /** Only on an `attribute` observation, and then always. */
-  attribute?: string;
   count: number;
 }
 
@@ -96,10 +100,35 @@ export interface DomChangePlan {
  * whole story of a menu, a form or a modal, and demoting them with `style`
  * would lose the story to the noise it is being distinguished from.
  */
-function rank(observed: DomObservation): number {
+export function rankOf(observed: RankableChange): number {
   if (observed.kind === 'added' || observed.kind === 'removed') return 0;
   if (observed.kind === 'text') return 1;
   return observed.attribute === 'style' ? 3 : 2;
+}
+
+/**
+ * Rank and cut, before anything expensive is done to what survives.
+ *
+ * Exported over the *ranking fields alone* rather than over a `DomObservation`,
+ * because the caller that most needs it holds something else. `observe.ts`
+ * folds mutations into groups holding live nodes, and describing a group means
+ * building a selector — a `querySelectorAll` per candidate, and again at each
+ * ancestor for the path fallback. The group map is bounded by the *record* cap,
+ * so describing every group and then keeping twelve meant up to four hundred
+ * document queries, thrown away, inside the user's own click. That is the cost
+ * profile the reverted attempt was reverted for, moved one function along.
+ *
+ * So the order is decided on what a group already knows — its kind, and whether
+ * it is a `style` write — and only the survivors are described.
+ */
+export function rankForBudget<T extends RankableChange>(
+  items: readonly T[],
+  maxChanges: number,
+): { kept: T[]; more: number } {
+  const cap = Math.max(0, maxChanges);
+  // Stable, so first-seen order survives inside each rank — see the header.
+  const ranked = [...items].sort((a, b) => rankOf(a) - rankOf(b));
+  return { kept: ranked.slice(0, cap), more: Math.max(0, items.length - cap) };
 }
 
 /**
@@ -116,10 +145,7 @@ export function planDomChanges(
 ): DomChangePlan {
   if (!observed.length) return { changes: [] };
 
-  const ranked = [...observed].sort((a, b) => rank(a) - rank(b));
-
-  const cap = Math.max(0, budget.maxChanges);
-  const kept = ranked.slice(0, cap);
+  const { kept, more: over } = rankForBudget(observed, budget.maxChanges);
 
   const changes: DomChange[] = kept.map((entry) => ({
     kind: entry.kind,
@@ -130,6 +156,5 @@ export function planDomChanges(
     ...(entry.count > 1 ? { count: entry.count } : {}),
   }));
 
-  const over = observed.length - kept.length;
   return { changes, ...(over > 0 ? { more: over } : {}) };
 }

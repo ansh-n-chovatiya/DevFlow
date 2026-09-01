@@ -8,7 +8,7 @@
  * decisions are the ones that can be wrong in a way a reader would believe.
  */
 
-export type { DomChangeBudget, DomChangePlan, DomObservation } from './changes.js';
-export { planDomChanges } from './changes.js';
+export type { DomChangeBudget, DomChangePlan, DomObservation, RankableChange } from './changes.js';
+export { planDomChanges, rankForBudget, rankOf } from './changes.js';
 export type { DomCollector } from './observe.js';
 export { collect, collectorFull, createCollector, describe, isDevFlowNode } from './observe.js';

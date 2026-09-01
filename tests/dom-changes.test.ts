@@ -68,8 +68,26 @@ function watch(cap: number, mutate: () => void): ReturnType<typeof createCollect
   return collector;
 }
 
+/**
+ * What a window would report, described under a budget wide enough not to bite.
+ *
+ * The budget is `describe`'s argument rather than a later filter, and that is
+ * the point: only the groups that will be printed are ever handed to
+ * `generateSelector`, which is a `querySelectorAll` per candidate and runs
+ * inside the user's click. Passing a wide cap here keeps these cases about what
+ * was *seen*; `budgeted()` below is where the cut itself is asserted.
+ */
 function seen(cap: number, mutate: () => void): DomObservation[] {
-  return describe(watch(cap, mutate));
+  return describe(watch(cap, mutate), 100).observed;
+}
+
+/** The same, under a real budget, so what `describe` refuses to describe shows. */
+function budgeted(
+  cap: number,
+  maxChanges: number,
+  mutate: () => void,
+): { observed: DomObservation[]; more: number } {
+  return describe(watch(cap, mutate), maxChanges);
 }
 
 function reset(html: string): void {
@@ -234,6 +252,85 @@ suite('what the collector refuses to report', () => {
     });
 
     expect(observed).toEqual([]);
+  });
+});
+
+suite('what is described, and what is not described at all', () => {
+  it('describes only what fits the budget, and counts the rest', () => {
+    reset('<div id="box"></div>');
+
+    /*
+     * The finding this case exists for. The group map is bounded by the
+     * *record* cap and a step reports a dozen, so describing every group and
+     * then keeping twelve built four hundred selectors and threw away three
+     * hundred and eighty-eight — each one a `querySelectorAll` and a walk to
+     * the root, synchronously inside the user's next click. That is not a
+     * slower version of the feature; it is the cost profile the whole rewrite
+     * exists to avoid, one function further along.
+     *
+     * A described observation is the evidence: nothing else in the pipeline
+     * builds a selector, so counting them counts the work.
+     */
+    const box = document.getElementById('box')!;
+    for (let i = 0; i < 40; i++) {
+      const cell = document.createElement('div');
+      cell.id = `cell-${i}`;
+      box.append(cell);
+    }
+
+    // Forty *distinct* groups: one per parent. Appending forty children to one
+    // parent is one group with a count of forty, which is the fold working and
+    // not the budget being exercised.
+    const { observed, more } = budgeted(200, 3, () => {
+      for (let i = 0; i < 40; i++) {
+        document.getElementById(`cell-${i}`)!.append(document.createElement('span'));
+      }
+    });
+
+    expect(observed).toHaveLength(3);
+    expect(more).toBe(37);
+  });
+
+  it('keeps first-seen order out of the collector, which the ranking rests on', () => {
+    reset('<div id="a"></div><div id="b"></div><div id="c"></div>');
+
+    /*
+     * `planDomChanges` sorts stably *so that* first-seen order survives inside
+     * a rank, and first-seen order is temporal order — the first structural
+     * change after a click is the one most likely to be what the click did.
+     * That property lives here, in `Map` iteration order, and reversing it
+     * would leave every other case in this file green.
+     */
+    const { observed } = budgeted(200, 100, () => {
+      for (const id of ['a', 'b', 'c']) {
+        document.getElementById(id)!.append(document.createElement('span'));
+      }
+    });
+
+    expect(observed.map((entry) => entry.where)).toEqual(['#a', '#b', '#c']);
+  });
+
+  it('refuses a stylesheet that is written through, not only one that appears', () => {
+    reset('<style id="sheet">.a{}</style><button id="menu">Menu</button>');
+
+    /*
+     * The added/removed filter never sees this: a `<style>` appended once and
+     * then rewritten arrives as `characterData` and `attributes` records on a
+     * node that did not come or go during the window — which is exactly what
+     * Vite's HMR and styled-components in development do on every render.
+     * Reported, it ranks as a text change, which is *above every attribute
+     * change*, so on a development build it takes the budget from the
+     * `aria-expanded` the step was opened for.
+     */
+    const observed = seen(200, () => {
+      const sheet = document.getElementById('sheet')!;
+      sheet.firstChild!.textContent = '.a{color:blue}';
+      sheet.setAttribute('media', 'screen');
+      document.getElementById('menu')!.setAttribute('aria-expanded', 'true');
+    });
+
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toMatchObject({ kind: 'attribute', where: '#menu' });
   });
 });
 
@@ -409,6 +506,48 @@ suite('the domChanges field, hop by hop', () => {
     },
     domChanges: changes,
   };
+
+  /**
+   * Two behaviours the design calls the point of the feature, asserted on the
+   * source because the module that holds them cannot be imported — a content
+   * script registers listeners and reaches for `chrome` at import.
+   *
+   * A source assertion is a weak test and these are deliberately written as
+   * strongly as one can be: they name the *exact expression*, so deleting it or
+   * loosening it fails, and only a rewrite that preserves the text passes. An
+   * adversarial review of this work stream deleted both and found every suite
+   * still green, which is what a source test that greps for a nearby phrase
+   * buys you.
+   */
+  it('opens no window at all when the setting is off', () => {
+    // `recording.domMutations` is `wired: true` in the field table and the
+    // changelog says the feature is refusable. Without this line the observer
+    // attaches on every recorded page whatever the setting says.
+    expect(contentSource).toContain("if (!frozen['recording.domMutations']) return;");
+  });
+
+  it('still speaks when the observer was cut and nothing survived', () => {
+    /*
+     * The one thing this feature must be able to say. An empty list under
+     * `capped` is the difference between a step where nothing happened and one
+     * where nobody was still looking, and a "nothing to attach" shortcut is
+     * exactly where it would be lost — the code comment, `StepDomChangesMessage`
+     * and `attachDomChanges` all say so, and none of them is executable.
+     */
+    expect(contentSource).toContain(
+      'if (!plan.changes.length && !open.collector.capped) return;',
+    );
+  });
+
+  it('never lets a description failure take the step with it', () => {
+    // `closeDomWindow` runs before the step is sent, and describing a group is
+    // the only work in it that touches a page DevFlow did not write.
+    const start = contentSource.indexOf('function closeDomWindow(');
+    expect(start).toBeGreaterThan(-1);
+    const body = contentSource.slice(start, start + 2600);
+    expect(body).toContain('try {');
+    expect(body).toContain('} catch {');
+  });
 
   it('opens a window on every step that has an element, beside the region read', () => {
     expect(contentSource).toContain('watchDomMutations(stepKey(step))');

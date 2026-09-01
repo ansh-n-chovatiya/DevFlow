@@ -117,6 +117,13 @@ function value(op: PatchOp): string | null {
  * Empty for a step whose stores did not move, which is most steps: a recording
  * writes no delta at all when nothing changed, so absence here is the recording
  * saying nothing happened rather than this deciding not to mention it.
+ *
+ * Called for every kind of step, including the two that compile to a comment or
+ * a `goto`. A recorder that only ever attaches state to a step with an
+ * interaction makes that unreachable today — but `hasState` counts those steps
+ * when it decides whether to print the preamble, so a version that skipped them
+ * would print eleven lines explaining comments it then did not write, and it
+ * would do it for exactly the recording somebody was reading closely.
  */
 export function stateComments(step: Step): string[] {
   const deltas = step.state ?? [];

@@ -138,12 +138,41 @@ function blindFlow() {
   };
 }
 
+/**
+ * A recording that sampled everything and was *sent* without it.
+ *
+ * Deliberately not `blindFlow`: that one has capture switched off, which is a
+ * fact about the recording. This one is the case that actually happens — React
+ * unchecked in the send dialog — where the recording is intact and the copy on
+ * disk is not, and the two must not produce the same sentence.
+ */
+function withheldFlow() {
+  return {
+    id: 'flow-withheld',
+    name: 'Sent without React',
+    timestamp: BASE,
+    startUrl: 'https://billing.example.com/invoices',
+    omitted: ['react'],
+    steps: [
+      {
+        type: 'click',
+        url: 'https://billing.example.com/invoices',
+        timestamp: BASE + 1000,
+        action: 'Clicked "Refresh"',
+        stepNumber: 1,
+        element: { tag: 'button', text: 'Refresh', cssSelector: '#refresh', xpath: '//button', boundingBox: null },
+      },
+    ],
+  };
+}
+
 beforeAll(async () => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'devflow-provenance-'));
   fs.mkdirSync(path.join(home, 'flows'), { recursive: true });
   server = await startServer({ home });
   writeFlow(home, travellingFlow());
   writeFlow(home, blindFlow());
+  writeFlow(home, withheldFlow());
 }, 30_000);
 
 afterAll(() => {
@@ -267,6 +296,22 @@ describe('the claims it refuses to make', () => {
 
     // And the one layer it could search still answers.
     expect(answer).toContain('#refresh');
+  });
+
+  it('does not report a withheld send option as a recording that never sampled', async () => {
+    const answer = await call('get_value_provenance', { id: 'flow-withheld', value: 'Refresh' });
+
+    /*
+     * `buildPayload` drops the render sample along with the React component
+     * table whenever React is unchecked in the send dialog — every entry is
+     * keyed by a component id the payload would no longer resolve. So a
+     * recording that sampled renders perfectly arrives with none, and the
+     * sentence "this recording did not sample renders" is a fact about the
+     * recording manufactured from a checkbox. The response layer got this
+     * right; the render layer, one branch below it, did not.
+     */
+    expect(answer).toContain('sent without its React data');
+    expect(answer).not.toContain('did not sample renders');
   });
 
   it('says a value was not found without implying it was never there', async () => {

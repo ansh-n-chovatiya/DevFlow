@@ -633,3 +633,61 @@ describe('what the stores did, beside the step that did it', () => {
     expect(source).toContain('4 finer operations were folded into coarser replaces');
   });
 });
+
+/**
+ * The step types the state block reaches, which are all of them.
+ *
+ * `hasState` counts every step when it decides whether to print the eleven-line
+ * preamble, so a compiler that emitted the comments only for clicks and inputs
+ * would, on a flow whose only state landed elsewhere, print the whole
+ * explanation and then not a single comment it explains. Unreachable today —
+ * the recorder attaches state only to steps with an interaction — which is
+ * exactly why it needs a test rather than an argument.
+ */
+describe('state comments on the steps that compile to something else', () => {
+  const withState = (over: Partial<Step>): Step =>
+    ({
+      ...over,
+      state: [
+        { store: 'redux:0', patch: [{ op: 'replace', path: '/route', value: '/orders' }] },
+      ],
+    }) as Step;
+
+  it('reaches a navigation', () => {
+    const steps = [
+      withState({
+        type: 'navigate',
+        url: 'https://app.example.com/orders',
+        timestamp: 1_000,
+        stepNumber: 1,
+        action: 'Went to Orders',
+        title: 'Orders',
+      }),
+    ];
+
+    for (const source of [generatePlaywrightTest(steps), generateCypressTest(steps)]) {
+      parses(source);
+      expect(source).toContain('--- State ---');
+      expect(source).toContain('redux:0  replace /route = "/orders"');
+    }
+  });
+
+  it('reaches a note', () => {
+    const steps = [
+      click(),
+      withState({
+        type: 'note',
+        url: 'https://app.example.com/orders',
+        timestamp: 2_000,
+        stepNumber: 2,
+        action: 'Recording stopped',
+        value: 'Step limit reached',
+      }),
+    ];
+
+    for (const source of [generatePlaywrightTest(steps), generateCypressTest(steps)]) {
+      parses(source);
+      expect(source).toContain('redux:0  replace /route = "/orders"');
+    }
+  });
+});

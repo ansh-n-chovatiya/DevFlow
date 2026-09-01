@@ -1976,8 +1976,10 @@ export function getBlastRadius(sourceFile, lineStart, lineEnd) {
  * be tested without a database — the same split `buildCausalGraph` and the
  * causal tools make.
  *
- * Bounded per kind, ordered by how often each was observed, and the caller is
- * told when the bound bit. A graph that has outgrown the cap would otherwise
+ * Bounded per kind and ordered by how often each was observed — except recorded
+ * flows, which have no observation count and are ordered by recency instead.
+ * The caller is told which, because "the most observed" and "the most recent"
+ * are different sets and the reply says one of them out loud. A graph that has outgrown the cap would otherwise
  * answer "nothing matched" for a component it holds and never looked at, which
  * is the one answer this must not give silently.
  */
@@ -2023,6 +2025,8 @@ export function getNamedEntities(perKind = 2000) {
 
   take(
     'arkg_named_flows',
+    // Recency, not frequency: a flow is one recording and is observed once, so
+    // there is no count to order by. See this function's header.
     'SELECT id, name, host FROM arkg_named_flows ORDER BY last_observed_at DESC, id LIMIT ?',
     (row) => ({
       kind: 'flow',

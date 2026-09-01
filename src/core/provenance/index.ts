@@ -37,7 +37,7 @@
  * Pure — no DOM, no Chrome, no clock, no randomness.
  */
 
-import type { FlowPayload, Step } from '../../shared/types.js';
+import type { FlowPayload, PatchOp, RenderChange, Step } from '../../shared/types.js';
 
 /** The four independent observations a recording carries about one value. */
 export type ProvenanceLayer = 'response' | 'store' | 'render' | 'dom';
@@ -100,8 +100,27 @@ const WALK_DEPTH = 12;
  */
 const COLLIDING_LENGTH = 4;
 
+/**
+ * Every field read out of a flow is untrusted.
+ *
+ * A `flow.json` arrives over loopback from any page the browser happens to
+ * visit, and `POST /flows` validates its id and that `steps` is an array and
+ * nothing else. `mcp-server/server.js` already treats a step this way where it
+ * *prints* one; this is reached by the same object through a different door,
+ * and a `text` that is a number turns an answer into a protocol error rather
+ * than into a smaller answer.
+ */
+function str(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/** An array, or an empty one — a `networkCalls: 5` is not iterable. */
+function list<T>(value: unknown): readonly T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
 function collapse(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
+  return str(text).replace(/\s+/g, ' ').trim();
 }
 
 /** RFC 6901: `~` and `/` are the two characters a pointer segment must escape. */
@@ -194,7 +213,7 @@ function shown(value: unknown, cap = 60): string {
 
 function inResponses(steps: readonly Step[], needle: string, hits: ProvenanceHit[]): void {
   steps.forEach((step, index) => {
-    for (const call of step.networkCalls ?? []) {
+    for (const call of list<NonNullable<Step['networkCalls']>[number]>(step.networkCalls)) {
       const body = parsed(call.responseBody);
       const found = body === null ? null : findInValue(body, needle);
       if (found) {
@@ -236,8 +255,8 @@ function inResponses(steps: readonly Step[], needle: string, hits: ProvenanceHit
 
 function inStores(steps: readonly Step[], needle: string, hits: ProvenanceHit[]): void {
   steps.forEach((step, index) => {
-    for (const delta of step.state ?? []) {
-      for (const op of delta.patch ?? []) {
+    for (const delta of list<NonNullable<Step['state']>[number]>(step.state)) {
+      for (const op of list<PatchOp>(delta?.patch)) {
         if (op.op === 'remove') continue;
         const found = findInValue(op.value, needle);
         if (!found) continue;
@@ -260,11 +279,11 @@ function inStores(steps: readonly Step[], needle: string, hits: ProvenanceHit[])
 
 function inRenders(steps: readonly Step[], needle: string, hits: ProvenanceHit[]): void {
   steps.forEach((step, index) => {
-    for (const render of step.renders ?? []) {
-      const kinds: [string, { key: string; before?: unknown; after?: unknown }[]][] = [
-        ['prop', render.props ?? []],
-        ['hook', render.hooks ?? []],
-        ['context', render.contexts ?? []],
+    for (const render of list<NonNullable<Step['renders']>[number]>(step.renders)) {
+      const kinds: [string, readonly RenderChange[]][] = [
+        ['prop', list<RenderChange>(render?.props)],
+        ['hook', list<RenderChange>(render?.hooks)],
+        ['context', list<RenderChange>(render?.contexts)],
       ];
 
       for (const [kind, changes] of kinds) {
@@ -292,7 +311,7 @@ function inDom(steps: readonly Step[], needle: string, hits: ProvenanceHit[]): v
 
   steps.forEach((step, index) => {
     const number = stepNumber(step, index);
-    const where = step.element?.cssSelector ?? `step ${number}`;
+    const where = str(step.element?.cssSelector) || `step ${number}`;
 
     const text = collapse(step.element?.text ?? '');
     if (text && text.includes(flat)) {
@@ -331,13 +350,13 @@ function inDom(steps: readonly Step[], needle: string, hits: ProvenanceHit[]): v
       });
     }
 
-    for (const change of step.domChanges?.changes ?? []) {
-      if (!change.what || !collapse(change.what).includes(flat)) continue;
+    for (const change of list<NonNullable<NonNullable<Step['domChanges']>['changes']>[number]>(step.domChanges?.changes)) {
+      if (!change?.what || !collapse(change.what).includes(flat)) continue;
       hits.push({
         layer: 'dom',
         step: number,
-        where: change.where,
-        detail: `It appeared in the page: ${change.kind} — ${change.what}.`,
+        where: str(change.where),
+        detail: `It appeared in the page: ${str(change.kind) || 'changed'} — ${str(change.what)}.`,
         match: 'within',
       });
     }
@@ -355,11 +374,11 @@ function inDom(steps: readonly Step[], needle: string, hits: ProvenanceHit[]): v
  * only that the value was not in a response concludes the server never sent it.
  */
 function unsearchedLayers(flow: FlowPayload): UnsearchedLayer[] {
-  const steps = flow.steps ?? [];
+  const steps = list<Step>(flow?.steps);
   const out: UnsearchedLayer[] = [];
 
-  const omitted = new Set(flow.omitted ?? []);
-  if (omitted.has('network') || !steps.some((step) => (step.networkCalls ?? []).length)) {
+  const omitted = new Set(list<string>(flow?.omitted));
+  if (omitted.has('network') || !steps.some((step) => list(step.networkCalls).length)) {
     out.push({
       layer: 'response',
       reason: omitted.has('network')
@@ -368,21 +387,33 @@ function unsearchedLayers(flow: FlowPayload): UnsearchedLayer[] {
     });
   }
 
-  if (!steps.some((step) => (step.state ?? []).length)) {
+  if (!steps.some((step) => list(step.state).length)) {
     out.push({
       layer: 'store',
       reason:
-        flow.state?.read === false || !flow.state
+        flow?.state?.read === false || !flow?.state
           ? 'This recording did not read the app’s state — get_state_patch says whether capture was off or no store was recognised.'
           : 'No store moved during this recording, so there are no writes to search.',
     });
   }
 
-  if (!steps.some((step) => (step.renders ?? []).length)) {
+  if (!steps.some((step) => list(step.renders).length)) {
     out.push({
       layer: 'render',
-      reason:
-        flow.renders?.read === false || !flow.renders
+      reason: omitted.has('react')
+        ? /*
+           * A send option, not a setting, and the two are opposite claims.
+           *
+           * `buildPayload` drops `renders` along with the React component table
+           * whenever React is unchecked in the send dialog — every entry is
+           * keyed by a component id the payload would no longer resolve. So a
+           * flow that sampled renders perfectly arrives here with none, and
+           * saying "this recording did not sample renders" invents a fact about
+           * the recording out of a checkbox. Exactly the failure the response
+           * layer above avoids by consulting `omitted` first.
+           */
+          'This flow was sent without its React data, and the render sample goes with it — every entry is keyed by a component id the payload no longer carries. The recording may have sampled renders; this copy of it does not say.'
+        : flow?.renders?.read === false || !flow?.renders
           ? 'This recording did not sample renders, so no component’s props, state or contexts were read.'
           : 'No component re-rendered during this recording, so no changed value was captured.',
     });
@@ -402,7 +433,7 @@ function unsearchedLayers(flow: FlowPayload): UnsearchedLayer[] {
     (step) =>
       step.element ||
       step.domDelta ||
-      (step.domChanges?.changes ?? []).length ||
+      list(step.domChanges?.changes).length ||
       typeof step.value === 'string',
   );
   if (!sawDom) {
@@ -433,7 +464,7 @@ const LAYER_ORDER: readonly ProvenanceLayer[] = ['response', 'store', 'render', 
  */
 export function traceValue(flow: FlowPayload, value: string): ProvenanceResult {
   const needle = value.trim();
-  const steps = flow.steps ?? [];
+  const steps = list<Step>(flow?.steps);
 
   const found: ProvenanceHit[] = [];
   if (needle) {
@@ -470,9 +501,9 @@ export function traceValue(flow: FlowPayload, value: string): ProvenanceResult {
  * addressed, so the value it showed is the handle that exists.
  */
 export function valueOfStep(step: Step): string {
-  const text = collapse(step.element?.text ?? '');
+  const text = collapse(step?.element?.text ?? '');
   if (text) return text;
-  const typed = typeof step.value === 'string' ? collapse(step.value) : '';
+  const typed = collapse(step?.value ?? '');
   if (typed) return typed;
-  return collapse(step.element?.label ?? '');
+  return collapse(step?.element?.label ?? '');
 }

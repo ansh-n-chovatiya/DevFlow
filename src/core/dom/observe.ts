@@ -37,7 +37,7 @@
 import { DEVFLOW_ELEMENT_PREFIX, DOM_CHANGE_TEXT_CAP } from '../../shared/constants.js';
 import { generateSelector } from '../selector/index.js';
 import type { DomChangeKind } from '../../shared/types.js';
-import type { DomObservation } from './changes.js';
+import { rankForBudget, type DomObservation } from './changes.js';
 
 /**
  * Elements whose coming and going is the toolchain, not the application.
@@ -187,9 +187,26 @@ function foldNode(
   fold(collector, kind, parent, node);
 }
 
+/**
+ * Whether this element is one whose changes are the toolchain's.
+ *
+ * Checked on the *target* of a record and not only on nodes that come and go,
+ * which is where it was missing. A `<style>` element appended once and then
+ * written through — which is exactly what Vite's HMR and styled-components in
+ * development do — arrives as `characterData` and `attributes` records on a
+ * node that was never added during the window, so the added/removed filter
+ * never sees it. Reported, it ranks as a text change: above every attribute
+ * change, including the `aria-expanded` and `disabled` the step was opened for.
+ */
+function isUninteresting(node: Node | null): boolean {
+  const el = node instanceof Element ? node : ((node?.parentNode as Element | null) ?? null);
+  return el ? UNINTERESTING_TAGS.has(el.tagName) : false;
+}
+
 function foldRecord(collector: DomCollector, record: MutationRecord): void {
   const target = record.target;
   if (isDevFlowNode(target)) return;
+  if (isUninteresting(target)) return;
 
   if (record.type === 'attributes') {
     const name = record.attributeName;
@@ -285,19 +302,37 @@ function describeGroup(group: DomGroup): DomObservation | null {
 }
 
 /**
- * Everything one collector saw, described, in the order it was first seen.
+ * The groups worth describing, described — and only those.
  *
- * First-seen and not last: `Map` iterates in insertion order and a group is
- * inserted when it is opened, so the order this returns is the order the
- * changes started happening. `planDomChanges` relies on that being temporal —
- * see its header for why the first structural change after a click is the one
- * most likely to be what the click did.
+ * **The budget is spent before the work, not after it.** The group map is
+ * bounded by the *record* cap (four hundred), and a step reports twelve; a
+ * version of this that described every group and let `planDomChanges` keep
+ * twelve built four hundred selectors and threw away three hundred and
+ * eighty-eight of them, each one a `querySelectorAll` and a walk to the root,
+ * synchronously inside the user's next click. That is the cost profile the
+ * reverted attempt was reverted for, relocated one function along. `rankForBudget`
+ * decides the order from what a group already knows — its kind, and whether it
+ * is a `style` write — so nothing expensive happens to a group that will not be
+ * printed.
+ *
+ * Order inside a rank is first-seen: `Map` iterates in insertion order, a group
+ * is inserted when it is opened, and `rankForBudget`'s sort is stable. That is
+ * temporal order, which is why the first structural change after a click is
+ * the one most likely to be what the click did.
+ *
+ * `more` is the groups that were seen and not described. It is a different fact
+ * from `capped` — those were seen and did not fit, rather than never seen.
  */
-export function describe(collector: DomCollector): DomObservation[] {
-  const out: DomObservation[] = [];
-  for (const group of collector.groups.values()) {
+export function describe(
+  collector: DomCollector,
+  maxChanges: number,
+): { observed: DomObservation[]; more: number } {
+  const { kept, more } = rankForBudget([...collector.groups.values()], maxChanges);
+
+  const observed: DomObservation[] = [];
+  for (const group of kept) {
     const described = describeGroup(group);
-    if (described) out.push(described);
+    if (described) observed.push(described);
   }
-  return out;
+  return { observed, more };
 }

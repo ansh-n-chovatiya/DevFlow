@@ -1097,23 +1097,42 @@ function closeDomWindow(report: boolean): void {
 
   if (!report) return;
 
-  const { changes, more } = planDomChanges(describeDom(open.collector), {
-    maxChanges: frozen['recording.domMaxChanges'],
-  });
+  /*
+   * Everything below is inside a `try`, and the reason is where it runs.
+   *
+   * `watchDomMutations` closes the previous window as its first act, and it is
+   * called from `requestScreenshotAndSave` *before* the step is sent. Describing
+   * a group reads a live node and builds a selector, which is the only work
+   * here that touches a page DevFlow did not write — so a throw in it would
+   * take the step, its screenshot and its component chain with it, to say
+   * nothing about the DOM. The summary is the least important thing this
+   * function is standing in front of.
+   */
+  try {
+    const cap = frozen['recording.domMaxChanges'];
+    // Described under the budget, not after it: see `core/dom/observe.ts`. Only
+    // the groups that will be printed are ever handed to `generateSelector`.
+    const { observed, more: undescribed } = describeDom(open.collector, cap);
+    const plan = planDomChanges(observed, { maxChanges: cap });
+    const more = (plan.more ?? 0) + undescribed;
 
-  // Sent when the observer stopped early even though nothing survived, for
-  // `onRenderSample`'s reason: a step reporting no changes while its observer
-  // was cut is reporting on the cut, and a message withheld for looking empty
-  // is where that fact would be lost.
-  if (!changes.length && !open.collector.capped) return;
+    // Sent when the observer stopped early even though nothing survived, for
+    // `onRenderSample`'s reason: a step reporting no changes while its observer
+    // was cut is reporting on the cut, and a message withheld for looking empty
+    // is where that fact would be lost.
+    if (!plan.changes.length && !open.collector.capped) return;
 
-  void sendToWorker({
-    type: 'STEP_DOM_CHANGES',
-    key: open.key,
-    changes,
-    ...(open.collector.capped ? { capped: true as const } : {}),
-    ...(more ? { more } : {}),
-  });
+    void sendToWorker({
+      type: 'STEP_DOM_CHANGES',
+      key: open.key,
+      changes: plan.changes,
+      ...(open.collector.capped ? { capped: true as const } : {}),
+      ...(more ? { more } : {}),
+    });
+  } catch {
+    // A page that made a node undescribable. The step is worth more than the
+    // summary, and it is already on its way.
+  }
 }
 
 /**

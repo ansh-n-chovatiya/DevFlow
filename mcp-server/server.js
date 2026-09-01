@@ -2726,7 +2726,8 @@ function renderFeature(description, query, neighbours, corpus) {
     lines.push(
       '',
       `This graph holds more than ${corpus.perKind} of some kind of node, so the search covered the ` +
-        `${corpus.perKind} most-observed of each. Something rarely seen may exist and not be above.`,
+        `${corpus.perKind} most-observed of each — the most *recent* ${corpus.perKind}, for recorded ` +
+        'flows, which have no observation count. Something rarely or long-ago seen may exist and not be above.',
     );
   }
 
@@ -2767,6 +2768,9 @@ function componentLabel(flow, id) {
   const named = flow.react?.components?.[id];
   return named && typeof named.name === 'string' && named.name ? `${named.name} (${id})` : id;
 }
+
+/** One line of a provenance answer. A dozen of them is the whole reply. */
+const PROVENANCE_LINE = 300;
 
 const LAYER_TITLES = {
   response: 'response — what the server sent',
@@ -2816,9 +2820,18 @@ function renderProvenance(flow, result, from) {
   for (const [layer, hits] of byLayer) {
     lines.push('', LAYER_TITLES[layer] ?? layer);
     for (const hit of hits) {
+      /*
+       * Capped, like every other renderer in this file. `where` and `detail`
+       * carry a URL, a JSON pointer built out of a body's own keys, a patch
+       * path and a component's name — all of them text a recorded page chose,
+       * arriving over loopback from any site the browser visited. A single
+       * 200KB key would otherwise be one line of the answer.
+       */
       const where = layer === 'render' ? renderWhere(flow, hit.where) : hit.where;
-      lines.push(`  step ${hit.step}  ${where}`);
-      lines.push(`      ${hit.match === 'exact' ? 'the whole value' : 'inside a longer value'} — ${hit.detail}`);
+      lines.push(`  step ${hit.step}  ${truncate(String(where ?? ''), PROVENANCE_LINE)}`);
+      lines.push(
+        `      ${hit.match === 'exact' ? 'the whole value' : 'inside a longer value'} — ${truncate(String(hit.detail ?? ''), PROVENANCE_LINE)}`,
+      );
     }
     const over = result.more?.[layer];
     if (over) {

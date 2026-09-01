@@ -109,11 +109,13 @@ export function generatePlaywrightTest(steps: Step[], testName = DEFAULT_TEST_NA
 
     if (step.type === 'navigate') {
       lines.push(`  await page.goto(${jsLiteral(step.url)});`);
+      for (const line of stateComments(step)) lines.push(`  // ${line}`);
       continue;
     }
 
     if (step.type === 'note') {
       lines.push(`  // Note: ${commentText(step.value)}`);
+      for (const line of stateComments(step)) lines.push(`  // ${line}`);
       continue;
     }
 

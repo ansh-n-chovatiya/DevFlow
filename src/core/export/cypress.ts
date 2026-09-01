@@ -83,11 +83,13 @@ export function generateCypressTest(steps: Step[], testName = DEFAULT_TEST_NAME)
 
     if (step.type === 'navigate') {
       lines.push(`    cy.visit(${jsLiteral(step.url)});`);
+      for (const line of stateComments(step)) lines.push(`    // ${line}`);
       continue;
     }
 
     if (step.type === 'note') {
       lines.push(`    // Note: ${commentText(step.value)}`);
+      for (const line of stateComments(step)) lines.push(`    // ${line}`);
       continue;
     }
 
