@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+**`replay_flow` runs a recorded journey again and says whether it still works —
+and it is off until you switch it on.** It is the only tool here that executes
+code on the machine it runs on: your own Playwright, your own application,
+started because a model asked a question. `DEVFLOW_REPLAY=1` in the server's
+environment enables it; without that it still appears in the tool list and
+answers by saying exactly what it would do and how to allow it. It runs the same
+spec the extension's export writes, from `.devflow/replays/` inside your project,
+with your project's own copy of Playwright — it will not install one, because
+`npx playwright` on a machine without it downloads it and a tool call is not
+where that decision belongs.
+
+**It distinguishes a replay that failed from one that never happened.** A runner
+that crashed before loading a spec exits non-zero and prints a stack trace; one
+that matched no files prints a valid report of nothing. Counting failures rather
+than runs reads both as a pass, and a repair loop asking after a change would
+conclude its patch worked. So there are four outcomes, not two, a killed run is
+unreadable whatever it had printed, and the runner's own error output travels
+with the answer. When the recording itself failed, the reply names the steps it
+failed at and whether this run reproduced them — weakly, and saying so: the
+replay answers with the recorded responses, so a fault in the server is mocked
+out of the run by construction.
+
+**`diagnose_failure` assembles what broke in a recording and refuses to name a
+cause.** Per failure: the message, the component the step was attributed to and
+the file it was written in, and the causal evidence with the basis each link
+rests on. What it adds that no single recording can is whether the thing that
+failed *has failed before* — an endpoint that failed twice in a hundred and
+forty observations and one that fails six times in ten send you to different
+places, and only the accumulated graph knows which. That standing is named, not
+scored, and `unknown` is the honest default: below ten observations the graph
+knows nothing, and "we have never seen this fail" and "we have not seen it
+enough to say" are kept as the different answers they are.
+
+**Patch generation is deliberately not built.** DevFlow is not a model and cannot
+write a patch; the caller is, and everything it needs is now in place. A patch
+generator inside this server could only be a template, which is precisely what
+the reverted version of it was.
+
 **An adversarial review of the three work streams above found five defects and
 they are fixed.** The mutation observer described every folded group and then
 kept twelve of them, which meant up to four hundred selectors built and three

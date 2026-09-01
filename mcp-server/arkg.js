@@ -2148,6 +2148,55 @@ function nodeLabel(nodeType, id) {
   return row?.label ?? id;
 }
 
+/**
+ * What the graph knows about one thing that failed, in the shape a diagnosis
+ * reads.
+ *
+ * A projection and nothing more — `getComponent` and the endpoint table already
+ * hold all of it. It exists so that `core/diagnose` can be handed two numbers
+ * and a name without knowing there is a database, which is what keeps the one
+ * judgement in that module (is this failure new, or is it what this thing
+ * always does?) testable against a fixture.
+ *
+ * `null` is a real answer and the caller reports it as one: a thing the graph
+ * has never seen is not a thing with a failure rate of zero, and the difference
+ * between those two is the whole point of asking.
+ */
+export function getFailureHistory(kind, key) {
+  if (!db) return null;
+
+  if (kind === 'endpoint') {
+    // `key` is `METHOD url` as a recording spells it; the graph keys endpoints
+    // by a pattern with the query string stripped and identifier-shaped
+    // segments collapsed, so it is hashed the same way it was written.
+    const cut = String(key).indexOf(' ');
+    if (cut === -1) return null;
+    const method = key.slice(0, cut);
+    const url = key.slice(cut + 1);
+    const row = sql('SELECT * FROM arkg_api_endpoints WHERE id = ?').get(endpointId(method, url));
+    if (!row) return null;
+    return {
+      kind: 'endpoint',
+      id: row.id,
+      label: `${row.method} ${row.url_pattern}`,
+      observations: row.frequency ?? 0,
+      failureRate: row.failure_rate ?? 0,
+    };
+  }
+
+  // A component id from a recording, resolved through the alias table — an id
+  // that was merged away is still in every flow that carried it.
+  const row = sql('SELECT * FROM arkg_components WHERE id = ?').get(canonicalId(key));
+  if (!row) return null;
+  return {
+    kind: 'component',
+    id: row.id,
+    label: row.display_name,
+    observations: row.frequency ?? 0,
+    failureRate: row.failure_rate ?? 0,
+  };
+}
+
 export function getAppArchitecture() {
   if (!db) return null;
 

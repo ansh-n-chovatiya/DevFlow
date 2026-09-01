@@ -40,19 +40,24 @@ import {
   compactBody,
   DEFAULTS,
   describeStamp,
+  diagnose,
   effectsOf,
   exportToMarkdown,
   fieldFor,
   findFeature,
   flowHost,
+  generatePlaywrightTest,
   flowRendering,
   formatSource,
   MACHINE_KEYS,
   planActions,
+  planReplay,
+  readRun,
   renderComponents,
   renderStep,
   resolve as resolveSettings,
   snippet,
+  stepFailed,
   traceValue,
   urlPath,
   valueOfStep,
@@ -2509,6 +2514,213 @@ async function resolveSource(root, candidate) {
   return { file: real, root: rootReal };
 }
 
+// ── Replay ─────────────────────────────────────────────────────────────────
+
+/*
+ * `replay_flow`, and the one reading it must never produce.
+ *
+ * A replay answers "does this journey still work". A repair loop asks it after
+ * a change and acts on the answer, so the failure that matters is not a replay
+ * that fails — it is a replay that *did not happen* being reported as one that
+ * passed. A runner that crashed before it loaded a spec prints a stack trace on
+ * stdout and exits non-zero; a runner that matched no files prints a valid
+ * report of nothing. Both are silence, and neither is a pass.
+ *
+ * `core/replay`'s `readRun` separates them and this prints the separation:
+ * four outcomes, each with its own sentence, and the runner's own stderr
+ * carried through on the two that are about the runner rather than the app.
+ */
+
+/** What the recording itself said broke, so a replay can be compared with it. */
+function recordedFailures(steps) {
+  const out = [];
+  steps.forEach((step, index) => {
+    if (!step || typeof step !== 'object') return;
+    if (stepFailed(step)) out.push(stepNumberOf(step, index));
+  });
+  return out;
+}
+
+function renderReplay(flow, steps, spec, run, root) {
+  // Which stream to read, and what a killed run means, are `core/replay`'s —
+  // decisions, and decisions go where they can be exercised without a spawn.
+  const verdict = readRun(run);
+
+  const recorded = recordedFailures(steps);
+  const lines = [
+    `Replay of "${flow.name}" — ${verdict.status}`,
+    `Spec: ${spec}`,
+    `Run in ${root} with your project’s own Playwright.`,
+    '',
+  ];
+
+  if (verdict.status === 'passed') {
+    lines.push(`The journey completed. ${verdict.ran} test${verdict.ran === 1 ? '' : 's'} ran and none failed.`);
+    if (recorded.length) {
+      /*
+       * The verification half of the loop, and the only comparison this tool
+       * makes. It is a weak claim on purpose: the replay runs against recorded
+       * response mocks, so what it proves is that the journey through the
+       * interface completes, not that the bug is gone from the server.
+       */
+      lines.push(
+        '',
+        `The recording itself failed at step${recorded.length === 1 ? '' : 's'} ${recorded.join(', ')}, and this ` +
+          'replay did not. That is evidence the journey now completes — and it is evidence about the ' +
+          'interface only: the replay answers with the responses the recording captured, so a fault ' +
+          'that lives in the server is mocked out of this run by construction.',
+      );
+    }
+  } else if (verdict.status === 'failed') {
+    lines.push(`${verdict.failures.length} of ${verdict.ran} test${verdict.ran === 1 ? '' : 's'} failed:`);
+    for (const failure of verdict.failures) {
+      lines.push(
+        '',
+        `  ${failure.title}`,
+        `      ${failure.message}${failure.step ? `  (step ${failure.step})` : ''}`,
+      );
+    }
+    if (recorded.length) {
+      lines.push(
+        '',
+        `The recording failed at step${recorded.length === 1 ? '' : 's'} ${recorded.join(', ')}. Compare that ` +
+          'with the steps above: the same step is the bug reproduced, a different one is the replay ' +
+          'breaking somewhere else, and a selector that did not resolve is neither.',
+      );
+    }
+  } else if (verdict.status === 'no-tests') {
+    lines.push(
+      'The runner ran and matched no test at all, so nothing was replayed. This is not a pass. ' +
+        'Playwright’s own config usually restricts `testDir`, and a spec written outside it is ' +
+        `invisible to it — the spec is at ${spec}.`,
+    );
+  } else {
+    lines.push(
+      'The runner produced nothing this server could read, so **the state of the journey is unknown**. ' +
+        'It is deliberately not reported as a pass or a failure: a runner that crashed before it loaded ' +
+        'anything looks exactly like a suite with no failures if you only count failures.',
+    );
+    if (verdict.note) lines.push('', `What came back instead: ${truncate(verdict.note, 400)}`);
+  }
+
+  if (run.timedOut) {
+    lines.push(
+      '',
+      'The run hit its timeout and was killed. A replay still going after that is usually waiting on ' +
+        'something that is not coming — a dev server that is not up, or a login the recorded mocks ' +
+        'do not cover.',
+    );
+  }
+
+  const stderr = String(run.stderr ?? '').trim();
+  if (stderr && verdict.status !== 'passed') {
+    lines.push('', 'The runner’s own error output:', truncate(stderr, 1200));
+  }
+
+  lines.push(
+    '',
+    'The spec is the same one the extension’s Playwright export writes, so it can be edited, kept and ' +
+      'run without this server. get_flow_errors is what the recording said broke.',
+  );
+  return lines.join('\n');
+}
+
+// ── Diagnosis ──────────────────────────────────────────────────────────────
+
+/*
+ * `diagnose_failure`, and the claim it is careful not to make.
+ *
+ * `get_causal_chain` says what evidence links two events. A diagnosis is the
+ * temptation to go one step further and say which link is *the fault*, and
+ * nothing in a recording supports that: `attributed` is temporal containment,
+ * `followed` is ordering, and a reply that ranked them into a cause would be
+ * inventing the one thing a reader most wants and least ought to be handed.
+ *
+ * So this assembles and does not conclude. What it adds that no single
+ * recording can is the last line of each entry: whether the thing that failed
+ * has failed before. "This endpoint has failed twice in a hundred and forty
+ * observations" and "this endpoint fails six times in ten" send a reader to two
+ * different places, and only the accumulated graph knows which one is true.
+ */
+function renderDiagnosis(flow, diagnoses, limit) {
+  const lines = [
+    `What broke in "${flow.name}"`,
+    '',
+    'Assembled, not concluded. Each entry is what the recording says went wrong, the component it ' +
+      'happened in, the evidence the causal walk found — with the basis each link rests on — and what ' +
+      'the accumulated graph knows about the thing that failed. Nothing here names a cause: the ' +
+      'evidence is what there is to argue with.',
+  ];
+
+  if (!diagnoses.length) {
+    lines.push(
+      '',
+      'Nothing in this recording failed: no step logged a console error and no request came back ' +
+        'failed or 4xx/5xx. That is a fact about the recording — a bug that produces no error and no ' +
+        'failed request is invisible to this tool, and get_flow is where the journey itself is.',
+    );
+    return lines.join('\n');
+  }
+
+  for (const entry of diagnoses) {
+    lines.push('', `  step ${entry.step}  ${entry.kind}  ${truncate(entry.what, 300)}`);
+
+    if (entry.component) {
+      const where = entry.component.source
+        ? `${entry.component.source}${entry.component.line ? `:${entry.component.line}` : ''}`
+        : '';
+      lines.push(`      in ${entry.component.name}${where ? `  ${where}` : ''}`);
+    }
+
+    // Named, never scored — `core/causal`'s rule, carried through unchanged.
+    if (entry.evidence.length) {
+      lines.push('      what led to it, nearest first:');
+      for (const link of entry.evidence) {
+        lines.push(`        ${link.ref}  ${truncate(link.label, 120)}`);
+        lines.push(`            ${link.basis} — ${truncate(link.detail, 240)}`);
+      }
+    } else {
+      lines.push(
+        '      nothing in this recording links to it, which is ordinary — an error with no failed ' +
+          'request before it and no log naming one has no evidence to walk.',
+      );
+    }
+
+    /*
+     * The line this tool exists for. `unknown` is printed as loudly as the
+     * other two: "we have never seen this fail" and "we have not seen it
+     * enough to say" are the two answers the whole feature separates, and a
+     * reader handed the second as the first goes looking for a regression that
+     * may not exist.
+     */
+    lines.push(
+      `      standing: ${entry.standing} — ${truncate(entry.standingDetail, 300)}`,
+    );
+    if (entry.history) {
+      lines.push(
+        `      the graph knows it as ${truncate(entry.history.label, 120)} ` +
+          `(${entry.history.observations} observation${entry.history.observations === 1 ? '' : 's'}, ` +
+          `${Math.round(entry.history.failureRate * 100)}% failed)`,
+      );
+    }
+  }
+
+  if (diagnoses.length === limit) {
+    lines.push(
+      '',
+      `Stopped at ${limit}, which is what was asked for. Raise "limit" if the recording has more.`,
+    );
+  }
+
+  lines.push(
+    '',
+    'get_causal_chain walks any ref above in full, get_source_snippet opens any file named, ' +
+      'get_component_history is the whole of what the graph knows about a component, and replay_flow ' +
+      'runs the journey again once you have changed something.',
+  );
+  return lines.join('\n');
+}
+
 // ── Actions ────────────────────────────────────────────────────────────────
 
 /*
@@ -3395,6 +3607,52 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
               'Only actions inside this component — an id from get_app_architecture or from a flow’s component table.',
           },
           limit: { type: 'number', description: 'Actions to return. Defaults to 20.' },
+        },
+      },
+    },
+    {
+      name: 'replay_flow',
+      description:
+        'Run a recorded journey again, in your project, with your Playwright — and say whether it still ' +
+        'does what it did when it was recorded. This is the only tool here that **executes code on this ' +
+        'machine**, so it is off until you switch it on with DEVFLOW_REPLAY=1 in this server’s ' +
+        'environment; called while it is off, it says exactly that rather than failing quietly. It ' +
+        'compiles the flow to the same spec the extension’s export produces, writes it under ' +
+        '.devflow/replays/ in your project, and runs your own node_modules copy of Playwright — it will ' +
+        'not install one. The reply distinguishes a replay that passed, one that failed, one where no ' +
+        'test ran and one where the runner never produced a readable report, because a crashed runner ' +
+        'reported as a pass is how a repair loop concludes a fix worked. When the recording itself ' +
+        'carried failures, the reply says whether the replay reproduced them, which is the check to run ' +
+        'after a change.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+          timeoutMs: {
+            type: 'number',
+            description: 'How long the run may take. Defaults to 120000; a replay still going after that is waiting on something that is not coming.',
+          },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'diagnose_failure',
+      description:
+        'Everything one recording says about what broke in it, per failure: what the message was, the ' +
+        'component the step was attributed to and the file it was written in, the causal evidence ' +
+        'leading back to the interaction, and — the part no single recording can supply — whether the ' +
+        'thing that failed has failed before. That last one is the point: an endpoint that has failed ' +
+        'twice in a hundred and forty observations and failed here sends you somewhere completely ' +
+        'different from one that fails six times in ten, and the accumulated graph is the only thing ' +
+        'that can tell them apart. It names no cause. Every link carries the basis it rests on, "we ' +
+        'have never seen this fail" and "we have not seen it enough to say" are different answers and ' +
+        'the reply says which, and what the recording cannot decide is left undecided.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows. Omit for the most recent recording.' },
+          limit: { type: 'number', description: 'Failures to diagnose. Defaults to 5.' },
         },
       },
     },
@@ -5193,6 +5451,128 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       );
 
       return text(renderActions(plan, args, observed.length, metas.length - opened.length));
+    }
+
+    case 'replay_flow': {
+      let flow;
+      try {
+        flow = await readFlow(args.id);
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+
+      const root = PROJECT_ROOT_ENV ?? process.cwd();
+
+      /*
+       * Loaded here rather than at the top of the file, the way `arkg.js` is.
+       *
+       * The module spawns processes, and a server nobody has switched replay on
+       * for should not have it in memory at all — but more than that, a publish
+       * that omits `replay.js` must fail *this tool* rather than the server's
+       * startup, so the ninety-nine people who never enable it are unaffected
+       * by a mistake that only reaches the one who did.
+       */
+      let replay;
+      try {
+        replay = await import('./replay.js');
+      } catch (error) {
+        return failure(
+          `The replay module could not be loaded (${error.message}). This is a packaging fault in the ` +
+            'server rather than anything about your recording.',
+        );
+      }
+
+      const ready = await replay.replayReady(root);
+      if (!ready.ok) return failure(ready.reason);
+
+      const steps = Array.isArray(flow.json.steps) ? flow.json.steps : [];
+      const plan = planReplay(flow.json.id ?? args.id);
+      const source = generatePlaywrightTest(steps, flow.json.name ?? 'DevFlow recorded flow');
+
+      let spec;
+      try {
+        spec = await replay.writeSpec(root, plan.specPath, source);
+      } catch (error) {
+        return failure(`The replay spec could not be written: ${error.message}`);
+      }
+
+      const run = await replay.runCommand({
+        executable: ready.runner,
+        args: plan.args,
+        cwd: root,
+        timeoutMs: Number(args.timeoutMs),
+      });
+
+      return text(renderReplay(flow.json, steps, spec, run, root));
+    }
+
+    case 'diagnose_failure': {
+      let flow;
+      try {
+        if (args.id) {
+          flow = await readFlow(args.id);
+        } else {
+          const recent = await listAllFlows();
+          if (!recent.length) {
+            return text(
+              `No flows recorded yet (looking in ${FLOWS_DIR}). Record one and send it, then ask again.`,
+            );
+          }
+          flow = await readFlow(recent[0].id);
+        }
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+
+      const limit = Number.isFinite(Number(args.limit)) && Number(args.limit) > 0
+        ? Math.min(25, Math.trunc(Number(args.limit)))
+        : 5;
+
+      /*
+       * The causal graph is built once for the whole recording rather than per
+       * failure: it is derived from the flow and a second build would be a
+       * second walk of the same events for the same answer.
+       */
+      const graph = buildCausalGraph(flow.json);
+      const byRef = new Map(graph.events.map((event) => [event.ref, event]));
+
+      /*
+       * One entry per event, keeping the nearest.
+       *
+       * `causesOf` walks a graph, so one event can be reached by two paths —
+       * the click that opened the step and the request that step made both lead
+       * back to the click. Printed as they arrive, the same ref appears twice
+       * and reads as two pieces of evidence rather than one event reached
+       * twice, which is precisely the kind of inflation a diagnosis must not
+       * do. The first is kept because the walk is nearest-first.
+       */
+      const evidenceFor = (ref) => {
+        const seen = new Set();
+        const out = [];
+        for (const link of causesOf(graph, ref)) {
+          if (seen.has(link.from)) continue;
+          seen.add(link.from);
+          out.push({
+            ref: link.from,
+            label: byRef.get(link.from)?.label ?? '(unknown)',
+            basis: link.basis,
+            detail: link.detail,
+          });
+        }
+        return out;
+      };
+
+      /*
+       * The graph is optional and stays optional. Every other ARKG reader here
+       * goes through `arkgTry`; a diagnosis without history is a smaller
+       * answer, and `standing: 'unknown'` is a state this feature is built to
+       * report rather than one it falls over on.
+       */
+      const historyFor = (kind, key) =>
+        arkgTry('diagnosis history', (known) => known.getFailureHistory?.(kind, key) ?? null, null);
+
+      const diagnoses = diagnose(flow.json, { evidenceFor, historyFor }, limit);
+      return text(renderDiagnosis(flow.json, diagnoses, limit));
     }
 
     case 'get_app_architecture': {
