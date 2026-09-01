@@ -814,11 +814,26 @@ function describeEntry(entry: ChainEntry): CapturedComponent {
   }
 
   const cached = componentCache.get(entry.fn);
-  // The cache is keyed by function, but `_debugSource` is per JSX call site, so
-  // it is filled in from whichever usage first carried one rather than cached.
-  // The stamp is not the same case — it is a property of the function, so one
-  // reading of it is every reading of it — and it is cached with the entry.
-  if (cached) return debugSource && !cached.debugSource ? { ...cached, debugSource } : cached;
+  // The cache is keyed by function, and both of these are facts a *later*
+  // sighting of that function can know when an earlier one did not, so both are
+  // filled in rather than taken from the cache.
+  //
+  // `_debugSource` because it is per JSX call site. The stamp because it can sit
+  // on the wrapper rather than on the function: `identifyComponent` builds an
+  // entry whose `type` *is* the function, so a `forwardRef` component seen first
+  // as a context subscriber caches an empty one, and the wrapper's would then be
+  // lost for the rest of the recording — a component's file present or absent
+  // depending on which of two samples happened to run first.
+  if (cached) {
+    const fillDebug = debugSource && !cached.debugSource;
+    const fillStamp = stamp && !cached.stamp;
+    if (!fillDebug && !fillStamp) return cached;
+    return {
+      ...cached,
+      ...(fillDebug ? { debugSource } : {}),
+      ...(fillStamp ? { stamp } : {}),
+    };
+  }
 
   let source = '';
   try {

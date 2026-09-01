@@ -202,13 +202,38 @@ describe('describeEntry, asserted through its source', () => {
    * stamp on it fails here.
    */
   it('puts the stamp on every shape that leaves it', () => {
-    const body = agent.slice(
-      agent.indexOf('function describeEntry('),
-      agent.indexOf('// ── Script inventory'),
-    );
+    // Comments stripped first, or the prose explaining the rule counts as an
+    // instance of it — this test caught exactly that on its own comment.
+    const body = agent
+      .slice(agent.indexOf('function describeEntry('), agent.indexOf('// ── Script inventory'))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
 
     expect(body).not.toBe('');
-    expect(body.match(/\bstamp(?:,|\s*\})/g) ?? []).toHaveLength(4);
     expect(body).toContain('const stamp = describeStamp(entry);');
+
+    // Counted against `debugSource` rather than against a number, because the
+    // number is the thing that changes when a shape is added and the invariant
+    // is not: `debugSource` already travels on every shape that leaves here, so
+    // a stamp that travels on fewer is a stamp being dropped somewhere.
+    const shorthand = (name: string) => (body.match(new RegExp(`\\b${name}(?:,|\\s*\\})`, 'g')) ?? []).length;
+
+    expect(shorthand('stamp')).toBe(shorthand('debugSource'));
+    expect(shorthand('stamp')).toBeGreaterThanOrEqual(4);
+  });
+
+  /*
+   * A cache hit is the fifth shape, and the one that can be wrong in a way no
+   * other can: the cache is keyed by the component function, but a stamp may
+   * sit on the wrapper around it, and `identifyComponent` builds an entry whose
+   * `type` is the function itself. So a `forwardRef` component seen first as a
+   * context subscriber caches a null stamp, and every later sighting through
+   * its wrapper would return that null — the same component's file present or
+   * absent depending on which of two samples ran first in one step.
+   */
+  it('fills a stamp into a cache entry that was made without one', () => {
+    expect(agent).toContain('const fillStamp = stamp && !cached.stamp;');
+    expect(agent).toContain('...(fillStamp ? { stamp } : {}),');
+    expect(agent).toContain('if (!fillDebug && !fillStamp) return cached;');
   });
 });
