@@ -6,8 +6,8 @@ handoff; the roadmap is the truth about what is done.
 
 ## Where the project actually is
 
-`main` @ the merge of `phase-2/time-travel-recorder`, clean. `npm run verify` is
-green: **129 test files, 2581 tests** (was 121 / 2406).
+`main` @ the merge of `phase-2/repair-loop`, clean. `npm run verify` is green:
+**132 test files, 2665 tests** (was 121 / 2406 at the start of the campaign).
 
 > **Run `npm run verify` and read its exit code, not its tail.**
 > `npm run verify 2>&1 | tail -20` reports *`tail`'s* exit code, which is always
@@ -72,6 +72,29 @@ never sampled. **Run one.**
 
 ---
 
+## Where Phase 2 stands
+
+**Closed, but for one bullet and four halves — and every one of those is a
+written refusal rather than an omission.** Eleven `[x]`, four `[~]`, one `[ ]`.
+Read `ROADMAP_AND_PHASES.md` §2.1 to §2.5 in full; the reasoning is there.
+
+The refusals, so you do not re-open them by accident:
+
+- **Periodic layout snapshots** (2.1) — a timer reading layout forces a reflow
+  on every recorded page, and a snapshot taken between steps belongs to no step.
+- **`causedBy` stamping** (2.1) — 1.3 derives the chain from facts the flow
+  already carries; a stamp would be a second copy, absent from every recording
+  already on disk, freezing today's rules.
+- **Generated store assertions in E2E specs** (2.1) — a fiber walk pasted into
+  somebody's repo goes red when React moves an internal, reporting a bug in
+  their app that is not there.
+- **Patch generation** (2.4) — DevFlow is not a model. Everything a model needs
+  to write the patch is now in place; a generator here could only be the
+  template the reverted version was.
+
+If a future session wants any of these, the argument to beat is in the roadmap,
+not here.
+
 ## Your task, in order
 
 Phase 0's three remaining items — `git_commits` nodes, the `changed_in` edge,
@@ -79,39 +102,39 @@ the `git_sha` columns — **cannot be done in this campaign at all.** They need
 Phase 3's git integration. They stay `[ ]`. If you find yourself about to tick
 one, you are about to repeat the exact failure that made v3.2.0 worthless.
 
-### 1 · Work Stream 2.4 — Closed-loop AI code repair
+### 1 · Work Stream 1.1 — `@devflow/compiler-plugin`
 
-The last open item in Phase 2, and **the item on this roadmap most likely to be
-faked under time pressure.** The v3.2.0 version was a hardcoded fake diff in a
-file that did not parse.
+The last item left in Phases 0–2, and marked *strictly optional*. Invariant 1 is
+that DevFlow needs no app changes. The risk is not that a plugin would fail —
+it is that it would work **better**, making the zero-dependency path the
+degraded one and losing the invariant without anyone deciding to lose it. Any
+build of it starts by writing down what it may not improve.
 
-It has three bullets and they are not equally ready.
+If you conclude it should not be built, say so in the roadmap with the argument,
+and Phases 0–2 are done.
 
-- **Diagnostic causal tracing.** Unblocked — 1.3 built the graph and 2.2 and 2.3
-  now sit beside it. What this adds is a *diagnosis*, which is a much stronger
-  claim than any of `get_causal_chain`'s four bases makes on its own: "these
-  events are linked by this evidence" is not "this link is the fault". Decide
-  what evidence would justify the stronger claim **before** writing anything
-  that makes it, and if the answer is that the recording cannot justify it, say
-  so in the roadmap and build the weaker thing honestly.
-- **Patch generation & in-memory application.** Not started.
-- **Replay verification & test runner.** This is where 2.3's refused harness
-  comes back, and where its decision has to be made rather than deferred again:
-  putting a runner in the MCP server means either shipping a browser in a
-  package installed by `npx`, or executing the user's own test runner against a
-  live application on a model's say-so. The second is defensible *with a
-  confirmation and a failure story designed for it*. Design those first.
+### 2 · Then Phase 3
 
-### 2 · Then
+`ROADMAP_AND_PHASES.md` §3.1 onward, and it is where the three Phase 0 items
+finally unblock. Note that 3.1's trace-header injection is the first thing in
+this project that would **write to a page's outbound requests** — read §1.2's
+header on why the state reader samples rather than intercepts before designing
+it, because that argument applies here with more force, not less.
 
-- **1.1 — `@devflow/compiler-plugin`.** Marked *strictly optional*, and last.
-  Invariant 1 is that DevFlow needs no app changes. The risk is not that a
-  plugin would fail — it is that it would work *better*, making the
-  zero-dependency path the degraded one and losing the invariant without anyone
-  deciding to lose it. Any build of it starts by writing down what it may not
-  improve.
+## Two things this session learned the hard way
 
----
+- **`replay_flow` is the first tool that executes code.** It is off behind
+  `DEVFLOW_REPLAY=1` and refuses to install anything. If you add a second such
+  tool, copy that shape rather than inventing a new one; and note that both
+  sides of the gate are asserted against two real servers in
+  `tests/mcp-repair-loop.test.ts`, because a gate argued for in a comment is not
+  a gate.
+- **A decision that cannot be reached by a test does not belong where it is.**
+  The rule for reading a runner's output first sat in `mcp-server/server.js`,
+  behind a real Playwright install and a real spawn; a mutation deleting it left
+  every suite green. Moving it into `core/replay` made it three inputs and an
+  answer. When a mutation survives, ask where the code is before you ask what
+  the test missed.
 
 ## Non-negotiables
 
