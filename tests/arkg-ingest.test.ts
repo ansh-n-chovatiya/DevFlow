@@ -363,6 +363,23 @@ describe('what the tools say when there is nothing to say', () => {
     expect(anomalies).toContain('30 observations');
   });
 
+  /**
+   * "Nothing is known yet" and "nothing is wrong" are the same empty array out
+   * of `getAnomalies`, and they are opposite answers to somebody deciding
+   * whether the app is healthy.
+   *
+   * `getAnomalyReport` is the shape that separates them, and it is only worth
+   * having if the *tool* spends it — the graph knowing the difference privately
+   * is the same as not knowing it. So this asserts on the sentence, from a
+   * spawned server, which is the only layer where the loss was visible: the
+   * module's own tests passed throughout while the tool said neither number.
+   */
+  it('says an empty graph knows nothing yet, not that nothing is wrong', async () => {
+    const session = await server();
+    const anomalies = await session.call('get_anomalies', {});
+    expect(anomalies).toContain('nothing is known yet');
+    expect(anomalies).not.toContain('Nothing is behaving unusually');
+  });
   it('points a component nobody has heard of at the tool that lists them', async () => {
     const session = await server();
     const missing = await session.call('get_component_history', { componentId: 'NoSuchThing' });
@@ -373,5 +390,35 @@ describe('what the tools say when there is nothing to say', () => {
     const session = await server();
     const asked = await session.call('get_component_history', {});
     expect(asked).toContain('componentId');
+  });
+});
+
+describe('a graph old enough to be judged', () => {
+  /**
+   * `MIN_OBSERVATIONS` recordings of one flow, which is the bar an entity has
+   * to clear before anything is said about it. The fixture's call fails every
+   * time, so the endpoint crosses the failure threshold as well — giving both
+   * halves of the answer to assert on: what was found, and what was looked at.
+   */
+  async function judged(): Promise<McpSession> {
+    const session = await server();
+    for (let i = 0; i < 30; i++) {
+      expect(await session.post('/flows', JSON.stringify(flow(`flow-${i}`)))).toMatchObject({ status: 200 });
+    }
+    return session;
+  }
+
+  it('reports how many entities it had the history to judge', async () => {
+    const session = await judged();
+    const anomalies = await session.call('get_anomalies', {});
+
+    // The failing endpoint is found, and it is named a threshold rather than a
+    // baseline — the graph holds one rolling rate per entity and no
+    // distribution of rates to take a σ of, and the sentence has to say so.
+    expect(anomalies).toContain('high failure rate');
+    expect(anomalies).toContain('a threshold and not a baseline');
+
+    // And the count that makes an empty answer readable is spent here too.
+    expect(anomalies).toMatch(/Out of \d+ entit(y|ies) with enough history to judge/);
   });
 });

@@ -4427,24 +4427,45 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       const asked = Number(args.since);
       const since = Number.isFinite(asked) && asked > 0 ? asked : null;
       const window = since ? `since ${day(since)}` : 'in the last 24 hours';
-      const anomalies =
-        arkgTry(
-          'anomalies',
-          (graph) => (since === null ? graph.getAnomalies() : graph.getAnomalies(since)),
-          [],
-        ) ?? [];
+      /*
+       * The report rather than the bare array, because the empty list is two
+       * different answers — nothing is wrong, and nothing had enough history to
+       * be judged — and only `examined`/`tooNew` can say which one this is. The
+       * array is still what the graph's own `getAnomalies` returns and what
+       * every other caller reads; this is the one place the difference is worth
+       * the extra fields.
+       */
+      const report = arkgTry(
+        'anomalies',
+        (graph) => (since === null ? graph.getAnomalyReport() : graph.getAnomalyReport(since)),
+        null,
+      );
+      if (!report) return failure('The knowledge graph could not be read for anomalies.');
+
+      const { anomalies, examined, tooNew, minObservations } = report;
+      /** What was in the window but too young to judge, said the same way everywhere. */
+      const young = tooNew
+        ? `${tooNew} more ${tooNew === 1 ? 'was' : 'were'} observed with fewer than ${minObservations} ` +
+          `observations, so nothing was judged about ${tooNew === 1 ? 'it' : 'them'}.`
+        : null;
 
       if (!anomalies.length) {
-        /*
-         * "Nothing found" and "not enough to look at" are the same empty list
-         * from the graph and very different answers to the reader, and there is
-         * no way to tell them apart from here — so the reply says both, and
-         * names the tool that settles which one it was.
-         */
+        if (examined === 0) {
+          return text(
+            `Nothing was examined ${window}: ${
+              tooNew
+                ? `${tooNew} entit${tooNew === 1 ? 'y was' : 'ies were'} observed, and none has reached the ` +
+                  `${minObservations} observations an entity needs before it has a baseline to deviate from.`
+                : 'no component or endpoint was observed at all, so nothing reached the ' +
+                  `${minObservations} observations a baseline needs.`
+            } This is "nothing is known yet", not "nothing is wrong". ` +
+              'get_app_architecture says how much has been observed so far.',
+          );
+        }
         return text(
-          `Nothing is behaving unusually ${window}. That is also what a young graph says: an entity ` +
-            'needs 30 observations before it has a baseline to deviate from, so this reports nothing ' +
-            'rather than guessing. get_app_architecture says how much has been observed so far.',
+          `Nothing is behaving unusually ${window}. ${examined} entit${examined === 1 ? 'y' : 'ies'} had ` +
+            `${minObservations} or more observations and ${examined === 1 ? 'was' : 'were'} judged` +
+            `${young ? `; ${young}` : '.'}`,
         );
       }
 
@@ -4459,6 +4480,9 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
       lines.push(
+        '',
+        `Out of ${examined} entit${examined === 1 ? 'y' : 'ies'} with enough history to judge.` +
+          (young ? ` ${young}` : ''),
         '',
         'get_component_history for a component named here; get_flow_errors on a recent flow for the failures themselves.',
       );

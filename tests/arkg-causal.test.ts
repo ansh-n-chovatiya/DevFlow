@@ -544,4 +544,43 @@ describe('the module that actually finds the links', () => {
 
     expect(causalEdges(db).every((e) => e.frequency === 1)).toBe(true);
   });
+
+  /**
+   * The projection is many-to-one, and that is where a single observation gets
+   * counted twice.
+   *
+   * Every delta of one store lands on that store's one node, so a response
+   * echoed into two keys of one store is two links and one fact: that
+   * endpoint's body reached that store, seen once. The step's `attributed`
+   * links collapse the same way. `frequency` is how many recordings showed the
+   * thing, so both edges here have to read 1 off a single recording — a 2 is a
+   * number no reader could arrive at from the recordings on disk.
+   */
+  it('counts one recording once when two of its links land on one edge', () => {
+    const db = open();
+    causal.build = causal.actual!;
+
+    const echoing = flow();
+    const step = (echoing.steps as Json[])[0];
+    (step.networkCalls as Json[])[0].responseBody = JSON.stringify({
+      a: 'sku-42-blue-xl',
+      b: 'tok-99-green-lg',
+    });
+    // Two deltas, one store: two `echoed` links and two `attributed` ones, onto
+    // one `state_store` node either way.
+    step.state = [
+      { store: 's1', patch: [{ op: 'replace', path: '/cart', value: 'sku-42-blue-xl' }] },
+      { store: 's1', patch: [{ op: 'replace', path: '/auth', value: 'tok-99-green-lg' }] },
+    ];
+    arkg.ingestFlow(echoing);
+
+    const edges = causalEdges(db);
+    // Both bases survive as their own rows — collapsing is per edge, not across
+    // the evidence — and neither counts the one recording twice.
+    expect(edges.map((e) => e.type).sort()).toEqual([
+      'caused_by:attributed:medium',
+      'caused_by:echoed:high',
+    ]);
+    expect(edges.map((e) => e.frequency)).toEqual([1, 1]);
+  });
 });

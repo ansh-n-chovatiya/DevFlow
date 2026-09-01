@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+**`get_anomalies` now says how much it actually looked at.** An empty answer was
+two different answers wearing one sentence — *nothing is wrong* and *nothing has
+enough history to judge yet* — and the tool could not tell them apart, so it
+hedged and said both. It now reports how many components and endpoints cleared
+the 30-observation bar and were judged, and how many were seen in the window but
+fell short of it. An empty graph says it knows nothing yet rather than implying
+health; a graph with real history says how much of it was examined. The
+failure-rate row still says in words that it is a fixed threshold and not a
+baseline, because the graph keeps one rolling rate per entity and no
+distribution of rates to take a σ of.
+
+**One recording counts once towards a `caused_by` edge, however many of its
+links land on it.** The projection from events to graph nodes is many-to-one by
+design — every delta of one store lands on that store's single node — so a
+response echoed into two keys of one store was two links describing one fact,
+and it was being counted as two observations. `frequency` is how many recordings
+showed the thing; a number a reader could not arrive at from the recordings on
+disk is worse than no number.
+
 **DevFlow can say what led to a failure, and what each link in that chain is
 actually worth.** `get_causal_chain` walks backwards from a console error, a
 request or a state change to the interaction it came from; `get_effects_of`
