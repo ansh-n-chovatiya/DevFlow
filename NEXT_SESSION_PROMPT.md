@@ -13,6 +13,12 @@ working tree clean, `npm run verify` green: 135 test files, 2732 tests** (was
 **The branch is not merged.** That is the first decision of the next session —
 see "Stop here and decide" below.
 
+> **The standing instruction for this session: finish everything that can be
+> finished in Phases 0–2 before starting Phase 3.** The full inventory of what
+> that means — 7 items open and unblocked, 3 genuinely blocked on Phase 3, 4
+> refused on the record — is under "The rule for the next session" below. Read
+> that section before planning anything.
+
 > **Run `npm run verify` and read its exit code, not its tail.**
 > `npm run verify 2>&1 | tail -20` reports *`tail`'s* exit code, which is always
 > 0. Use `npm run verify > /tmp/v.log 2>&1; echo "EXIT=$?"` and believe the
@@ -118,9 +124,11 @@ all** and so read identically under the correct rule and the broken one.
 `npm run verify` is green and the branch is coherent as it stands. **Six review
 findings are deliberately not fixed yet.** None of them breaks anything; each is
 a claim that overreaches or a small gap. They are listed most-worth-doing first.
-Either finish them on this branch and then merge, or merge now and take them as
-their own piece of work — but do not merge and forget, because three of them are
-sentences in shipped documents that are currently not true.
+
+Finish them on this branch and merge, or merge now and take them as their own
+branch — either is fine, but **all six are closed before Phase 3 starts**, and
+three of them are sentences in shipped documents that are untrue until they are.
+Merging and forgetting is the one option that is not open.
 
 1. **(HIGH) Rule 3 still fails in `get_flow`.** `sourceProvenance` has exactly
    one call site (`mcp-server/server.js`, in `stepParts`). It is **not** used in
@@ -174,13 +182,60 @@ guarded by an integer check.
 
 ---
 
-## Where Phase 2 stands
+## The rule for the next session: finish Phases 0–2 before starting Phase 3
 
-**Closed, but for one bullet and four halves — and every one of those is a
-written refusal rather than an omission.** Eleven `[x]`, four `[~]`, one `[ ]`.
-Read `ROADMAP_AND_PHASES.md` §2.1 to §2.5 in full; the reasoning is there.
+**Everything that *can* be completed between Phase 0 and Phase 2 is completed
+before Phase 3 begins.** Not "mostly", and not "except the small ones". The
+inventory below is exhaustive — every unticked box in all three phases, sorted
+by whether anything can be done about it — so the decision is which of these to
+close, not which to go looking for.
 
-The refusals, so you do not re-open them by accident:
+Phase 3 starts when the "open and unblocked" list is empty and the branch is
+merged. Nothing else gates it.
+
+### Open, unblocked, and therefore yours — 7 items
+
+**Six are the review findings on this branch**, listed with their reasoning
+under "Stop here and decide" above. They are the bulk of the remaining work and
+three of them are sentences in shipped documents that are currently untrue.
+
+**The seventh is the only unticked roadmap bullet in Phases 0–2 that is neither
+blocked nor refused:**
+
+- **1.2 — module-level Zustand stores.** `[~]` today. Redux, TanStack Query and
+  React Context are read in full; Zustand only when the store arrives through a
+  context. A module-level `create()` store is reachable in principle — a
+  consumer has a `useSyncExternalStore` hook holding a `getSnapshot` — but what
+  comes back is that component's *selection*, not the store, and its only
+  identity is a function reference that does not survive a reload. A
+  `state_keys` node keyed on that accumulates one row per recording and answers
+  nothing, which is the exact shape the `v3.2.0` audit deleted.
+
+  It is deferred **on a condition** — "it waits for a mechanism with a stable
+  identity" — not refused. So this one needs a real attempt: either find that
+  mechanism and ship it, or write the refusal properly, with the argument, the
+  way the four in Phase 2 are written. A `[~]` that nobody has re-examined is
+  not the same thing as a decision. **Do not leave it as it is.**
+
+### Blocked on Phase 3 — 3 items, Phase 0
+
+These genuinely cannot be done first; they need the git integration Phase 3
+builds. They stay `[ ]`, and they are the one legitimate reason to touch Phase 3
+work at all before the list above is empty.
+
+- `git_commits` nodes
+- the `changed_in` edge
+- `git_sha` — the columns exist and are always NULL
+
+Pick them up **inside** the Phase 3 git pass rather than as a separate errand
+afterwards.
+
+### Refused, with the argument on the record — 4 items, Phase 2
+
+**These are done.** Each is a decision written out in `ROADMAP_AND_PHASES.md`
+§2.1 to §2.5, not an omission, and "complete everything completable" does not
+mean re-opening them. If you want to overturn one, the argument to beat is in
+the roadmap — but read it first.
 
 - **Periodic layout snapshots** (2.1) — a timer reading layout forces a reflow
   on every recorded page, and a snapshot taken between steps belongs to no step.
@@ -194,17 +249,17 @@ The refusals, so you do not re-open them by accident:
   to write the patch is now in place; a generator here could only be the
   template the reverted version was.
 
-## Where Phase 0 stands
+### The tally
 
-Phase 0's three remaining items — `git_commits` nodes, the `changed_in` edge,
-the `git_sha` columns — **cannot be done in this campaign at all.** They need
-Phase 3's git integration. They stay `[ ]`.
+| | Phase 0 | Phase 1 | Phase 2 |
+| --- | --- | --- | --- |
+| Open and unblocked | — | 1 (`1.2` Zustand) | — |
+| Blocked on Phase 3 | 3 | — | — |
+| Refused, on the record | — | — | 4 |
 
-## After that: Phase 3
+Plus the six review findings, which belong to 1.1 and are not roadmap bullets.
 
-With 1.1 closed, Phase 1 is complete and Phase 3 is the next body of work. Its
-git integration is also what unblocks the three Phase 0 items above, so those
-should be picked up in the same pass rather than as a separate errand.
+Everything else across all three phases is `[x]` and proved by `npm run verify`.
 
 ---
 
