@@ -14,6 +14,7 @@ import type { Step } from '../../shared/types.js';
 import { commentText, exactUrlRegex, jsLiteral, jsonLiteral } from './literals.js';
 import { planMocks } from './mocks.js';
 import { FRAGILE_WARNING, resilientSelector } from './selectors.js';
+import { STATE_PREAMBLE, hasState, stateComments } from './state.js';
 
 const DEFAULT_TEST_NAME = 'DevFlow recorded flow';
 
@@ -63,6 +64,14 @@ export function generateCypressTest(steps: Step[], testName = DEFAULT_TEST_NAME)
 
   if (mocks.length > 0 || omitted.length > 0) lines.push(``);
 
+  // The Playwright generator's block, two spaces further in — see there for why
+  // it is said once and only when there is state to explain.
+  if (hasState(steps)) {
+    lines.push(`    // --- State ---`);
+    for (const line of STATE_PREAMBLE) lines.push(line ? `    // ${line}` : `    //`);
+    lines.push(``);
+  }
+
   lines.push(`    // --- Flow ---`);
 
   if (steps[0].type !== 'navigate' && steps[0].url) {
@@ -74,11 +83,13 @@ export function generateCypressTest(steps: Step[], testName = DEFAULT_TEST_NAME)
 
     if (step.type === 'navigate') {
       lines.push(`    cy.visit(${jsLiteral(step.url)});`);
+      for (const line of stateComments(step)) lines.push(`    // ${line}`);
       continue;
     }
 
     if (step.type === 'note') {
       lines.push(`    // Note: ${commentText(step.value)}`);
+      for (const line of stateComments(step)) lines.push(`    // ${line}`);
       continue;
     }
 
@@ -95,6 +106,9 @@ export function generateCypressTest(steps: Step[], testName = DEFAULT_TEST_NAME)
     } else {
       lines.push(`    cy.${selector.cypress}.type(${jsLiteral(step.value)});`);
     }
+
+    // After the action, for the Playwright generator's reason.
+    for (const line of stateComments(step)) lines.push(`    // ${line}`);
   }
 
   lines.push(`  });`);

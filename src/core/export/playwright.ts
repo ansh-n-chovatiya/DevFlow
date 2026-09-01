@@ -14,6 +14,7 @@ import type { Step } from '../../shared/types.js';
 import { commentText, jsLiteral, jsonLiteral } from './literals.js';
 import { planMocks } from './mocks.js';
 import { FRAGILE_WARNING, resilientSelector } from './selectors.js';
+import { STATE_PREAMBLE, hasState, stateComments } from './state.js';
 
 const DEFAULT_TEST_NAME = 'DevFlow recorded flow';
 
@@ -81,6 +82,19 @@ export function generatePlaywrightTest(steps: Step[], testName = DEFAULT_TEST_NA
 
   if (mocks.length > 0 || omitted.length > 0) lines.push(``);
 
+  /*
+   * Said once, before the flow, and only when there is state to explain.
+   *
+   * A spec for a recording that read no stores should not carry a paragraph
+   * about why it carries no assertions for them — see `state.ts` for why the
+   * assertions themselves are refused.
+   */
+  if (hasState(steps)) {
+    lines.push(`  // --- State ---`);
+    for (const line of STATE_PREAMBLE) lines.push(line ? `  // ${line}` : `  //`);
+    lines.push(``);
+  }
+
   lines.push(`  // --- Flow ---`);
 
   // The recorder does not always open with a navigation — a flow can start on
@@ -95,11 +109,13 @@ export function generatePlaywrightTest(steps: Step[], testName = DEFAULT_TEST_NA
 
     if (step.type === 'navigate') {
       lines.push(`  await page.goto(${jsLiteral(step.url)});`);
+      for (const line of stateComments(step)) lines.push(`  // ${line}`);
       continue;
     }
 
     if (step.type === 'note') {
       lines.push(`  // Note: ${commentText(step.value)}`);
+      for (const line of stateComments(step)) lines.push(`  // ${line}`);
       continue;
     }
 
@@ -112,6 +128,10 @@ export function generatePlaywrightTest(steps: Step[], testName = DEFAULT_TEST_NA
     } else {
       lines.push(`  await page.${selector.playwright}.fill(${jsLiteral(step.value)});`);
     }
+
+    // After the action, not before it: this is what the interaction *did*, and
+    // a recording only ever attaches it to a step that had one.
+    for (const line of stateComments(step)) lines.push(`  // ${line}`);
   }
 
   lines.push(`});`);

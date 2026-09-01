@@ -43,15 +43,19 @@ import {
   effectsOf,
   exportToMarkdown,
   fieldFor,
+  findFeature,
   flowHost,
   flowRendering,
   formatSource,
   MACHINE_KEYS,
+  planActions,
   renderComponents,
   renderStep,
   resolve as resolveSettings,
   snippet,
+  traceValue,
   urlPath,
+  valueOfStep,
 } from './core.js';
 
 /*
@@ -1980,6 +1984,27 @@ function renderChangeSide(change, side) {
   return encoded.length <= RENDER_VALUE_CHARS ? encoded : `‹${sketchValue(value)}›`;
 }
 
+/**
+ * One folded group of DOM mutations, on one line.
+ *
+ * `in` for a structural or text change and `on` for an attribute, because the
+ * selector means two different things: a node was added *inside* that element,
+ * and an attribute was written *on* it. Getting that wrong reads as a node
+ * having been added to the button rather than to the list the button opened.
+ *
+ * Every field is treated as untrusted: a flow arrives over loopback from a page
+ * the browser visited, and a `where` that is not a string is a reply that
+ * crashes rather than one that says less.
+ */
+function domChangeLine(change, limit) {
+  const kind = typeof change.kind === 'string' ? change.kind : 'changed';
+  const where = typeof change.where === 'string' && change.where ? change.where : '(unknown)';
+  const what = typeof change.what === 'string' && change.what ? change.what : '';
+  const count = Number.isInteger(change.count) && change.count > 1 ? ` ×${change.count}` : '';
+  const preposition = kind === 'attribute' ? 'on' : 'in';
+  return `${kind}${count} ${preposition} ${truncate(where, limit)}${what ? `: ${truncate(what, limit)}` : ''}`;
+}
+
 /** `itemCount: 3 → 4`, or why there is no arrow. */
 function renderChangeLine(entry) {
   /*
@@ -2148,21 +2173,91 @@ function stepParts(flow, dir, step, render) {
 
   // ── dom ──
   {
+    /*
+     * Two observations of one step, in one part, because a reader asking what
+     * the page did is asking one question.
+     *
+     * They are not two views of one fact and neither implies the other. The
+     * delta is the *text* of the region around the element that was touched,
+     * read twice; the changes are the *structure* of the whole document, folded
+     * over the same window. A click that opens a banner in the page header has
+     * nothing in the first and one line in the second, and a button whose label
+     * became "Saving…" has the reverse.
+     */
     const delta = step.domDelta;
-    parts.dom = {
+    const shape =
+      step.domChanges && typeof step.domChanges === 'object' && !Array.isArray(step.domChanges)
+        ? step.domChanges
+        : null;
+    const changes = Array.isArray(shape?.changes)
+      ? shape.changes.filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
+      : [];
+    const capped = shape?.capped === true;
+    const more = Number.isInteger(shape?.more) && shape.more > 0 ? shape.more : 0;
+
+    const lines = [];
+
+    if (delta) {
+      lines.push(`text before: ${truncate(delta.before, render.bodyLimit)}`);
+      lines.push(`text after:  ${truncate(delta.after, render.bodyLimit)}`);
+    }
+
+    if (changes.length) {
+      if (lines.length) lines.push('');
+      for (const change of changes) lines.push(domChangeLine(change, render.bodyLimit));
+    }
+
+    if (more) {
+      lines.push(
+        `… ${more} more change${more === 1 ? '' : 's'} were observed and did not fit this ` +
+          "flow's per-step budget. The budget is spent on structural changes first, then " +
+          'text, then attributes, so what is missing is the least of what was seen.',
+      );
+    }
+
+    /*
+     * The cap is a statement about the observer and not about the page, and it
+     * is said last so it qualifies everything above it. A step that lists three
+     * changes under this listed three changes *before the observer stopped*.
+     */
+    if (capped) {
+      lines.push(
+        'The observer stopped early on this step — it reached "recording.domMutationCap" ' +
+          'and disconnected — so anything that changed after that point was never seen. ' +
+          'This is not a claim that nothing else changed.',
+      );
+    }
+
+    if (!delta && !changes.length && !capped) {
       /*
        * "Nothing changed" and "nobody was looking" are different facts and the
        * step cannot tell them apart, so the reply names both rather than
        * letting the quieter one pass as the louder.
        */
-      have: delta ? 'the text around the element changed' : 'no text change recorded',
-      lines: delta
-        ? [`before: ${truncate(delta.before, render.bodyLimit)}`, `after:  ${truncate(delta.after, render.bodyLimit)}`]
-        : [
-            'No text change was recorded on this step. Either nothing around the element visibly ' +
-              'changed, or text deltas were switched off when this flow was recorded — the header of ' +
-              'get_flow says which settings were non-default.',
-          ],
+      lines.push(
+        'No change was recorded on this step. Either nothing in the page changed, or the ' +
+          'text delta and the mutation observer were switched off when this flow was ' +
+          'recorded — the header of get_flow says which settings were non-default.',
+      );
+    }
+
+    /*
+     * Shorter when there are two of them, because the index prints this in a
+     * fixed-width column and truncates. The half that gets cut is the second,
+     * which is the half that says this part holds more than one thing — so a
+     * reader deciding whether to spend on it would be deciding against the
+     * cheaper of the two answers without knowing the other was there.
+     */
+    const said = [];
+    if (delta) said.push(changes.length ? 'a text change' : 'a text change around the element');
+    if (changes.length) {
+      said.push(`${changes.length} change${changes.length === 1 ? '' : 's'} in the page`);
+    }
+    if (!said.length && capped) said.push('nothing seen before the observer stopped');
+
+    parts.dom = {
+      have: said.length ? said.join(', ') : 'no DOM change recorded',
+      lines,
     };
   }
 
@@ -2412,6 +2507,399 @@ async function resolveSource(root, candidate) {
   if (stat.size > MAX_SOURCE_BYTES) return { reason: 'too-big', root: rootReal, bytes: stat.size };
 
   return { file: real, root: rootReal };
+}
+
+// ── Actions ────────────────────────────────────────────────────────────────
+
+/*
+ * `suggest_actions`, and the word it is careful not to earn.
+ *
+ * The roadmap calls this a *synthetic* action generator. What ships is not
+ * synthesis: every action offered was performed by a person and recorded, and
+ * the module behind it folds and filters rather than invents. The v3.2.0
+ * version invented — it returned hardcoded buttons, and took an ARKG argument it
+ * never read — so the honest version takes no graph argument at all (the graph
+ * holds no selectors and no element text, so it cannot contribute an action)
+ * and says on every answer that nothing in it is made up.
+ *
+ * That is worth stating as a strength rather than as an apology. A selector
+ * DevFlow watched resolve is worth more than one guessed from a component's
+ * name, and the value somebody actually typed into a field is worth more than
+ * "test@example.com".
+ */
+function renderActions(plan, args, flowsRead, flowsUnread) {
+  const scope = [];
+  if (typeof args.url === 'string' && args.url) scope.push(args.url);
+  if (typeof args.component === 'string' && args.component) scope.push(`in ${args.component}`);
+
+  const lines = [
+    scope.length ? `Actions recorded ${scope.join(' ')}` : 'Actions recorded across every flow',
+    '',
+    'Every action below was performed by a person and recorded. Nothing here is invented — DevFlow has ' +
+      'no model of your application, so it offers what has been done rather than what might work, and a ' +
+      'control nobody has ever touched is not here. The selector is the one the recorder chose and it ' +
+      'resolved at least once.',
+  ];
+
+  if (!plan.actions.length) {
+    lines.push('', 'No recorded action matches.');
+    if (plan.skipped.length) {
+      // Which is the whole reason the skips are counted: "this page has no
+      // recorded actions" and "you filtered them all out" are different
+      // answers, and an empty list says neither on its own.
+      lines.push('', 'What was there and did not qualify:');
+      for (const skip of plan.skipped) {
+        lines.push(`  ${skip.count} step${skip.count === 1 ? '' : 's'}  ${skip.reason}`);
+      }
+    }
+    lines.push(
+      '',
+      `Read from the ${flowsRead} most recent recording${flowsRead === 1 ? '' : 's'}. list_flows shows what else is on disk.`,
+    );
+    return lines.join('\n');
+  }
+
+  lines.push('', `${plan.actions.length} action${plan.actions.length === 1 ? '' : 's'}, most-recorded first:`);
+
+  for (const action of plan.actions) {
+    const value = typeof action.value === 'string' ? `  = ${JSON.stringify(truncate(action.value, 60))}` : '';
+    lines.push(
+      '',
+      `  ${action.kind}  ${action.label || '(no label)'}`,
+      `      ${action.selector}${value}`,
+      `      seen ${action.seen}× in ${action.flows.join(', ')}  ·  ${action.url}`,
+    );
+    if (action.fragile) {
+      // Carried through from the export compiler's own selector hierarchy: a
+      // fragile selector is one that resolved on the page as it was, and a
+      // replay is being told it may not resolve again.
+      lines.push('      the recorder marked this selector fragile — it may not resolve on a changed page');
+    }
+  }
+
+  if (plan.more) {
+    lines.push('', `${plan.more} further action${plan.more === 1 ? '' : 's'} were not listed. Raise "limit".`);
+  }
+
+  if (plan.skipped.length) {
+    lines.push('', 'Not offered:');
+    for (const skip of plan.skipped) {
+      lines.push(`  ${skip.count} step${skip.count === 1 ? '' : 's'}  ${skip.reason}`);
+    }
+  }
+
+  lines.push(
+    '',
+    `Read from the ${flowsRead} most recent recording${flowsRead === 1 ? '' : 's'}` +
+      `${flowsUnread > 0 ? `, leaving ${flowsUnread} older one${flowsUnread === 1 ? '' : 's'} unread — something done only in those is not above` : ''}.`,
+  );
+  return lines.join('\n');
+}
+
+// ── The navigator ──────────────────────────────────────────────────────────
+
+/*
+ * `explain_feature`, and the sentence it exists to keep saying.
+ *
+ * The v3.2.0 attempt at this item was stopword-matching substring filtering
+ * presented as understanding. What replaced it is still lexical matching —
+ * names and paths are what the graph holds, so names and paths are what can be
+ * matched — and the difference is that it says so, in the tool description and
+ * at the top of every answer, and that each match carries the *reason* it
+ * matched rather than a score.
+ *
+ * The second half is what makes it worth having: every match is expanded one
+ * hop through the graph's own edges, which reach the endpoint a component calls
+ * and the file it was written in whether or not those ever carried the word.
+ * The lexical match is the entry point; the graph is why the entry point is
+ * worth something. A grep gives line hits and stops.
+ */
+
+/** What each basis means, in the words the reader needs to judge the match. */
+const BASIS_REASON = {
+  'name-exact': 'its name is exactly your words',
+  'name-word': 'your word is one of the words in its name',
+  'name-part': 'your word is inside its name, but not a word of it — the weakest match here',
+  'text-word': 'your word is one of the words in its path or label',
+  'text-part': 'your word is inside its path or label as a fragment',
+};
+
+const KIND_TITLES = {
+  component: 'component',
+  endpoint: 'endpoint',
+  file: 'file',
+  flow: 'recorded flow',
+  store: 'store',
+  stateKey: 'state key',
+};
+
+/** `renders`, `calls`, `maps_to` — read out in the direction it was found. */
+function neighbourLine(neighbour) {
+  const failure =
+    typeof neighbour.failureRate === 'number' && neighbour.failureRate > 0
+      ? `, ${Math.round(neighbour.failureRate * 100)}% failed`
+      : '';
+  const seen = Number.isFinite(neighbour.frequency) ? `seen ${neighbour.frequency}×${failure}` : '';
+  return `      ${neighbour.direction === 'out' ? '→' : '←'} ${neighbour.edge}  ${neighbour.label}${seen ? `  (${seen})` : ''}`;
+}
+
+function renderFeature(description, query, neighbours, corpus) {
+  const lines = [
+    `What "${description}" points at`,
+    '',
+    'Matched by name. DevFlow does not know what your description means — it cut it into words and ' +
+      'looked for those words in the names and paths the graph holds. A name that carries the word ' +
+      'matches whether or not it is relevant, and a part of the app that uses different words is not ' +
+      'here at all.',
+  ];
+
+  if (query.terms.length) {
+    lines.push('', `Searched for: ${query.terms.join(', ')}`);
+  }
+  if (query.dropped.length) {
+    /*
+     * Reported, never hidden. "Your words narrowed nothing" and "this app has
+     * nothing by that name" are different answers, and a dropped list is the
+     * only thing that separates them for a caller who wrote a sentence of
+     * ordinary English.
+     */
+    lines.push(
+      `Ignored as too common to narrow anything: ${query.dropped.join(', ')}`,
+    );
+  }
+
+  if (!query.terms.length) {
+    lines.push(
+      '',
+      'Every word in that description is too common to search on, so nothing was looked for. Name the ' +
+        'thing the way the code probably names it — a component, a route, a field on the screen.',
+    );
+    return lines.join('\n');
+  }
+
+  if (!query.matches.length) {
+    lines.push(
+      '',
+      'Nothing in the graph carries those words.',
+      'That is a statement about vocabulary, not about the application: a checkout implemented as ' +
+        'PurchaseFlow and /api/orders answers to neither "checkout" nor "flow". Try a word you have ' +
+        'seen in the code or in a URL, or call get_app_architecture for the names the graph does hold.',
+    );
+    return lines.join('\n');
+  }
+
+  lines.push('', `${query.matches.length} match${query.matches.length === 1 ? '' : 'es'}, strongest first:`);
+
+  for (const match of query.matches) {
+    const kind = KIND_TITLES[match.entity.kind] ?? match.entity.kind;
+    lines.push(
+      '',
+      `  ${kind}  ${match.entity.name}`,
+      `      ${match.basis} — ${BASIS_REASON[match.basis] ?? 'it carries your words'} (${match.terms.join(', ')})`,
+    );
+    if (match.entity.text) lines.push(`      ${match.entity.text}`);
+
+    const linked = neighbours.get(`${match.entity.kind}:${match.entity.id}`) ?? [];
+    if (linked.length) {
+      // The half the word never had to reach. Labelled as observation, because
+      // an edge in this graph is something a recording saw rather than
+      // something the code declares.
+      lines.push('      connected to, from what has been observed:');
+      for (const neighbour of linked) lines.push(neighbourLine(neighbour));
+    }
+  }
+
+  if (query.more) {
+    lines.push(
+      '',
+      `${query.more} further match${query.more === 1 ? '' : 'es'} were not expanded. Raise "limit", or ` +
+        'narrow the description.',
+    );
+  }
+
+  if (corpus.truncated) {
+    /*
+     * A graph larger than the corpus cap. Said out loud because the alternative
+     * is answering "nothing matched" about a component the graph holds and this
+     * never looked at, which is the one wrong answer available here.
+     */
+    lines.push(
+      '',
+      `This graph holds more than ${corpus.perKind} of some kind of node, so the search covered the ` +
+        `${corpus.perKind} most-observed of each — the most *recent* ${corpus.perKind}, for recorded ` +
+        'flows, which have no observation count. Something rarely or long-ago seen may exist and not be above.',
+    );
+  }
+
+  lines.push(
+    '',
+    'get_component_history opens any component named above, get_app_architecture is the whole graph, ' +
+      'and list_flows finds the recordings behind it.',
+  );
+  return lines.join('\n');
+}
+
+// ── Provenance ─────────────────────────────────────────────────────────────
+
+/*
+ * `get_value_provenance`, and the sentence it must never stop saying.
+ *
+ * The mechanism is a search for one value across four independent observations
+ * of one recording — the bodies the server sent, the writes the stores took,
+ * the values components were handed, the text the page showed. It is not a
+ * data-flow trace, and the gap between those two matters most exactly when the
+ * answer looks best: four layers agreeing on `£42.00` is one value travelling,
+ * and four layers agreeing on `2` is a coincidence four times over. So the
+ * reply opens by saying what it did rather than closing with a caveat, and a
+ * short value is called short where the reader cannot miss it.
+ *
+ * The layer order is the direction data flows through a React application, and
+ * it is presentation only. Nothing here concludes that the response caused the
+ * render. `get_causal_chain` makes causal claims, out of evidence about events.
+ */
+
+/** The step's own number, or its position, exactly as `stepParts` reckons it. */
+function stepNumberOf(step, index) {
+  return typeof step?.stepNumber === 'number' ? step.stepNumber : index + 1;
+}
+
+/** A component id resolved to the name it was written under, when the flow says. */
+function componentLabel(flow, id) {
+  const named = flow.react?.components?.[id];
+  return named && typeof named.name === 'string' && named.name ? `${named.name} (${id})` : id;
+}
+
+/** One line of a provenance answer. A dozen of them is the whole reply. */
+const PROVENANCE_LINE = 300;
+
+const LAYER_TITLES = {
+  response: 'response — what the server sent',
+  store: 'store — what the app wrote down',
+  render: 'render — what a component was handed',
+  dom: 'dom — what the page showed',
+};
+
+function renderProvenance(flow, result, from) {
+  const lines = [
+    `Where ${JSON.stringify(result.value)} came from — "${flow.name}"${from ? `, traced from ${from}` : ''}`,
+    '',
+    'DevFlow did not watch this value move. It looked for the same value in four independent ' +
+      'observations of this recording and reports where it turned up, in the order data flows through ' +
+      'an application. Two sightings in adjacent layers are two sightings and not a link.',
+  ];
+
+  if (result.collides) {
+    /*
+     * Said before the findings rather than after them. A reader who has already
+     * read a four-layer answer has drawn the conclusion, and a caveat
+     * underneath it arrives too late to be the thing that stops them.
+     */
+    lines.push(
+      '',
+      `${JSON.stringify(result.value)} is short enough that an equal string is as likely to be a ` +
+        'coincidence as a sighting. Everything below may be unrelated. Trace something distinctive — ' +
+        'an order number, a formatted price, a name — if you can see one beside it.',
+    );
+  }
+
+  const byLayer = new Map();
+  for (const hit of result.hits) {
+    if (!byLayer.has(hit.layer)) byLayer.set(hit.layer, []);
+    byLayer.get(hit.layer).push(hit);
+  }
+
+  if (!result.hits.length) {
+    lines.push(
+      '',
+      'It was not found in any layer this recording carries.',
+      'That is a fact about the recording as much as about the value: a flow captures what it was ' +
+        'configured to capture, and the header of get_flow says which settings were non-default.',
+    );
+  }
+
+  for (const [layer, hits] of byLayer) {
+    lines.push('', LAYER_TITLES[layer] ?? layer);
+    for (const hit of hits) {
+      /*
+       * Capped, like every other renderer in this file. `where` and `detail`
+       * carry a URL, a JSON pointer built out of a body's own keys, a patch
+       * path and a component's name — all of them text a recorded page chose,
+       * arriving over loopback from any site the browser visited. A single
+       * 200KB key would otherwise be one line of the answer.
+       */
+      const where = layer === 'render' ? renderWhere(flow, hit.where) : hit.where;
+      lines.push(`  step ${hit.step}  ${truncate(String(where ?? ''), PROVENANCE_LINE)}`);
+      lines.push(
+        `      ${hit.match === 'exact' ? 'the whole value' : 'inside a longer value'} — ${truncate(String(hit.detail ?? ''), PROVENANCE_LINE)}`,
+      );
+    }
+    const over = result.more?.[layer];
+    if (over) {
+      lines.push(
+        `  … ${over} more sighting${over === 1 ? '' : 's'} in this layer, above what one answer prints.`,
+      );
+    }
+  }
+
+  if (result.unsearched.length) {
+    /*
+     * The half of this tool that stops it lying. "The value is not in a
+     * response" and "this recording has no responses" are different answers,
+     * they look identical as an absent layer, and a reader with no way to tell
+     * takes the first — which is a claim about the server.
+     */
+    lines.push('', 'Not searched, because this recording carries nothing for it:');
+    for (const gap of result.unsearched) lines.push(`  ${gap.layer}  ${gap.reason}`);
+  }
+
+  lines.push(
+    '',
+    'get_causal_chain links events by evidence about the events themselves; this links nothing. ' +
+      'get_flow_step opens any step named above, and get_state_patch has the whole of any store write.',
+  );
+  return lines.join('\n');
+}
+
+/** A render hit's `where`, with the component id resolved to a name. */
+function renderWhere(flow, where) {
+  const cut = where.indexOf('  ');
+  if (cut === -1) return componentLabel(flow, where);
+  return `${componentLabel(flow, where.slice(0, cut))}${where.slice(cut)}`;
+}
+
+/**
+ * The steps with a value worth asking about.
+ *
+ * Cheap, and it is what makes the expensive call right: the caller is looking
+ * at a walkthrough or a screenshot, and what they need first is which of the
+ * things on it this recording can actually speak to.
+ */
+function renderProvenanceIndex(flow, steps) {
+  const lines = [
+    `Values this recording can trace — "${flow.name}"`,
+    '',
+    'Each step below showed or received text that get_value_provenance can look for across the ' +
+      'recording. Call it with "step" to trace one of these, or with "value" for anything else you ' +
+      'can see — a value in a screenshot, a number in a walkthrough.',
+    '',
+  ];
+
+  let found = 0;
+  steps.forEach((step, index) => {
+    const value = valueOfStep(step);
+    if (!value) return;
+    found++;
+    lines.push(`  step ${stepNumberOf(step, index)}  ${truncate(value, 80)}`);
+  });
+
+  if (!found) {
+    lines.push(
+      '  No step in this recording showed text to trace. Every step is a navigation, a note, or an ' +
+        'element with no label and no content — pass a "value" you can see instead.',
+    );
+  }
+
+  return lines.join('\n');
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -2819,6 +3307,95 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           depth: { type: 'number', description: 'How many links to walk forward. Defaults to 8.' },
         },
         required: ['id'],
+      },
+    },
+    {
+      name: 'get_value_provenance',
+      description:
+        'Where one value on the screen came from, across one recording: the response body that carried ' +
+        'it, the store write that took it, the component that was handed it, and the element that showed ' +
+        'it. Read what it is before you read what it says — DevFlow did not watch the value move. It has ' +
+        'four independent observations of the recording and this looks for the same value in all four, so ' +
+        'a distinctive value found in three layers is overwhelmingly one value travelling, and a short one ' +
+        'found in three layers is a coincidence three times over. The reply says which, and names any ' +
+        'layer the recording never captured rather than letting it read as "not found there". Give it a ' +
+        '"value" to trace, or a "step" whose element text it should trace; with neither it lists the steps ' +
+        'that have a value worth asking about.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+          value: {
+            type: 'string',
+            description:
+              'The text to trace, as it appears on screen — "£42.00", an order number, a name. Compared as text, so a number typed here finds a number the server sent.',
+          },
+          step: {
+            type: 'number',
+            description:
+              'Trace what this step’s element said instead. Ignored when "value" is given. A recording has no node ids — an element is described, not addressed — so the value it showed is the handle that exists.',
+          },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'explain_feature',
+      description:
+        'Which parts of this application a description points at: the components, endpoints, source ' +
+        'files, recorded flows and stores whose names carry your words, and — through the graph’s own ' +
+        'edges — what each of those is connected to. Read how it works before you read what it says: the ' +
+        'match is **lexical**. It lower-cases your description, cuts it into words, and looks for those ' +
+        'words in names and paths. It does not know what checkout is. A component called Cart matches ' +
+        '"cart" whether or not it has anything to do with a shopping cart, and a feature written as ' +
+        'PurchaseFlow is not found by "checkout" at all — so silence here means your words did not ' +
+        'overlap the code’s, never that the feature is absent. What makes it worth more than a grep is ' +
+        'the second half: every match is expanded one hop through the accumulated graph, which reaches ' +
+        'the endpoint a component calls and the file it was written in whether or not those carried the ' +
+        'word. Each match says why it matched, in words rather than a score.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          description: {
+            type: 'string',
+            description:
+              'What you are looking for, in your own words — "the checkout flow", "cart badge", "invoice totals". Common words are dropped and the reply says which.',
+          },
+          limit: {
+            type: 'number',
+            description: 'Matches to expand. Defaults to 8; the reply counts anything beyond it.',
+          },
+        },
+        required: ['description'],
+      },
+    },
+    {
+      name: 'suggest_actions',
+      description:
+        'What can be done on a page, according to every recording DevFlow holds of it: the clicks and ' +
+        'the fields, with the selector the recorder chose and the value that was actually typed, folded ' +
+        'across flows so the action three recordings performed is one row saying three. Read what it is ' +
+        'before you use it — **nothing here is invented.** Every action was performed by a person and ' +
+        'recorded; DevFlow has no model of your application, so it offers what has been done rather than ' +
+        'what might work, and a control nobody has ever touched is not below. That is the point rather ' +
+        'than the limitation: for reproducing a bug, the things people actually do on a page are a ' +
+        'better starting set than anything guessed, and they come with a selector that resolved at least ' +
+        'once. Filter by "url", by "component", or by both.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: {
+            type: 'string',
+            description:
+              'Only actions performed on this page. Compared on origin and path, so a query string does not split one page into several.',
+          },
+          component: {
+            type: 'string',
+            description:
+              'Only actions inside this component — an id from get_app_architecture or from a flow’s component table.',
+          },
+          limit: { type: 'number', description: 'Actions to return. Defaults to 20.' },
+        },
       },
     },
     {
@@ -4471,6 +5048,151 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
           'get_flow_step opens any step named above.',
       );
       return text(lines.join('\n'));
+    }
+
+    case 'get_value_provenance': {
+      let flow;
+      try {
+        flow = await readFlow(args.id);
+      } catch (error) {
+        return readFailure(error, args.id);
+      }
+
+      const steps = Array.isArray(flow.json.steps) ? flow.json.steps : [];
+      const asked = typeof args.value === 'string' ? args.value.trim() : '';
+
+      /*
+       * A step named instead of a value: trace what that element said.
+       *
+       * This is as close as a recording comes to the "DOM node id" the feature
+       * was planned around. A flow describes an element — tag, text, label,
+       * selector — and addresses none, so the value it showed is the handle
+       * that exists, and saying that out loud is cheaper than inventing an id
+       * scheme nothing else in the product uses.
+       */
+      let needle = asked;
+      let from = '';
+      if (!needle && Number.isFinite(Number(args.step))) {
+        const wanted = Math.trunc(Number(args.step));
+        const step = steps.find((entry, index) => stepNumberOf(entry, index) === wanted);
+        if (!step) {
+          return failure(
+            `"${flow.json.name}" has no step ${wanted}. It has ${steps.length} step${steps.length === 1 ? '' : 's'}; get_flow lists them.`,
+          );
+        }
+        needle = valueOfStep(step);
+        from = `step ${wanted}`;
+        if (!needle) {
+          return failure(
+            `Step ${wanted} of "${flow.json.name}" showed no text to trace — it is a navigation, a note, ` +
+              'or an element with no label and no content. Call get_value_provenance with a "value" ' +
+              'instead; get_flow_step returns what the step does carry.',
+          );
+        }
+      }
+
+      /*
+       * Neither: list what there is to ask about rather than refusing.
+       *
+       * `get_causal_chain`'s discipline — a tool whose first answer is "that is
+       * not valid" has made the caller guess. Here the caller has a screenshot
+       * or a walkthrough in front of them and needs to know which of the things
+       * on it this recording can actually speak to.
+       */
+      if (!needle) return text(renderProvenanceIndex(flow.json, steps));
+
+      const result = traceValue(flow.json, needle);
+      return text(renderProvenance(flow.json, result, from));
+    }
+
+    case 'explain_feature': {
+      if (!arkg) return failure(NO_GRAPH);
+
+      const description = typeof args.description === 'string' ? args.description.trim() : '';
+      if (!description) {
+        return failure(
+          'explain_feature needs a "description" — what you are looking for, in your own words. It ' +
+            'matches your words against the names in the graph, so name the thing the way the code ' +
+            'probably names it: "cart badge", "invoice totals", "the checkout flow".',
+        );
+      }
+
+      const corpus = arkgTry('navigator corpus', (graph) => graph.getNamedEntities());
+      if (!corpus || !corpus.entities.length) {
+        return failure(
+          'The knowledge graph holds nothing to search yet. Record a flow and send it, or pick a ' +
+            'component in the DevFlow panel; get_app_architecture says what the graph does hold.',
+        );
+      }
+
+      const limit = Number.isFinite(Number(args.limit)) && Number(args.limit) > 0
+        ? Math.min(40, Math.trunc(Number(args.limit)))
+        : 8;
+
+      const query = findFeature(description, corpus.entities, limit);
+      const neighbours = new Map();
+      for (const match of query.matches) {
+        neighbours.set(
+          `${match.entity.kind}:${match.entity.id}`,
+          arkgTry('navigator neighbours', (graph) =>
+            graph.getNeighbours(match.entity.kind, match.entity.id),
+          ) ?? [],
+        );
+      }
+
+      return text(renderFeature(description, query, neighbours, corpus));
+    }
+
+    case 'suggest_actions': {
+      const metas = await listAllFlows();
+      if (!metas.length) {
+        return text(
+          `No flows recorded yet (looking in ${FLOWS_DIR}). This tool reads what people have actually ` +
+            'done on a page, so it has nothing to offer until a recording has been sent.',
+        );
+      }
+
+      /*
+       * The most recent recordings, and no more.
+       *
+       * Every flow read is a `flow.json` off disk, and a library of two hundred
+       * is a library rather than an investigation. The bound is said out loud
+       * below when it bit, for `explain_feature`'s reason: a tool that answers
+       * "nothing was recorded on that page" about flows it never opened has
+       * given the one wrong answer available to it.
+       */
+      const READ_FLOWS = 25;
+      const opened = metas.slice(0, READ_FLOWS);
+
+      const observed = [];
+      for (const meta of opened) {
+        try {
+          const { json } = await readFlow(meta.id);
+          observed.push({
+            id: meta.id,
+            name: typeof json.name === 'string' ? json.name : meta.id,
+            steps: Array.isArray(json.steps) ? json.steps : [],
+          });
+        } catch {
+          // A flow whose steps cannot be read contributes nothing and is not an
+          // error: the other twenty-four still answer the question.
+        }
+      }
+
+      const limit = Number.isFinite(Number(args.limit)) && Number(args.limit) > 0
+        ? Math.min(100, Math.trunc(Number(args.limit)))
+        : 20;
+
+      const plan = planActions(
+        observed,
+        {
+          ...(typeof args.url === 'string' && args.url ? { url: args.url } : {}),
+          ...(typeof args.component === 'string' && args.component ? { component: args.component } : {}),
+        },
+        limit,
+      );
+
+      return text(renderActions(plan, args, observed.length, metas.length - opened.length));
     }
 
     case 'get_app_architecture': {

@@ -1967,6 +1967,187 @@ export function getBlastRadius(sourceFile, lineStart, lineEnd) {
  * something to say. `totalFlows` of 0 alongside a component list is a state the
  * caller has to render, not a state this refuses to report.
  */
+/**
+ * Every named thing in the graph, reduced to the text it can be found by.
+ *
+ * This is the corpus `core/navigator` searches, and it is deliberately a dumb
+ * projection: an id, what the thing is called, and one secondary string worth
+ * matching. The matching itself is pure and lives in `src/core/`, where it can
+ * be tested without a database — the same split `buildCausalGraph` and the
+ * causal tools make.
+ *
+ * Bounded per kind and ordered by how often each was observed — except recorded
+ * flows, which have no observation count and are ordered by recency instead.
+ * The caller is told which, because "the most observed" and "the most recent"
+ * are different sets and the reply says one of them out loud. A graph that has outgrown the cap would otherwise
+ * answer "nothing matched" for a component it holds and never looked at, which
+ * is the one answer this must not give silently.
+ */
+export function getNamedEntities(perKind = 2000) {
+  if (!db) return null;
+
+  const cap = Math.max(1, Math.trunc(perKind));
+  const entities = [];
+  let truncated = false;
+
+  /** One table's rows, capped, with the cap recorded rather than hidden. */
+  const take = (table, query, toEntity) => {
+    const total = sql(`SELECT COUNT(*) as n FROM ${table}`).get()?.n ?? 0;
+    if (total > cap) truncated = true;
+    for (const row of sql(query).all(cap)) entities.push(toEntity(row));
+  };
+
+  take(
+    'arkg_components',
+    'SELECT id, display_name, source_file FROM arkg_components ORDER BY frequency DESC, id LIMIT ?',
+    (row) => ({
+      kind: 'component',
+      id: row.id,
+      name: row.display_name,
+      // The path is secondary text rather than a name: a component in
+      // `src/checkout/Total.tsx` is worth finding for "checkout", and it is a
+      // weaker answer than one actually called `Checkout`.
+      ...(row.source_file ? { text: row.source_file } : {}),
+    }),
+  );
+
+  take(
+    'arkg_api_endpoints',
+    'SELECT id, method, url_pattern FROM arkg_api_endpoints ORDER BY frequency DESC, id LIMIT ?',
+    (row) => ({ kind: 'endpoint', id: row.id, name: `${row.method} ${row.url_pattern}` }),
+  );
+
+  take(
+    'arkg_source_files',
+    'SELECT id, path FROM arkg_source_files ORDER BY frequency DESC, id LIMIT ?',
+    (row) => ({ kind: 'file', id: row.id, name: row.path }),
+  );
+
+  take(
+    'arkg_named_flows',
+    // Recency, not frequency: a flow is one recording and is observed once, so
+    // there is no count to order by. See this function's header.
+    'SELECT id, name, host FROM arkg_named_flows ORDER BY last_observed_at DESC, id LIMIT ?',
+    (row) => ({
+      kind: 'flow',
+      id: row.id,
+      name: row.name,
+      ...(row.host ? { text: row.host } : {}),
+    }),
+  );
+
+  take(
+    'arkg_state_stores',
+    'SELECT id, kind, label FROM arkg_state_stores ORDER BY frequency DESC, id LIMIT ?',
+    (row) => ({
+      kind: 'store',
+      id: row.id,
+      name: row.label ? `${row.kind} ${row.label}` : row.kind,
+    }),
+  );
+
+  take(
+    'arkg_state_keys',
+    'SELECT id, key_name, store_kind, store_label FROM arkg_state_keys ORDER BY frequency DESC, id LIMIT ?',
+    (row) => ({
+      kind: 'stateKey',
+      id: row.id,
+      name: row.key_name,
+      text: row.store_label ? `${row.store_kind} ${row.store_label}` : row.store_kind,
+    }),
+  );
+
+  return { entities, truncated, perKind: cap };
+}
+
+/** The node types the navigator's entity kinds correspond to in `arkg_edges`. */
+const NAVIGATOR_NODE_TYPE = {
+  component: 'component',
+  endpoint: 'api_endpoint',
+  file: 'source_file',
+  flow: 'named_flow',
+  store: 'state_store',
+  stateKey: 'state_key',
+};
+
+/**
+ * What one matched entity is connected to, one hop out.
+ *
+ * This is the half that makes `explain_feature` worth more than a grep. The
+ * match is lexical and reaches only things that carry the word; the edges reach
+ * the endpoint a component calls, the file it was written in and the store it
+ * subscribes to — none of which need ever have carried the word at all.
+ *
+ * Both directions, because an edge's direction is about the relationship and
+ * not about which end the reader started from: a component's `calls` edges
+ * point out of it, and the `maps_to` edge that names its file points out too,
+ * while a search that landed on the *file* wants the same edge read backwards.
+ */
+export function getNeighbours(kind, id, limit = 12) {
+  if (!db) return [];
+  const nodeType = NAVIGATOR_NODE_TYPE[kind];
+  if (!nodeType) return [];
+
+  const rows = sql(
+    `SELECT type, from_node_type, from_node_id, to_node_type, to_node_id, frequency, failure_rate
+       FROM arkg_edges
+      WHERE (from_node_type = ? AND from_node_id = ?) OR (to_node_type = ? AND to_node_id = ?)
+      ORDER BY frequency DESC
+      LIMIT ?`,
+  ).all(nodeType, id, nodeType, id, Math.max(1, Math.trunc(limit)));
+
+  const out = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const outward = row.from_node_type === nodeType && row.from_node_id === id;
+    const otherType = outward ? row.to_node_type : row.from_node_type;
+    const otherId = outward ? row.to_node_id : row.from_node_id;
+    const key = `${row.type}|${otherType}|${otherId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      edge: row.type,
+      direction: outward ? 'out' : 'in',
+      nodeType: otherType,
+      id: otherId,
+      label: nodeLabel(otherType, otherId),
+      frequency: row.frequency,
+      failureRate: row.failure_rate,
+    });
+  }
+  return out;
+}
+
+/** What one node is called, or its id when the node is gone. */
+function nodeLabel(nodeType, id) {
+  const row = (() => {
+    switch (nodeType) {
+      case 'component':
+        return sql('SELECT display_name AS label FROM arkg_components WHERE id = ?').get(id);
+      case 'api_endpoint':
+        return sql(
+          "SELECT method || ' ' || url_pattern AS label FROM arkg_api_endpoints WHERE id = ?",
+        ).get(id);
+      case 'source_file':
+        return sql('SELECT path AS label FROM arkg_source_files WHERE id = ?').get(id);
+      case 'named_flow':
+        return sql('SELECT name AS label FROM arkg_named_flows WHERE id = ?').get(id);
+      case 'state_store':
+        return sql(
+          "SELECT COALESCE(kind || ' ' || label, kind) AS label FROM arkg_state_stores WHERE id = ?",
+        ).get(id);
+      case 'state_key':
+        return sql('SELECT key_name AS label FROM arkg_state_keys WHERE id = ?').get(id);
+      default:
+        return null;
+    }
+  })();
+  // An edge whose other end was pruned. Named by its id rather than dropped:
+  // the edge was observed, and an answer that quietly loses it is smaller
+  // without being more accurate.
+  return row?.label ?? id;
+}
+
 export function getAppArchitecture() {
   if (!db) return null;
 

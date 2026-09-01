@@ -47,7 +47,7 @@ import {
 const tier2 = (FIELDS as readonly Field[]).filter((field) => field.tier === 2);
 
 describe('the table', () => {
-  it('wires all thirty-seven, so the disclosure holds no control that does nothing', () => {
+  it('wires all thirty-nine, so the disclosure holds no control that does nothing', () => {
     /*
      * the list reads as twenty-two because it pairs four of them off —
      * `BUNDLE_CACHE_ENTRIES / BUNDLE_CACHE_BYTES`, `REACT_BUFFER_SIZE / _TTL_MS`
@@ -71,8 +71,17 @@ describe('the table', () => {
      * shape of what is sampled and not whether it is sampled — and the first of
      * them is the only number in this table whose cost is paid inside the
      * user's own click.
+     *
+     * The last two are the mutation observer's, and they are two rather than
+     * one because they bound different things: `recording.domMutationCap` is
+     * how much *work* one step may cost and is enforced in the observer's own
+     * callback, and `recording.domMaxChanges` is how much of the *recording*
+     * one step may spend and is enforced after the folding. A single number set
+     * low enough to keep a step readable would stop watching after a dozen
+     * records; set high enough to watch a real interaction it would print four
+     * hundred lines.
      */
-    expect(tier2).toHaveLength(37);
+    expect(tier2).toHaveLength(39);
     expect(tier2.filter((field) => field.wired !== true)).toEqual([]);
     expect(WIRED).toHaveLength(FIELDS.length);
   });
@@ -106,7 +115,7 @@ describe('the table', () => {
     expect(consequenceApplies(field('react.bundleCacheBytes'), 400 * 1024 * 1024, true)).toBe(true);
   });
 
-  it('freezes the fifteen that shape a recording, and leaves the rest live', () => {
+  it('freezes the twenty-three that shape a recording, and leaves the rest live', () => {
     /*
      * The freeze, applied to Tier 2. A setting the *recorder* reads while a recording
      * runs has to be frozen or the flow describes two rules at once; a setting
@@ -129,6 +138,15 @@ describe('the table', () => {
      * next would report a component as having re-rendered in the second and not
      * the first, with nothing in the recording to say the cap had moved rather
      * than the app.
+     *
+     * And the mutation observer's two, for the same argument a third time: a
+     * step whose observer watched four hundred records and a step whose
+     * observer watched twenty are not comparable, and `StepDomChanges.capped`
+     * says the observer stopped without being able to say what it stopped at.
+     *
+     * The count in this test's name has been wrong before. It is asserted
+     * below, so it cannot silently drift again — but a number in a sentence is
+     * not asserted by anything, and the sentence is the half a reader believes.
      */
     const frozenT2 = tier2.filter((f) => f.recorded === true).map((f) => f.key).sort();
     expect(frozenT2).toEqual([
@@ -140,6 +158,8 @@ describe('the table', () => {
       'react.maxComponentChain',
       'react.maxFiberWalk',
       'react.prewarmTtlMs',
+      'recording.domMaxChanges',
+      'recording.domMutationCap',
       'recording.renderMaxChanges',
       'recording.renderMaxComponents',
       'recording.renderNodeCap',

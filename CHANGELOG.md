@@ -2,6 +2,119 @@
 
 ## Unreleased
 
+**An adversarial review of the three work streams above found five defects and
+they are fixed.** The mutation observer described every folded group and then
+kept twelve of them, which meant up to four hundred selectors built and three
+hundred and eighty-eight thrown away — each one a document query, synchronously
+inside the user's next click, which is the cost profile the reverted attempt was
+reverted for relocated one function along; the budget is now spent before the
+work rather than after it. The refusal of `<style>` and `<script>` applied only
+to nodes that came and went, so a stylesheet appended once and then written
+through — what Vite's HMR and styled-components do in development — was reported
+as a text change ranking above every attribute change. `get_value_provenance`
+told the reader a recording had never sampled renders when the sender had merely
+unchecked React, which is a claim about the recording manufactured from a
+checkbox. It also threw rather than answering on a flow whose fields were not
+the types they should be, which any page that can reach the loopback port can
+send. And describing a mutation ran unguarded ahead of the step being saved, so
+a page that made a node undescribable would have lost the step, its screenshot
+and its component chain along with the summary.
+
+Two claims that outran the code have been corrected rather than defended: the
+mutation window opens when the step is *written*, which for typing is after the
+input debounce and not at the first keystroke, and "closed by the next
+interaction" holds for element steps rather than for navigations and notes.
+
+**`suggest_actions` says what can be done on a page, out of what has been done
+on it.** Every click and every field somebody has recorded there, folded across
+recordings so an action three flows performed is one row saying three, with the
+selector the recorder chose, the value that was actually typed, and a mark on a
+selector the compiler already considers fragile. Nothing in it is invented, and
+the reply says so every time: DevFlow has no model of the application, so a
+control nobody has ever touched is not in the list. That is the point rather
+than the limitation — a selector DevFlow watched resolve is worth more than one
+guessed from a component's name. Steps that did not qualify are counted with a
+reason, because "this page has no recorded actions" and "you filtered them all
+out" read identically as an empty list, and so does "the tool only opened the
+twenty-five most recent recordings", which it also says.
+
+**`explain_feature` turns a description into the parts of the app it points at,
+and is honest about how it got there.** Ask it for "the cart badge" or "invoice
+totals" and it returns the components, endpoints, source files, recorded flows
+and stores whose names carry those words — then expands each one hop through the
+accumulated graph, which is the half that reaches the endpoint a component calls
+and the file it was written in whether or not those ever carried the word. The
+match itself is lexical and the tool says so at the top of every answer rather
+than in a footnote: it splits names the way code writes them, so "cart" matches
+`CartBadge` as a word and `art` matches it only as a fragment and is ranked as
+one, and every match carries the reason it matched instead of a score. It says
+which of your words it ignored as too common, and it says that an empty answer
+means your words did not overlap the code's — never that the feature is absent.
+
+**`get_value_provenance` answers where one value on the screen came from — and
+says what kind of answer it is.** Given a price, an order number or the text of
+a step's element, it reports the response body that carried it, the store write
+that took it, the component that was handed it and the element that showed it,
+in the order data flows through an application. The mechanism is a search across
+four independent observations of one recording rather than a data-flow trace,
+and the reply opens with that rather than closing with it: a distinctive value
+found in three layers is overwhelmingly one value travelling, a short one found
+in three layers is a coincidence three times over, and the tool says which it is
+holding before it says what it found. Layers the recording never captured are
+named as unsearched, because "not in a response" and "this flow has no
+responses" look identical as an absent section.
+
+**A recording can say what the interaction did to the page, and not only to the
+region around the button.** A MutationObserver watches the whole document for
+the length of each step and reports what appeared, what went, and what was
+rewritten, anywhere in it — a click on a form's submit button that opens an
+error banner in the page header produces nothing in the existing text delta and
+one line here. It sits beside that delta rather than replacing it: one reads the
+text of one region twice, the other reads the structure of the document once,
+and neither is derivable from the other. Off with `recording.domMutations`.
+
+**Its budget is two numbers because there are two costs.** The v3.2.0 attempt at
+this pushed every mutation record on the document into an array with no cap and
+no throttle. `recording.domMutationCap` bounds the *work* — the observer
+disconnects itself when it reaches it, so a page running a sixty-frames-a-second
+transition costs a step that many records and no more — and
+`recording.domMaxChanges` bounds the *recording*, after repeats are folded, so a
+hundred rows appended to one list is one line saying a hundred rather than a
+hundred lines. What survives the second is structural change first, then text,
+then attributes, and `style` last of all: ordering by how *often* something
+changed puts the CSS transition above the dialog that opened, and does it worst
+on the steps somebody opened because something happened.
+
+**A step whose observer stopped says so, and never that nothing else changed.**
+The window opens when the step is written and closes `recording.domDeltaMs`
+later or when the next element step is written, whichever comes first, so a
+mutation belongs to exactly one step. For a click those two moments are the
+same; for typing the recorder commits a whole field as one step after the input
+debounce, so a typed step's window starts once the typing has stopped — the same
+schedule the existing text delta has always read its region on. DevFlow's own recording indicator is refused by name — it is removed
+and re-added around every screenshot, so without that every step of every flow
+would open with a div appearing and going in `<body>` — and so are the `<style>`
+and `<script>` tags a CSS-in-JS runtime and a code-split route append. Attribute
+values are reported as they settled, not as they passed through.
+
+**`get_step_detail`'s `dom` part now carries both observations, priced as one.**
+Each folded change is a line naming what changed and the element it changed in —
+or *on*, for an attribute, because the two prepositions mean different things —
+with its count when it was folded, the number of changes that did not fit the
+budget, and, last so it qualifies everything above it, whether the observer was
+cut short.
+
+**A flow compiled to a Playwright or Cypress spec now carries what the app's
+stores did, beside the step that did it.** As comments, and the file says why:
+DevFlow reads a store by walking React's fiber tree from inside the page, a test
+runner has no handle on that, and generating the walk into a spec would tie a
+suite to React internals — where the failure mode is a red test reporting a bug
+in the application that is not there. The observation is what the compiler can
+honestly carry, and it is the answer to *what should I assert here*. Both of the
+flags that change what a patch means travel with it: a snapshot cut at its caps
+is a bounded view of the store, and folded operations are coarser than the ones
+the app made.
+
 **A recording can say which components re-rendered across each step, and it
 learns it by looking rather than by joining in.** The page agent takes the two
 readings of the fiber tree it already takes for state — one inside the click,

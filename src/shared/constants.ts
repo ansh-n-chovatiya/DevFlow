@@ -144,6 +144,19 @@ export const AGENT_MESSAGE_SOURCE = 'devflow-agent';
 
 /** DOM id of the on-page recording indicator. */
 /** Tier 3 — not configurable. A DOM identifier, not a preference. */
+/**
+ * The prefix on the id of every element DevFlow puts into a page.
+ *
+ * `INDICATOR_ID` below carries it, and so do the picker's `devflow-pick-box`
+ * and `devflow-pick-label` in `injected/overlay.ts`. It is a constant rather
+ * than a convention because something now depends on it: the mutation observer
+ * in `content/index.ts` has to be able to tell the page's changes from
+ * DevFlow's own, and it is DevFlow's own that would otherwise dominate — the
+ * recording indicator is removed and re-added around every screenshot, so every
+ * step would open with a div appearing and going in `<body>`.
+ */
+export const DEVFLOW_ELEMENT_PREFIX = 'devflow-';
+
 export const INDICATOR_ID = 'devflow-indicator';
 
 /**
@@ -423,6 +436,58 @@ export const DOM_DELTA_MS = 700;
 /** Visible text worth keeping from one region. Two lines of prose, roughly. */
 export const CONTAINER_TEXT_CAP = 240;
 
+// ── What the document did ────────────────────────────────────────────────────
+//
+// The structural half of the same question `DOM_DELTA_MS` asks about text. The
+// text delta reads one region — the one around the element that was touched —
+// twice, and says what it said. This watches the *whole document* for the same
+// window and says what appeared, went, or was re-attributed anywhere in it: a
+// banner that opened in the page header is invisible to a region read around a
+// button at the foot of a form.
+//
+// The reverted v3.2.0 attempt pushed every `MutationRecord` on the document
+// into an array with no cap and no throttle, on every page, for the length of
+// the recording. Both numbers below exist because of that, and they bound two
+// different things: how much *work* one step may cost, and how much of the
+// *recording* one step may spend.
+
+/**
+ * Mutation records one step's observer may process before it gives up.
+ *
+ * The work bound, and the observer disconnects itself when it bites — so the
+ * cost of a step on a page that animates is this number, not the page's. Four
+ * hundred is generous for a click that opens a dialog and mean for a page
+ * running a sixty-frames-a-second transition, which is the split it is for.
+ *
+ * A step whose observer stopped here says so (`StepDomChanges.capped`), because
+ * "nothing else changed" and "nobody was still watching" are the two readings
+ * of the same empty list.
+ */
+export const DOM_MUTATION_CAP = 400;
+
+/**
+ * Distinct changes one step may report.
+ *
+ * The recording bound, spent after folding: a hundred rows appended to one list
+ * is *one* change with a count of a hundred, not a hundred entries. Twelve is
+ * about what a reader takes in before they stop reading, and a step that had
+ * more says how many it did not print.
+ */
+export const DOM_MAX_CHANGES = 12;
+
+/**
+ * Characters kept from the one string that describes a change.
+ *
+ * Tier 3, deliberately: it is the width of a single line in a reply that prints
+ * a dozen of them, and there is no app for which a different number is right —
+ * a value that needs more than this to be recognisable is not being read off a
+ * summary anyway. `recording.containerTextCap` is not reused for it because
+ * that is the size of a *region's* text and this is a fragment of one, and
+ * because reusing it would make a cap the region reader owns bite on a feature
+ * the region reader is independent of.
+ */
+export const DOM_CHANGE_TEXT_CAP = 80;
+
 // ── Application state ────────────────────────────────────────────────────────
 //
 // State is read by *sampling*, not by subscribing: the page's stores are read
@@ -666,6 +731,14 @@ export const CAPTURE_UNCAUGHT = true;
 
 /** Whether the region around an interaction is read back after `DOM_DELTA_MS`. */
 export const CAPTURE_DOM_DELTA = true;
+
+/**
+ * Whether the document is watched for structural change around an interaction.
+ *
+ * Separate from `CAPTURE_DOM_DELTA` because they are separate facts and either
+ * is worth having without the other — see the block above `DOM_MUTATION_CAP`.
+ */
+export const CAPTURE_DOM_MUTATIONS = true;
 
 /** Whether pressing Stop collects the state the last interaction left behind. */
 export const CAPTURE_TRAILING_STEP = true;

@@ -63,6 +63,14 @@ import type {
 } from '../shared/types.js';
 import { diff } from '../core/state/patch.js';
 import { blame } from '../core/render/index.js';
+import {
+  collect,
+  collectorFull,
+  createCollector,
+  describe as describeDom,
+  planDomChanges,
+  type DomCollector,
+} from '../core/dom/index.js';
 /*
  * Type-only, so nothing of the agent is bundled into the content script — an
  * ordinary import would pull `injected/agent.ts` and its console, fetch and XHR
@@ -96,6 +104,15 @@ function clearBuffers(): void {
   reactChains.clear();
   stepByEventTime.clear();
   flowStores.clear();
+  /*
+   * Dropped rather than reported, exactly as the region read is dropped when
+   * its own timer fires after Stop: a window still open when a recording ends
+   * belongs to a step that is already in a finished flow, and attaching to it
+   * would be editing a recording after the user stopped it. Disconnecting is
+   * the half that has to happen either way — an observer left attached to a
+   * page nobody is recording is the thing this feature exists not to be.
+   */
+  closeDomWindow(false);
 }
 
 // ── React component chains ───────────────────────────────────────────────────
@@ -1027,6 +1044,144 @@ function watchDomDelta(el: Element, key: string): void {
   }, frozen['recording.domDeltaMs']);
 }
 
+
+// ── What the document did ────────────────────────────────────────────────────
+//
+// The structural half of `watchDomDelta`, and a separate observation rather
+// than a bigger one. The region read above answers *what does this part of the
+// page say now*; this answers *what happened anywhere in the document*. A click
+// that opens an error banner in the page header produces nothing above and one
+// entry here.
+//
+// Everything that reads a node lives in `core/dom/observe.ts` and everything
+// that decides what is worth reporting in `core/dom/changes.ts`; what is left
+// here is the lifecycle, which is the part that needs a recording rather than a
+// page. Same split as `onRenderSample` and for its reason.
+//
+// ## One window at a time, owned by the newest step
+//
+// The window runs from the interaction until `recording.domDeltaMs` later, or
+// until the next interaction, whichever comes first. That rule is what makes a
+// mutation belong to exactly one step: two overlapping windows would both claim
+// the changes in the overlap, and a recording that reports one dialog opening
+// twice is worse than one that reports it late. It also bounds the cost — there
+// is never more than one observer attached to this document.
+
+interface DomWindow {
+  /** The step these changes belong to, exactly as `stepKey` builds it. */
+  key: string;
+  observer: MutationObserver;
+  timer: ReturnType<typeof setTimeout>;
+  collector: DomCollector;
+}
+
+let domWindow: DomWindow | null = null;
+
+/**
+ * Close the open window, and tell its step what happened if anybody still wants
+ * to know.
+ *
+ * `takeRecords` first: an observer delivers in a microtask, so at the moment
+ * the timer fires there are usually records the callback has not been handed
+ * yet, and disconnecting without draining them throws away the tail of every
+ * step.
+ */
+function closeDomWindow(report: boolean): void {
+  const open = domWindow;
+  if (!open) return;
+  domWindow = null;
+  clearTimeout(open.timer);
+
+  if (report) collect(open.collector, open.observer.takeRecords());
+  open.observer.disconnect();
+
+  if (!report) return;
+
+  /*
+   * Everything below is inside a `try`, and the reason is where it runs.
+   *
+   * `watchDomMutations` closes the previous window as its first act, and it is
+   * called from `requestScreenshotAndSave` *before* the step is sent. Describing
+   * a group reads a live node and builds a selector, which is the only work
+   * here that touches a page DevFlow did not write — so a throw in it would
+   * take the step, its screenshot and its component chain with it, to say
+   * nothing about the DOM. The summary is the least important thing this
+   * function is standing in front of.
+   */
+  try {
+    const cap = frozen['recording.domMaxChanges'];
+    // Described under the budget, not after it: see `core/dom/observe.ts`. Only
+    // the groups that will be printed are ever handed to `generateSelector`.
+    const { observed, more: undescribed } = describeDom(open.collector, cap);
+    const plan = planDomChanges(observed, { maxChanges: cap });
+    const more = (plan.more ?? 0) + undescribed;
+
+    // Sent when the observer stopped early even though nothing survived, for
+    // `onRenderSample`'s reason: a step reporting no changes while its observer
+    // was cut is reporting on the cut, and a message withheld for looking empty
+    // is where that fact would be lost.
+    if (!plan.changes.length && !open.collector.capped) return;
+
+    void sendToWorker({
+      type: 'STEP_DOM_CHANGES',
+      key: open.key,
+      changes: plan.changes,
+      ...(open.collector.capped ? { capped: true as const } : {}),
+      ...(more ? { more } : {}),
+    });
+  } catch {
+    // A page that made a node undescribable. The step is worth more than the
+    // summary, and it is already on its way.
+  }
+}
+
+/**
+ * Watch the whole document for the length of one step.
+ *
+ * Refusable like the region read, and for its reason: a flow whose stamp says
+ * the observer was off cannot be misread as one where nothing in the page ever
+ * changed.
+ */
+function watchDomMutations(key: string): void {
+  // The previous step's window ends here, and its step gets what it saw — see
+  // the header for why one window at a time is the rule rather than a saving.
+  closeDomWindow(true);
+  if (!frozen['recording.domMutations']) return;
+  if (!document.documentElement) return;
+
+  const collector = createCollector(frozen['recording.domMutationCap']);
+
+  const observer = new MutationObserver((records) => {
+    const open = domWindow;
+    // A batch delivered after this window closed, or belonging to one that did:
+    // an observer's callback is a microtask and can outlive its window.
+    if (!open || open.observer !== observer) return;
+
+    collect(open.collector, records);
+
+    // Disconnecting here rather than at the close is the whole work bound: a
+    // page that animates costs this step the cap, not a second of records.
+    if (collectorFull(open.collector)) observer.disconnect();
+  });
+
+  const timer = setTimeout(() => {
+    // A recording that stopped or paused while this was open: the step it
+    // belongs to is in a finished flow, and `clearBuffers` has usually closed
+    // it already. Checked here too because a pause landing between the two is a
+    // real ordering rather than a hypothetical one.
+    closeDomWindow(isRecording && !isPaused);
+  }, frozen['recording.domDeltaMs']);
+
+  domWindow = { key, observer, timer, collector };
+
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    characterData: true,
+  });
+}
+
 /**
  * `eventTime` is the `timeStamp` of the interaction that produced this step, and
  * is how its component chain is claimed. Steps with no originating event — a
@@ -1045,6 +1200,16 @@ function requestScreenshotAndSave(step: DraftStep, eventTime?: number, el?: Elem
   // Only for steps with an element: a navigation has no region to watch, and
   // the page it landed on is a different document anyway.
   if (el && step.element) watchDomDelta(el, stepKey(step));
+
+  /*
+   * The same restriction, for a reason of its own rather than the one above.
+   *
+   * A navigation replaces the document, so every node in it is removed and
+   * every node of the next one added. A window opened over that reports the
+   * whole page changing, spends its cap in the first millisecond, and says
+   * nothing the step's own URL does not already say.
+   */
+  if (el && step.element) watchDomMutations(stepKey(step));
 
   // Every step with an originating interaction, element or not: a click that
   // dispatched an action is a step whose state moved whether or not there was a
