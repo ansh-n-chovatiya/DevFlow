@@ -489,6 +489,43 @@ export const STATE_MAX_PATCH_OPS = 40;
 /** Whether the app's stores are sampled around each interaction at all. */
 export const CAPTURE_STATE = true;
 
+/** Whether the fiber tree is sampled around each interaction to see what re-rendered. */
+export const CAPTURE_RENDERS = true;
+
+/**
+ * Fibers the render walk visits before it stops, per sample.
+ *
+ * The walk runs twice per step and the first of the two runs inside the user's
+ * gesture, so this number is click latency on a page being recorded — which is
+ * why it is a third of `DISCOVERY_NODE_CAP`, whose walk runs only on the
+ * settled sample where nobody is waiting. It was measured rather than picked:
+ * see `tests/render-walk-budget.test.ts`, which fails if a walk of this size
+ * stops fitting in the budget below.
+ *
+ * When the cap bites, `FlowRenders.capped` says so. A recording that reports no
+ * re-renders while capped is reporting on the cap.
+ */
+export const RENDER_NODE_CAP = 1500;
+
+/**
+ * Components one step may report as having re-rendered.
+ *
+ * A step where three hundred components re-rendered has a different problem
+ * from the one this tool answers, and printing all three hundred would cost
+ * more tokens than the rest of the step put together. The busiest are kept —
+ * the ones with the most observed changes — and `FlowRenders.note` says when
+ * the list was cut.
+ */
+export const RENDER_MAX_COMPONENTS = 25;
+
+/**
+ * Changed props, hooks or contexts reported for one component.
+ *
+ * A component handed forty props that all changed is one fact — its parent
+ * re-rendered wholesale — and the fortieth prop adds nothing to it.
+ */
+export const RENDER_MAX_CHANGES = 8;
+
 
 
 /**
