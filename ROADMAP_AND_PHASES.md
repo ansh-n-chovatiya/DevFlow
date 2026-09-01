@@ -88,7 +88,7 @@ Nothing below is ticked on the strength of that branch.
   - Zero requirement for users to install npm packages or alter build configs.
   - Every attribution carries a confidence score with a specific reason (`src/features/react/resolver.ts`).
 - [x] **Fallback Chain:** source map → inline base64 source map → heuristics, each with its own reported failure mode.
-- [ ] **Optional Compiler Plugin (`@devflow/compiler-plugin`) [Strictly Optional]:** not started.
+- [ ] **Optional Compiler Plugin (`@devflow/compiler-plugin`) [Strictly Optional]:** not started, and last on purpose. Invariant 1 is that DevFlow needs no app changes, and a plugin is a change to the app's build. The risk is not that it would not work — it is that it would work *better*, and a plugin that becomes the path where attribution is reliable has made the zero-dependency path the degraded one, which is the invariant lost without anyone deciding to lose it. Any build of this has to start by saying what it may not improve.
 
 ### Work Stream 1.2: Deep React Fiber & State Store Inspection (Non-Invasive)
 > The `v3.2.0` attempt fabricated `window.__REDUX_DEVTOOLS_EXTENSION__` as a
@@ -182,13 +182,33 @@ Nothing below is ticked on the strength of that branch.
 - [x] **MCP Tool:** `get_value_provenance({ id, value, step })` — **and the departure from `domNodeId` is deliberate.** A recording has no node ids: an element is *described* (tag, text, label, selector), never addressed, so there is nothing for a `domNodeId` to name. `value` is the handle that exists, and `step` traces what that step's element showed, which is the same question asked the way the roadmap meant it. With neither, the tool lists the steps whose text is worth asking about — `get_causal_chain`'s discipline, that a tool whose first answer is "that is not valid" has made the caller guess.
 
 ### Work Stream 2.3: Autonomous Sandbox Execution Engine
-- [ ] **Headless Replay Harness**
-- [ ] **Synthetic Action Generator**
+> The `v3.2.0` generator returned hardcoded buttons and ignored the ARKG
+> argument it was given. The rule that came out of that is structural rather
+> than aspirational: **if the generator cannot use the graph, it takes no graph
+> argument** — and it does not, because the ARKG holds components, endpoints,
+> files, flows and state keys and holds no selectors and no element text, so it
+> cannot contribute an action. Recorded flows can, and do.
+- [ ] **Headless Replay Harness** — **not built, and the reason is that its consumer does not exist yet.**
+  - The artifact a harness would run already exists: Work Stream 2.1 compiles any recorded flow to a Playwright or Cypress spec, with resilient selectors and network mocks cut from the real responses. What is missing is only the *runner*, and the runner is the user's — in their own project, where Playwright already is, driving their own application.
+  - Putting that runner inside the MCP server means one of two things and neither is right yet. Shipping a browser with a package installed by `npx` is a dependency out of all proportion to the rest of it. Spawning the user's own test runner from a tool call is executing code against a live application on the strength of a model's decision, which is a thing to build **when there is a loop that needs it** — that loop is Work Stream 2.4 — and not before, so that the confirmation and the failure handling are designed with the caller that has to survive them rather than guessed at.
+  - So this is deliberately left. Building it now would be building an executor for a loop that does not exist, which is the shape of what the `v3.2.0` audit deleted.
+- [x] **Synthetic Action Generator** — shipped, and **narrower than the word "synthetic"**, which the module and the tool both say on every answer.
+  - `src/core/actions/index.ts` folds the interactions people have actually performed, across every recording of a page, into one candidate each: the kind, the selector `core/export/selectors.ts` chose, the label, the value that was actually typed, how many recorded steps it stands for and which flows they came from. Nothing is invented. DevFlow has no model of the application, so it offers what has been done rather than what might work, and a control nobody has ever touched is not in the answer.
+  - That is the strength rather than the apology, and it is worth writing down because the reverted version's failure looked like the feature working *better*: a selector DevFlow watched resolve is worth more than one guessed from a component's name, and the value somebody actually typed is worth more than `test@example.com`. A generator that invents needs a model of the app, and inventing without one is what `click("Submit")`-because-most-apps-have-one is.
+  - Skips are counted with a reason rather than dropped, because "this page has no recorded actions" and "you filtered them all out" read identically as an empty list. So does "the tool only opened the twenty-five most recent recordings", which the reply also says.
+- [x] **MCP Tool:** `suggest_actions({ url, component, limit })` — declared as well as answerable, asserted against `tools/list` for the reason Work Stream 2.2's tool is.
 
 ### Work Stream 2.4: Closed-Loop AI Code Repair Loop
-- [ ] **Diagnostic Causal Tracing** (blocked on Work Stream 1.3)
-- [ ] **Patch Generation & In-Memory Application**
-- [ ] **Replay Verification & Test Runner**
+> Not started, and deliberately last. It needs 1.3 (which exists) *and* 2.3's
+> replay harness (which does not, for the reason 2.3 gives), and the `v3.2.0`
+> version of it was a hardcoded fake diff in a file that did not parse. It is
+> the item on this roadmap most likely to be faked under time pressure, so the
+> honest sequence is: build the harness when this loop is being built, with the
+> confirmation and the failure handling designed against the caller that has to
+> survive them.
+- [ ] **Diagnostic Causal Tracing** — unblocked by 1.3, not built. `get_causal_chain` and `get_effects_of` are the walk; what this adds is the *diagnosis* on top of it, which is a claim about which link is the fault and is a much stronger claim than any of the four bases supports on its own.
+- [ ] **Patch Generation & In-Memory Application** — not started.
+- [ ] **Replay Verification & Test Runner** — blocked on 2.3's harness, which is where the decision about executing code against a live application belongs.
 
 ### Work Stream 2.5: Natural Language Application Navigator
 > The `v3.2.0` attempt was stopword-matching substring filtering presented as

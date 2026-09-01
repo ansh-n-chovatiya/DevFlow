@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+**`suggest_actions` says what can be done on a page, out of what has been done
+on it.** Every click and every field somebody has recorded there, folded across
+recordings so an action three flows performed is one row saying three, with the
+selector the recorder chose, the value that was actually typed, and a mark on a
+selector the compiler already considers fragile. Nothing in it is invented, and
+the reply says so every time: DevFlow has no model of the application, so a
+control nobody has ever touched is not in the list. That is the point rather
+than the limitation — a selector DevFlow watched resolve is worth more than one
+guessed from a component's name. Steps that did not qualify are counted with a
+reason, because "this page has no recorded actions" and "you filtered them all
+out" read identically as an empty list, and so does "the tool only opened the
+twenty-five most recent recordings", which it also says.
+
 **`explain_feature` turns a description into the parts of the app it points at,
 and is honest about how it got there.** Ask it for "the cart badge" or "invoice
 totals" and it returns the components, endpoints, source files, recorded flows

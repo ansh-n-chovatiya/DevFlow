@@ -69,6 +69,17 @@ export type { EntityKind, NavigatorEntity, NavigatorMatch, NavigatorQuery } from
 export { findFeature, readQuery } from './navigator/index.js';
 
 /*
+ * What people have actually done on a page, folded across recordings.
+ *
+ * Here rather than in the server for the reason the navigator is: what this
+ * does is easy to overstate — the roadmap calls it a *synthetic* action
+ * generator and it synthesises nothing — and a pure module whose header says so
+ * is harder to overstate than a fold inlined into a tool handler.
+ */
+export type { ActionPlan, ActionTarget, CandidateAction, ObservedFlow } from './actions/index.js';
+export { planActions } from './actions/index.js';
+
+/*
  * The one exception to "core only", and it earns it.
  *
  * `describeStamp` turns a flow's `settings` into the sentences the walkthrough

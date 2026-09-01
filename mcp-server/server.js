@@ -48,6 +48,7 @@ import {
   flowRendering,
   formatSource,
   MACHINE_KEYS,
+  planActions,
   renderComponents,
   renderStep,
   resolve as resolveSettings,
@@ -2508,6 +2509,93 @@ async function resolveSource(root, candidate) {
   return { file: real, root: rootReal };
 }
 
+// ── Actions ────────────────────────────────────────────────────────────────
+
+/*
+ * `suggest_actions`, and the word it is careful not to earn.
+ *
+ * The roadmap calls this a *synthetic* action generator. What ships is not
+ * synthesis: every action offered was performed by a person and recorded, and
+ * the module behind it folds and filters rather than invents. The v3.2.0
+ * version invented — it returned hardcoded buttons, and took an ARKG argument it
+ * never read — so the honest version takes no graph argument at all (the graph
+ * holds no selectors and no element text, so it cannot contribute an action)
+ * and says on every answer that nothing in it is made up.
+ *
+ * That is worth stating as a strength rather than as an apology. A selector
+ * DevFlow watched resolve is worth more than one guessed from a component's
+ * name, and the value somebody actually typed into a field is worth more than
+ * "test@example.com".
+ */
+function renderActions(plan, args, flowsRead, flowsUnread) {
+  const scope = [];
+  if (typeof args.url === 'string' && args.url) scope.push(args.url);
+  if (typeof args.component === 'string' && args.component) scope.push(`in ${args.component}`);
+
+  const lines = [
+    scope.length ? `Actions recorded ${scope.join(' ')}` : 'Actions recorded across every flow',
+    '',
+    'Every action below was performed by a person and recorded. Nothing here is invented — DevFlow has ' +
+      'no model of your application, so it offers what has been done rather than what might work, and a ' +
+      'control nobody has ever touched is not here. The selector is the one the recorder chose and it ' +
+      'resolved at least once.',
+  ];
+
+  if (!plan.actions.length) {
+    lines.push('', 'No recorded action matches.');
+    if (plan.skipped.length) {
+      // Which is the whole reason the skips are counted: "this page has no
+      // recorded actions" and "you filtered them all out" are different
+      // answers, and an empty list says neither on its own.
+      lines.push('', 'What was there and did not qualify:');
+      for (const skip of plan.skipped) {
+        lines.push(`  ${skip.count} step${skip.count === 1 ? '' : 's'}  ${skip.reason}`);
+      }
+    }
+    lines.push(
+      '',
+      `Read from the ${flowsRead} most recent recording${flowsRead === 1 ? '' : 's'}. list_flows shows what else is on disk.`,
+    );
+    return lines.join('\n');
+  }
+
+  lines.push('', `${plan.actions.length} action${plan.actions.length === 1 ? '' : 's'}, most-recorded first:`);
+
+  for (const action of plan.actions) {
+    const value = typeof action.value === 'string' ? `  = ${JSON.stringify(truncate(action.value, 60))}` : '';
+    lines.push(
+      '',
+      `  ${action.kind}  ${action.label || '(no label)'}`,
+      `      ${action.selector}${value}`,
+      `      seen ${action.seen}× in ${action.flows.join(', ')}  ·  ${action.url}`,
+    );
+    if (action.fragile) {
+      // Carried through from the export compiler's own selector hierarchy: a
+      // fragile selector is one that resolved on the page as it was, and a
+      // replay is being told it may not resolve again.
+      lines.push('      the recorder marked this selector fragile — it may not resolve on a changed page');
+    }
+  }
+
+  if (plan.more) {
+    lines.push('', `${plan.more} further action${plan.more === 1 ? '' : 's'} were not listed. Raise "limit".`);
+  }
+
+  if (plan.skipped.length) {
+    lines.push('', 'Not offered:');
+    for (const skip of plan.skipped) {
+      lines.push(`  ${skip.count} step${skip.count === 1 ? '' : 's'}  ${skip.reason}`);
+    }
+  }
+
+  lines.push(
+    '',
+    `Read from the ${flowsRead} most recent recording${flowsRead === 1 ? '' : 's'}` +
+      `${flowsUnread > 0 ? `, leaving ${flowsUnread} older one${flowsUnread === 1 ? '' : 's'} unread — something done only in those is not above` : ''}.`,
+  );
+  return lines.join('\n');
+}
+
 // ── The navigator ──────────────────────────────────────────────────────────
 
 /*
@@ -3266,6 +3354,35 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
         },
         required: ['description'],
+      },
+    },
+    {
+      name: 'suggest_actions',
+      description:
+        'What can be done on a page, according to every recording DevFlow holds of it: the clicks and ' +
+        'the fields, with the selector the recorder chose and the value that was actually typed, folded ' +
+        'across flows so the action three recordings performed is one row saying three. Read what it is ' +
+        'before you use it — **nothing here is invented.** Every action was performed by a person and ' +
+        'recorded; DevFlow has no model of your application, so it offers what has been done rather than ' +
+        'what might work, and a control nobody has ever touched is not below. That is the point rather ' +
+        'than the limitation: for reproducing a bug, the things people actually do on a page are a ' +
+        'better starting set than anything guessed, and they come with a selector that resolved at least ' +
+        'once. Filter by "url", by "component", or by both.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: {
+            type: 'string',
+            description:
+              'Only actions performed on this page. Compared on origin and path, so a query string does not split one page into several.',
+          },
+          component: {
+            type: 'string',
+            description:
+              'Only actions inside this component — an id from get_app_architecture or from a flow’s component table.',
+          },
+          limit: { type: 'number', description: 'Actions to return. Defaults to 20.' },
+        },
       },
     },
     {
@@ -5011,6 +5128,58 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       return text(renderFeature(description, query, neighbours, corpus));
+    }
+
+    case 'suggest_actions': {
+      const metas = await listAllFlows();
+      if (!metas.length) {
+        return text(
+          `No flows recorded yet (looking in ${FLOWS_DIR}). This tool reads what people have actually ` +
+            'done on a page, so it has nothing to offer until a recording has been sent.',
+        );
+      }
+
+      /*
+       * The most recent recordings, and no more.
+       *
+       * Every flow read is a `flow.json` off disk, and a library of two hundred
+       * is a library rather than an investigation. The bound is said out loud
+       * below when it bit, for `explain_feature`'s reason: a tool that answers
+       * "nothing was recorded on that page" about flows it never opened has
+       * given the one wrong answer available to it.
+       */
+      const READ_FLOWS = 25;
+      const opened = metas.slice(0, READ_FLOWS);
+
+      const observed = [];
+      for (const meta of opened) {
+        try {
+          const { json } = await readFlow(meta.id);
+          observed.push({
+            id: meta.id,
+            name: typeof json.name === 'string' ? json.name : meta.id,
+            steps: Array.isArray(json.steps) ? json.steps : [],
+          });
+        } catch {
+          // A flow whose steps cannot be read contributes nothing and is not an
+          // error: the other twenty-four still answer the question.
+        }
+      }
+
+      const limit = Number.isFinite(Number(args.limit)) && Number(args.limit) > 0
+        ? Math.min(100, Math.trunc(Number(args.limit)))
+        : 20;
+
+      const plan = planActions(
+        observed,
+        {
+          ...(typeof args.url === 'string' && args.url ? { url: args.url } : {}),
+          ...(typeof args.component === 'string' && args.component ? { component: args.component } : {}),
+        },
+        limit,
+      );
+
+      return text(renderActions(plan, args, observed.length, metas.length - opened.length));
     }
 
     case 'get_app_architecture': {
