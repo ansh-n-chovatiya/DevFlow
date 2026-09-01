@@ -52,10 +52,12 @@ import { flowError, type FlowError } from '../shared/errors.js';
 import type {
   BoundingBox,
   DraftStep,
+  FlowRenders,
   PickResult,
   RecordingState,
   StateStoreRef,
   Step,
+  StepRender,
   StepStateDelta,
 } from '../shared/types.js';
 import type { CapturedComponent } from '../shared/messages.js';
@@ -67,7 +69,7 @@ import { clearResolverCaches, resolvePending } from '../features/react/resolver.
 import { ingestComponentPick } from '../features/arkg/ingest.js';
 import { buildPayload, pruneSteps } from '../features/mcp/send.js';
 import { sendDefaults } from '../features/export/defaults.js';
-import { readCurrentReact, readCurrentState } from '../features/flows/store.js';
+import { readCurrentReact, readCurrentRenders, readCurrentState } from '../features/flows/store.js';
 import { prepare } from '../features/recording/preflight.js';
 import { renumber } from '../core/flow/index.js';
 
@@ -511,6 +513,57 @@ async function attachStateDelta(
 }
 
 /**
+ * Merge what re-rendered into the step it belongs to.
+ *
+ * Behind the capture queue for `attachDomDelta`'s reason, and two keys again
+ * for `attachStateDelta`'s: the list goes on the step, and what the *walk*
+ * could not see goes on `flowRenders`, which is a fact about the recording
+ * rather than about any step.
+ *
+ * `capped` is sticky. It is not "the last walk was cut" but "this recording was
+ * cut somewhere", which is the only form of it a reader can act on: a flow that
+ * reports two re-renders and does not say a walk was truncated is claiming
+ * something it never checked.
+ *
+ * `flowRenders` is deliberately written even when the step is gone and the list
+ * empty — the same rule the stores follow. What the recording could not see is
+ * still true of the recording.
+ */
+async function attachRenders(
+  key: string,
+  renders: StepRender[],
+  capped: boolean | undefined,
+  note: string | undefined,
+): Promise<void> {
+  const stored = await getLocal(['recordedSteps', 'recordingActive', 'flowRenders']);
+  if (!stored.ok || !stored.value.recordingActive) return;
+
+  /*
+   * `capped` is sticky and the note is kept once set: one step whose walk was
+   * cut is enough to make "nothing re-rendered" a claim about the cap for every
+   * step of the flow, and a reader has no way to ask which step it was.
+   */
+  const known = stored.value.flowRenders ?? undefined;
+  const flowRenders: FlowRenders = {
+    read: true,
+    ...(capped || known?.capped ? { capped: true } : {}),
+    ...(note ?? known?.note ? { note: note ?? known?.note } : {}),
+  };
+
+  const recordedSteps = stored.value.recordedSteps ?? [];
+  const index = recordedSteps.findIndex((step) => stepKey(step) === key);
+  if (index !== -1 && renders.length) {
+    recordedSteps[index] = { ...recordedSteps[index], renders };
+  }
+
+  const written = await setLocal({
+    ...(index !== -1 && renders.length ? { recordedSteps } : {}),
+    flowRenders,
+  });
+  if (!written.ok) await reportError(written.error);
+}
+
+/**
  * End the recording once every capture already in flight has been written.
  *
  * A step is not saved when the user clicks — it is saved a few hundred
@@ -795,12 +848,22 @@ async function purgeReact(): Promise<void> {
 
     const stored = await getLocal('recordedSteps');
     const steps = stored.ok ? (stored.value.recordedSteps ?? []) : [];
-    const stripped = steps.map(stripReactRef);
+    // `renders` goes with the chain, not after it: every entry is keyed by a
+    // component id, and an id whose table has just been deleted is a row that
+    // answers nothing — the same reason `stripReactRef` exists at all.
+    const stripped = steps.map((step) => {
+      const next = stripReactRef(step);
+      if (!next.renders) return next;
+      const bare = { ...next };
+      delete bare.renders;
+      return bare;
+    });
 
     const written = await setLocal({
       recordedSteps: stripped,
       reactComponents: {},
       stateStores: [],
+      flowRenders: null,
       reactNeedles: {},
       reactScripts: {},
       reactMeta: null,
@@ -1093,6 +1156,9 @@ async function autoExportToMcp(steps: Step[]): Promise<void> {
   // `recording.state`, which is the switch that decides whether it was ever
   // captured — and a `FlowState` with `read: false` is two dozen bytes.
   const state = await readCurrentState();
+  // On the same terms, and gated on React for `pruneSteps`' reason: with the
+  // component table gone, a render list names components nothing can resolve.
+  const renders = include.react ? await readCurrentRenders() : null;
 
   const payload = JSON.stringify(
     buildPayload(
@@ -1104,6 +1170,7 @@ async function autoExportToMcp(steps: Step[]): Promise<void> {
       include,
       stamp,
       state,
+      renders,
     ),
   );
 
@@ -1405,6 +1472,17 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
       return true;
     }
 
+    case 'STEP_RENDERS': {
+      // Behind the capture queue, for `STEP_DOM_DELTA`'s reason.
+      captureQueue = captureQueue.then(() =>
+        attachRenders(message.key, message.renders, message.capped, message.note).catch(
+          (error: unknown) => console.warn('DevFlow: renders not attached', error),
+        ),
+      );
+      sendResponse({ ok: true });
+      return true;
+    }
+
     case 'CAPTURE_AND_SAVE_STEP': {
       const { step, elementBox, dpr, components, componentsPageUrl, scroll } = message;
       // Enqueue so captures run one at a time. A rejected step is swallowed so
@@ -1535,7 +1613,8 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
             recordingPaused: false,
             recordingTabId: null,
             reactComponents: {},
-      stateStores: [],
+            stateStores: [],
+            flowRenders: null,
             reactNeedles: {},
             reactScripts: {},
             reactMeta: null,

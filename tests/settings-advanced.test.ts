@@ -47,7 +47,7 @@ import {
 const tier2 = (FIELDS as readonly Field[]).filter((field) => field.tier === 2);
 
 describe('the table', () => {
-  it('wires all thirty-four, so the disclosure holds no control that does nothing', () => {
+  it('wires all thirty-seven, so the disclosure holds no control that does nothing', () => {
     /*
      * the list reads as twenty-two because it pairs four of them off —
      * `BUNDLE_CACHE_ENTRIES / BUNDLE_CACHE_BYTES`, `REACT_BUFFER_SIZE / _TTL_MS`
@@ -64,8 +64,15 @@ describe('the table', () => {
      * the same reason the fiber walk's limits are: they are the shape of what
      * is captured rather than whether it is, and the answer that suits an app
      * is the app's, not a default's.
+     *
+     * The three after those are the render walk's: how many fibers a sample
+     * visits, how many re-rendered components a step reports, and how many
+     * changes one of them reports. Tier 2 on the same grounds — they are the
+     * shape of what is sampled and not whether it is sampled — and the first of
+     * them is the only number in this table whose cost is paid inside the
+     * user's own click.
      */
-    expect(tier2).toHaveLength(34);
+    expect(tier2).toHaveLength(37);
     expect(tier2.filter((field) => field.wired !== true)).toEqual([]);
     expect(WIRED).toHaveLength(FIELDS.length);
   });
@@ -99,7 +106,7 @@ describe('the table', () => {
     expect(consequenceApplies(field('react.bundleCacheBytes'), 400 * 1024 * 1024, true)).toBe(true);
   });
 
-  it('freezes the twelve that shape a recording, and leaves the rest live', () => {
+  it('freezes the fifteen that shape a recording, and leaves the rest live', () => {
     /*
      * The freeze, applied to Tier 2. A setting the *recorder* reads while a recording
      * runs has to be frozen or the flow describes two rules at once; a setting
@@ -116,6 +123,12 @@ describe('the table', () => {
      * that moved halfway through a recording would leave one flow whose early
      * steps were bounded one way and whose later ones another, with only the
      * stamp — which records one value — to say which.
+     *
+     * The render caps are frozen for exactly that reason too: a walk that
+     * visited fifteen hundred fibers for one step and five thousand for the
+     * next would report a component as having re-rendered in the second and not
+     * the first, with nothing in the recording to say the cap had moved rather
+     * than the app.
      */
     const frozenT2 = tier2.filter((f) => f.recorded === true).map((f) => f.key).sort();
     expect(frozenT2).toEqual([
@@ -127,6 +140,9 @@ describe('the table', () => {
       'react.maxComponentChain',
       'react.maxFiberWalk',
       'react.prewarmTtlMs',
+      'recording.renderMaxChanges',
+      'recording.renderMaxComponents',
+      'recording.renderNodeCap',
       'recording.spaSettleMs',
       'recording.stateMaxDepth',
       'recording.stateMaxEntries',

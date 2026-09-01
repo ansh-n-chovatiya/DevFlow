@@ -190,6 +190,7 @@ async function reload(): Promise<void> {
       createdAt: flow.value.meta?.createdAt ?? null,
       react: flow.value.react,
       state: flow.value.state,
+      renders: flow.value.renders,
       settings: flow.value.meta?.settings ?? null,
     };
     state.missing = false;

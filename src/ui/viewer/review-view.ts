@@ -57,6 +57,7 @@ import type {
   ConsoleLevel,
   FlowReact,
   FlowState,
+  FlowRenders,
   RecordingState,
   Overrides,
   Step,
@@ -88,6 +89,12 @@ export interface ReviewFlow {
    * not have to write it down.
    */
   state?: FlowState | null;
+  /**
+   * What the recording saw of the app's renders, on the same split again.
+   * Absent for the live recording and for a flow archived before render
+   * sampling existed — which is not the same as nothing having re-rendered.
+   */
+  renders?: FlowRenders | null;
   /**
    * The settings this flow was recorded under — the stamp, sparse.
    *

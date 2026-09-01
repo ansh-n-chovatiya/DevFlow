@@ -1042,20 +1042,25 @@ async function saveFlow(flow) {
   /*
    * Additive, and absent entirely when the page was not React — which is also
    * how every flow recorded before this existed reads. `state` is here on the
-   * same terms.
+   * same terms, and so is `renders`: it is what tells `get_step_detail` apart
+   * "renders were never sampled" from "nothing re-rendered", so a flow that
+   * loses it here is answered for as a quiet app rather than an unread one.
    *
-   * Both are listed by name rather than spread from `flow`, so a field the
+   * All three are listed by name rather than spread from `flow`, so a field the
    * sender invents cannot land in `flow.json` and be answered for. The cost of
    * that is the failure this line already had once: `state` was read by
    * `get_state_patch` and written by nobody, so every real recording arrived
    * with its stores intact and lost them here, and only a fixture that had
-   * never been through this function could tell you otherwise.
+   * never been through this function could tell you otherwise. A reader added
+   * without its line here is the same bug again — which is why the render part
+   * is tested through a POST and not from a fixture written onto disk.
    */
   const data = {
     ...meta,
     steps: stepsClean,
     ...(flow.react ? { react: flow.react } : {}),
     ...(flow.state ? { state: flow.state } : {}),
+    ...(flow.renders ? { renders: flow.renders } : {}),
   };
 
   // Awaited, not fired and forgotten: the POST response tells the extension the
@@ -1944,8 +1949,62 @@ function flowSummary(flow) {
  * is already known to be the answer. This split exists for the move before that
  * one: a step with three hundred network calls costs thousands of tokens to
  * look at whole, and the question is usually "what did it log", which is thirty.
+ *
+ * A part added later goes on the end. The order is what the index prints and
+ * what the sections come back in, so moving an existing part renumbers a list
+ * readers have already learned, to buy nothing.
  */
-const STEP_PARTS = ['component', 'network', 'console', 'element', 'dom', 'screenshot'];
+const STEP_PARTS = ['component', 'network', 'console', 'element', 'dom', 'screenshot', 'render'];
+
+/**
+ * How much of one changed value is worth printing before it stops being
+ * evidence.
+ *
+ * Smaller than `STATE_VALUE_CHARS` because two of these share a line and
+ * because the job is different: a patch operation is meant to be applicable and
+ * this is meant to be read. Over the cap the value is replaced by a sketch of
+ * its shape rather than sliced, for the reason `renderOp` gives — a value cut
+ * mid-JSON reads as a whole value that is simply wrong.
+ */
+const RENDER_VALUE_CHARS = 120;
+
+/** One side of one change: the value, its shape, or the fact that it has neither. */
+function renderChangeSide(change, side) {
+  if (!(side in change)) return null;
+
+  const value = change[side];
+  const encoded = JSON.stringify(value);
+  // `undefined` does not encode, and a prop that went from a value to
+  // `undefined` is one of the more common answers here.
+  if (encoded === undefined) return String(value);
+  return encoded.length <= RENDER_VALUE_CHARS ? encoded : `‹${sketchValue(value)}›`;
+}
+
+/** `itemCount: 3 → 4`, or why there is no arrow. */
+function renderChangeLine(entry) {
+  /*
+   * Anything that is not an object is read as a change with no sides, not
+   * skipped and not trusted. Flows arrive over an unauthenticated loopback POST
+   * from whatever page the browser is on, and `'before' in "nope"` is a
+   * TypeError that takes the whole tool call down to save one line of output.
+   */
+  const change = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {};
+  const key = typeof change.key === 'string' && change.key ? change.key : '(unnamed)';
+  const before = renderChangeSide(change, 'before');
+  const after = renderChangeSide(change, 'after');
+
+  /*
+   * Neither side is absent by accident: the contract says both are dropped when
+   * the value was too large or too circular to snapshot at all. Printing
+   * `undefined → undefined` for that would be a claim about the app made out of
+   * a gap in the recording.
+   */
+  if (before === null && after === null) {
+    return `${key}: changed — neither value could be sampled, too large or too circular`;
+  }
+
+  return `${key}: ${before ?? 'not sampled'} → ${after ?? 'not sampled'}`;
+}
 
 /**
  * Each part of one step, rendered once, with a one-line description of itself.
@@ -2118,6 +2177,152 @@ function stepParts(flow, dir, step, render) {
           ? [step.screenshotOmitted]
           : [],
     };
+  }
+
+  // ── render ──
+  {
+    /*
+     * The same three nothings `get_state_patch` is organised around, one part
+     * further in. "Renders were never sampled", "the walk stopped short of the
+     * whole tree" and "nothing re-rendered" arrive as the same empty list, and
+     * the reader who cannot tell them apart takes the last one — which is the
+     * only one of the three that is a statement about the application.
+     *
+     * Everything printed here is sampled from two readings of the fiber tree,
+     * so it knows *which* components re-rendered and can never know how many
+     * times any of them did. No line below counts renders, and the summary
+     * counts components on purpose.
+     */
+    const capture = flow.renders;
+    const shape = capture && typeof capture === 'object' && !Array.isArray(capture) ? capture : null;
+    const note = shape && typeof shape.note === 'string' && shape.note ? shape.note : '';
+    const noted = note ? [`The recording's own note: ${note}`] : [];
+    const turnOn =
+      'Switch "recording.renders" on in the extension\'s settings and record the journey again.';
+    // Only the entries that are entries, for the reason `renderChangeLine`
+    // gives: a `null` in this array would answer a question with a crash.
+    const entries = (Array.isArray(step.renders) ? step.renders : []).filter(
+      (entry) => entry && typeof entry === 'object' && !Array.isArray(entry),
+    );
+
+    if (!shape) {
+      parts.render = {
+        have: 'this recording carries no render data',
+        lines: [
+          'This flow was recorded by a build that did not sample renders at all, so this is the ' +
+            'absence of data and not the absence of re-rendering. Nothing was looked at.',
+          ...noted,
+        ],
+      };
+    } else if (shape.read !== true) {
+      parts.render = {
+        have: 'render capture was off for this recording',
+        lines: [
+          'Render capture was switched off when this flow was recorded, or the page had no React ' +
+            'and no fiber root to walk, so no component was compared at any point in it. This is ' +
+            `the absence of data and not the absence of re-rendering. ${turnOn}`,
+          ...noted,
+        ],
+      };
+    } else if (!entries.length) {
+      /*
+       * The cap changes what an empty list means, so it changes the sentence.
+       * Past the cap components were never compared, and "nothing re-rendered"
+       * would be answering for a part of the tree nobody read.
+       */
+      parts.render = shape.capped === true
+        ? {
+            have: 'nothing re-rendered up to the walk\'s cap',
+            lines: [
+              'The walk hit its fiber cap on this recording ' +
+                '("recording.renderNodeCap"), so components past it were never compared. No ' +
+                'component re-rendered among the ones that were — which is a statement about the ' +
+                'cap as much as about the app, and raising it is what turns this into an answer.',
+              ...noted,
+            ],
+          }
+        : {
+            have: 'no component re-rendered',
+            lines: [
+              'Renders were sampled on this step and no component re-rendered. The comparison is ' +
+                'two readings of the fiber tree, one when the interaction was dispatched and one ' +
+                'after the app settled, so a component that re-rendered and settled back to the ' +
+                'props it started with reads from here as one that did not render.',
+              ...noted,
+            ],
+          };
+    } else {
+      const wasted = entries.filter((entry) => entry.wasted === true).length;
+      const lines = [
+        `${entries.length} component${entries.length === 1 ? '' : 's'} re-rendered across this step. ` +
+          'Sampled from two readings of the fiber tree, so this says which components re-rendered ' +
+          'and nothing about how often any of them did.',
+      ];
+      if (shape.capped === true) {
+        lines.push(
+          'The walk hit its fiber cap on this recording, so this is what was compared and not ' +
+            'everything that re-rendered.',
+        );
+      }
+      if (wasted) {
+        lines.push(
+          '"wasted" marks a component that re-rendered while nothing it was seen to depend on ' +
+            'changed value — usually a parent handing down a fresh object holding the values it ' +
+            'had already given.',
+        );
+      }
+
+      for (const entry of entries) {
+        const id = typeof entry.component === 'string' ? entry.component : '';
+        const component = id ? flow.react?.components?.[id] : null;
+        // The id rather than nothing when the flow does not list the component:
+        // it is still the key every other tool here takes.
+        const name = component?.name || id || 'an unnamed component';
+        const where = component ? formatSource(component) : null;
+
+        lines.push(
+          `${name}${where ? `  ${where}` : ''}${entry.wasted === true ? '  — wasted' : ''}`,
+        );
+        for (const kind of ['props', 'hooks', 'contexts']) {
+          const changes = Array.isArray(entry[kind]) ? entry[kind] : [];
+          for (const change of changes) lines.push(`  ${kind.padEnd(9)}${renderChangeLine(change)}`);
+        }
+        /*
+         * The changes the per-component cap kept back.
+         *
+         * Without this the list above reads as the whole of what changed, and a
+         * component handed forty changed props looks like one handed eight —
+         * which is the difference between a prop worth chasing and a parent
+         * re-rendering wholesale. The recording counts them; showing eight and
+         * letting a reader assume that was all of them is the silent half of a
+         * budget.
+         */
+        const more = Number(entry.moreChanges);
+        if (Number.isFinite(more) && more > 0) {
+          lines.push(
+            `  and ${more} more change${more === 1 ? '' : 's'} on this component, past ` +
+              'the per-component budget ("recording.renderMaxChanges")',
+          );
+        }
+        /*
+         * Said per component and not once at the top: a cut value is why *this*
+         * component's list is short, and the contract already refuses to call a
+         * bounded component wasted for the same reason.
+         */
+        if (entry.bounded === true) {
+          lines.push(
+            '  bounded  a value was cut at a snapshot cap, so a change below the cut reads as no change',
+          );
+        }
+      }
+
+      parts.render = {
+        have:
+          `${entries.length} component${entries.length === 1 ? '' : 's'} re-rendered` +
+          (wasted ? `, ${wasted} wasted` : ''),
+        lines,
+      };
+    }
   }
 
   return parts;
@@ -2478,7 +2683,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: 'get_step_detail',
       description:
-        'One part of one step, rather than all of it. Omit "include" and it lists the parts this step has — its component, network calls, console output, element, text change and screenshot — with what each would cost, so the next call asks for the one that answers the question. get_flow_step returns every part at once and is the right call when the step is already known to be the answer; this is for the move before that, on a step whose network alone runs to thousands of tokens.',
+        'One part of one step, rather than all of it. Omit "include" and it lists the parts this step has — its component, network calls, console output, element, text change, screenshot, and which components re-rendered — with what each would cost, so the next call asks for the one that answers the question. The "render" part answers "why did this render?": the components that re-rendered across the step and the props, state and contexts that changed value, marking the ones that re-rendered with nothing changed. It is sampled from two readings of the fiber tree, so it says which components re-rendered and never how many times, and it says which of "renders were never sampled", "the walk hit its cap" and "nothing re-rendered" it is. get_flow_step returns every part at once and is the right call when the step is already known to be the answer; this is for the move before that, on a step whose network alone runs to thousands of tokens.',
       inputSchema: {
         type: 'object',
         properties: {

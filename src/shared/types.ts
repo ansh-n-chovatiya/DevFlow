@@ -283,6 +283,107 @@ export interface FlowState {
   note?: string;
 }
 
+/**
+ * One prop, hook or context whose value differed across a step.
+ *
+ * `before` and `after` are bounded snapshots taken under the same caps a state
+ * snapshot is taken under, so a prop holding an entire API response costs what
+ * a store holding one costs. Both are absent when the value was too large or
+ * too circular to snapshot at all, which is not the same as a value of
+ * `undefined` — `bounded` on the `StepRender` says when that happened.
+ */
+export interface RenderChange {
+  /**
+   * A prop name, a context's label, or `hook 3` for the third hook of the
+   * component — counting from one, as every number in this project a person or
+   * a model reads does.
+   */
+  key: string;
+  before?: unknown;
+  after?: unknown;
+}
+
+/**
+ * What one component did across one step, and what the recording saw of why.
+ *
+ * Present only for components that actually re-rendered: the recorder compares
+ * each tracked fiber's `memoizedProps` reference between the two samples, and a
+ * component whose reference is unchanged did not render and carries no entry.
+ *
+ * ## What this can and cannot claim
+ *
+ * It is sampled, not counted. A component that rendered forty times during a
+ * step is indistinguishable here from one that rendered once, because the
+ * evidence is two readings and not a commit hook — and installing a commit hook
+ * means writing to the page, which is what `injected/state.ts` refuses for the
+ * reason its header gives. So nothing here is a render *count*, and no field
+ * may be added later that implies one without the mechanism changing first.
+ *
+ * The same sampling cost `StepStateDelta` carries applies: a prop that changed
+ * and changed back between the two readings reads as unchanged, and a prop
+ * object the app mutated in place rather than replacing reads as unchanged too.
+ */
+export interface StepRender {
+  /** The component, as `FlowReact.components` keys it. */
+  component: string;
+  /** Props whose value differed between the two samples. */
+  props?: RenderChange[];
+  /** The component's own state — `useState` and `useReducer` — that differed. */
+  hooks?: RenderChange[];
+  /** Contexts the component's own fiber depended on whose value differed. */
+  contexts?: RenderChange[];
+  /**
+   * It re-rendered and nothing DevFlow could see changed value.
+   *
+   * The classic wasted render: a parent re-rendered and handed this component a
+   * fresh props object holding the values it already had. It is a claim about
+   * what was *observed*, and the three lists above are the observation — so
+   * `wasted` is never set on a component whose props, hooks or contexts were
+   * cut by a cap, because then "nothing changed" is a statement about the cap
+   * and not about the app.
+   */
+  wasted?: true;
+  /**
+   * Changes observed on this component beyond the ones listed above.
+   *
+   * The lists are capped by `recording.renderMaxChanges` and the cap is spent
+   * across all three together. A component handed forty changed props is one
+   * fact about its parent, but the reader is told the number rather than shown
+   * eight and left to assume that was all of them.
+   */
+  moreChanges?: number;
+  /**
+   * A value was cut at a snapshot cap, so a change below the cut reads as no
+   * change.
+   *
+   * The same warning `StepStateDelta.bounded` carries, and it is what stops
+   * `wasted` being claimed on this entry.
+   */
+  bounded?: true;
+}
+
+/**
+ * What the recording could and could not see of the app's renders.
+ *
+ * `read` is false on every flow recorded on a page with no React, with render
+ * capture switched off, or where no fiber root was found — three different
+ * answers that `note` tells apart, exactly as `FlowState` does for stores.
+ * Absence of renders and absence of re-rendering look identical otherwise.
+ */
+export interface FlowRenders {
+  /** Whether render sampling ran at all during this recording. */
+  read: boolean;
+  /**
+   * The walk hit its fiber cap, so components past it were never compared.
+   *
+   * A recording that says nothing re-rendered while this is set is saying
+   * something about the cap. The cap is `recording.renderNodeCap`.
+   */
+  capped?: boolean;
+  /** Why there is less here than the reader expected, in the words they need. */
+  note?: string;
+}
+
 export type ConsoleLevel = 'log' | 'warn' | 'error' | 'info' | 'debug';
 
 export interface ConsoleEntry {
@@ -381,6 +482,15 @@ interface StepBase {
    * Stores that did not move are absent, not empty — see `StepStateDelta`.
    */
   state?: StepStateDelta[];
+  /**
+   * Which components re-rendered across this step, one entry per component.
+   *
+   * Components that did not re-render are absent, not listed as unchanged — the
+   * same rule `state` follows, and for the same reason: on a page where four
+   * components moved and nine hundred did not, the nine hundred are what the
+   * budget would be spent on.
+   */
+  renders?: StepRender[];
 }
 
 export interface ClickStep extends StepBase {
@@ -485,6 +595,12 @@ export interface FlowPayload {
    * `react`'s reason, and not a `schemaVersion` bump for it either.
    */
   state?: FlowState;
+  /**
+   * What the recording could and could not see of the app's renders. Absent
+   * entirely on a flow recorded before render sampling existed, on the same
+   * additive terms as `state` above.
+   */
+  renders?: FlowRenders;
   /**
    * Which sections the sender deliberately left out.
    *
@@ -617,6 +733,16 @@ export interface LocalStorageShape {
    */
   stateStores: StateStoreRef[];
   /**
+   * What the live recording could and could not see of the app's renders.
+   *
+   * On its own key for `stateStores`' reason — it is a fact about the
+   * *recording* rather than about any one step, and `recordedSteps` is
+   * rewritten whole by every capture. `capped` is sticky across the recording:
+   * one step whose walk was cut is enough to make "nothing re-rendered" a
+   * statement about the cap for the flow that contains it.
+   */
+  flowRenders: FlowRenders | null;
+  /**
    * Search needles for components still awaiting resolution.
    *
    * Deliberately a separate key from `reactComponents`: a needle is 200
@@ -705,6 +831,18 @@ export function savedFlowReactKey(id: string): `savedFlowReact_${string}` {
  */
 export function savedFlowStateKey(id: string): `savedFlowState_${string}` {
   return `savedFlowState_${id}`;
+}
+
+/**
+ * An archived flow's render summary, one key per flow.
+ *
+ * Beside the state key and on the same terms: a flow archived before render
+ * sampling existed has no such key, which reads as "renders were never
+ * sampled" — which is exactly what it meant then, and is a different answer
+ * from "nothing re-rendered".
+ */
+export function savedFlowRendersKey(id: string): `savedFlowRenders_${string}` {
+  return `savedFlowRenders_${id}`;
 }
 
 /**

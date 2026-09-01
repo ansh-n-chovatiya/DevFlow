@@ -201,6 +201,10 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
         // live recording's is still in storage and is read at send time.
         settings: flow.settings,
         state: flow.id === null ? undefined : flow.state,
+        // The same split again: an archived flow's render summary is frozen and
+        // travels here; the live recording's is read at send time out of the
+        // key `attachRenders` has been keeping up to date all along.
+        renders: flow.id === null ? undefined : flow.renders,
       });
     })();
   });

@@ -34,6 +34,10 @@ import {
   CAPTURE_DOM_DELTA,
   CAPTURE_MIN_INTERVAL_MS,
   CAPTURE_SCREENSHOTS,
+  CAPTURE_RENDERS,
+  RENDER_NODE_CAP,
+  RENDER_MAX_COMPONENTS,
+  RENDER_MAX_CHANGES,
   CAPTURE_STATE,
   CAPTURE_TRAILING_STEP,
   CAPTURE_UNCAUGHT,
@@ -289,7 +293,10 @@ interface NumberField extends Common {
     | "keys"
     | "entries"
     | "stores"
-    | "ops";
+    | "ops"
+    | "fibers"
+    | "components"
+    | "changes";
 }
 
 interface BooleanField extends Common {
@@ -618,6 +625,79 @@ export const FIELDS = [
     consequence:
       "Over budget the patch is re-cut at a shallower path, never trimmed — it stays applicable and becomes coarser, and the step counts what that cost.",
     consequenceWhen: { below: STATE_MAX_PATCH_OPS },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  // ── What re-rendered ───────────────────────────────────────────────────────
+  //
+  // Under `recording.` for the reason the state block above gives: §3.6 is
+  // frozen and enumerates the prefixes this group owns.
+  {
+    key: "recording.renders",
+    group: "recording",
+    tier: 1,
+    type: "boolean",
+    default: CAPTURE_RENDERS,
+    title: "Record which components re-rendered",
+    description:
+      "Which components re-rendered across each interaction, and which of their props, state and contexts changed value. Read off the fibers React already keeps — nothing is installed on the page.",
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.renderNodeCap",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: RENDER_NODE_CAP,
+    min: 100,
+    max: 20000,
+    unit: "fibers",
+    title: "Components compared per interaction",
+    description: "How far the walk goes before it stops, each time it samples.",
+    // The one number here whose cost lands on the user rather than on the
+    // recording: the first of the two walks runs inside the click.
+    consequence:
+      "The first walk of each pair runs inside the interaction, so raising this is latency the person recording feels. Past the cap components are never compared, and the recording says it was capped rather than that nothing re-rendered.",
+    consequenceWhen: { above: RENDER_NODE_CAP },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.renderMaxComponents",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: RENDER_MAX_COMPONENTS,
+    min: 1,
+    max: 200,
+    unit: "components",
+    title: "Re-rendered components kept per step",
+    description: "Components one step may report, busiest first.",
+    consequence:
+      "A step that re-rendered more than this keeps the ones with the most changes and says the list was cut.",
+    consequenceWhen: { below: RENDER_MAX_COMPONENTS },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.renderMaxChanges",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: RENDER_MAX_CHANGES,
+    min: 1,
+    max: 50,
+    unit: "changes",
+    title: "Changes kept per component",
+    description: "Changed props, hooks and contexts reported for one component.",
+    consequence:
+      "A component handed forty changed props is one fact about its parent; the fortieth adds nothing to it.",
+    consequenceWhen: { below: RENDER_MAX_CHANGES },
     consumers: ["content"],
     recorded: true,
     wired: true,

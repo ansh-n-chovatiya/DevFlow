@@ -20,9 +20,11 @@ import type {
   DraftStep,
   FlowReact,
   PickResult,
+  RenderChange,
   StateStoreKind,
   StateStoreRef,
   Step,
+  StepRender,
   StepStateDelta,
   TreeGroup,
 } from './types.js';
@@ -87,6 +89,31 @@ export interface StepStateDeltaMessage {
   deltas: StepStateDelta[];
   /** Stores seen for the first time in this recording, to be named on the flow. */
   stores?: StateStoreRef[];
+}
+
+/**
+ * Which components re-rendered across one step, once the app had settled.
+ *
+ * Sent separately from the step and merged in by key, exactly as
+ * `StepStateDeltaMessage` is and for its reason — the two ride the same pair of
+ * samples and arrive together.
+ *
+ * `capped` and `note` are facts about the *recording* rather than about this
+ * step, and travel here because this is the only message that knows them. A
+ * recording whose walk hit its fiber cap and reported no re-renders is
+ * reporting on the cap, so the flag is sent even when `renders` is empty —
+ * which is the one case where an otherwise silent message still has to be sent.
+ */
+export interface StepRendersMessage {
+  type: 'STEP_RENDERS';
+  /** `timestamp:type`, exactly as `stepKey` builds it. */
+  key: string;
+  /** Only components that re-rendered. May be empty when only `capped` is news. */
+  renders: StepRender[];
+  /** The walk stopped at `recording.renderNodeCap` — see `FlowRenders.capped`. */
+  capped?: boolean;
+  /** Why there is less here than expected, in the reader's words. */
+  note?: string;
 }
 
 export interface CaptureAndSaveStep {
@@ -303,6 +330,7 @@ export type WorkerRequest =
   | HighlightComponent
   | StepDomDelta
   | StepStateDeltaMessage
+  | StepRendersMessage
   | FinishRecording
   | Precapture
   | AnnotateScreenshot
@@ -369,6 +397,7 @@ export interface ResponseByType {
   CAPTURE_AND_SAVE_STEP: OkResponse;
   STEP_DOM_DELTA: OkResponse;
   STEP_STATE_DELTA: OkResponse;
+  STEP_RENDERS: OkResponse;
   PRECAPTURE: OkResponse;
   ANNOTATE_SCREENSHOT: AnnotateScreenshotResponse;
   REACT_META: OkResponse;
@@ -504,6 +533,49 @@ export interface AgentStateStore {
 }
 
 /**
+ * Which components re-rendered between the same two samples the state message
+ * is built from, keyed by the `timeStamp` of the event like every other agent
+ * message about one interaction.
+ *
+ * The *observations* travel rather than the finished `StepRender[]`, for
+ * `AgentStateMessage`'s reason: choosing which components survive the budget is
+ * a bounded-budget decision, `core/render/blame.ts` is pure and tested, and the
+ * MAIN world is the one context DevFlow does not control and cannot test
+ * without a browser. The page says what it saw; the isolated side says what it
+ * means.
+ */
+export interface AgentRenderMessage {
+  __devflow_source__: string;
+  kind: 'renders';
+  eventTime: number;
+  /** One entry per component whose props object was replaced between samples. */
+  observed: AgentRenderObservation[];
+  /** The walk stopped at `recording.renderNodeCap` — see `FlowRenders.capped`. */
+  capped?: boolean;
+  /** No React root was found, or another reason there is less here than expected. */
+  note?: string;
+}
+
+/**
+ * What the page saw of one component that re-rendered.
+ *
+ * Structurally `RenderObservation` from `core/render`, and deliberately not an
+ * import of it: `shared/` is frozen and depends on nothing, and the two shapes
+ * meeting structurally is what lets the content script hand this straight to
+ * `blame()` without a field-by-field copy — the copy being exactly how a
+ * captured field goes missing on the way to disk.
+ */
+export interface AgentRenderObservation {
+  /** Component id, minted by the recorder's own function. */
+  component: string;
+  props: RenderChange[];
+  hooks: RenderChange[];
+  contexts: RenderChange[];
+  /** A value was cut at a snapshot cap, or withheld — so `wasted` is refused. */
+  bounded: boolean;
+}
+
+/**
  * Script URLs seen in the page, as a delta.
  *
  * react-source-locator asks DevTools for the page's resources. DevFlow has no
@@ -597,6 +669,7 @@ export type AgentMessage =
   | AgentReactMessage
   | AgentReactMetaMessage
   | AgentStateMessage
+  | AgentRenderMessage
   | AgentScriptsMessage;
 
 // ── Content script → injected agent ──────────────────────────────────────────
@@ -682,6 +755,21 @@ export interface AgentConfig {
   stateStringCap: number;
   /** `recording.stateMaxStores` — stores read per recording. */
   stateMaxStores: number;
+  /** `recording.renders` — whether the fiber tree is sampled to see what re-rendered. */
+  captureRenders: boolean;
+  /**
+   * `recording.renderNodeCap` — fibers one render walk visits before it stops.
+   *
+   * The only cap here whose cost lands on the person recording rather than on
+   * the recording: the first of each pair of walks runs inside their click.
+   *
+   * The other two render settings — `renderMaxComponents` and
+   * `renderMaxChanges` — deliberately do not cross, for the reason
+   * `statePatchOps` does not: they budget the *evaluation*, which happens on
+   * the isolated side out of what the agent sends back, and a field that does
+   * not need to cross should not.
+   */
+  renderNodeCap: number;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
