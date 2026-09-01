@@ -15,7 +15,7 @@ import { describeStamp } from '../settings/stamp.js';
 import { renderLimits, type RenderLimits } from '../settings/render.js';
 import { load as loadSettings, resolve } from '../settings/index.js';
 import { readRecordingStamp, renderedOverrides } from '../settings/recording.js';
-import { readCurrentReact, readCurrentState } from '../flows/store.js';
+import { readCurrentReact, readCurrentRenders, readCurrentState } from '../flows/store.js';
 import { sendToWorker } from '../../shared/messages.js';
 import {
   FLOW_SCHEMA_VERSION,
@@ -27,6 +27,7 @@ import type {
   FlowPayload,
   FlowReact,
   FlowState,
+  FlowRenders,
   Overrides,
   Step,
 } from '../../shared/types.js';
@@ -69,6 +70,18 @@ export function pruneSteps(steps: Step[], include: ExportOptions): Step[] {
     }
     if (!include.network) delete next.networkCalls;
     if (!include.logs) delete next.consoleLogs;
+    /*
+     * `renders` goes with the React ref, and has to.
+     *
+     * Every entry in it is keyed by a component id, and with React switched off
+     * `buildPayload` prunes the component table to the ids the steps still
+     * reference — which is none. What would survive is a list of components
+     * named only by an id that resolves to nothing anywhere in the payload:
+     * unreadable to the reader and, worse, still a claim that those components
+     * re-rendered. The same reasoning `stripReactRef` exists for, one field
+     * over.
+     */
+    if (!include.react) delete next.renders;
     // `stripReactRef` copies rather than mutates, for the same reason `next`
     // does: the element is shared with the stored recording.
     return include.react ? next : stripReactRef(next);
@@ -276,6 +289,12 @@ export function buildPayload(
    * and is the one case the payload has nothing to say about.
    */
   state: FlowState | null = null,
+  /**
+   * What the recording saw of the app's renders. `null` for a flow archived
+   * before render sampling existed, which is not the same as "nothing
+   * re-rendered" — see `FlowRenders`.
+   */
+  renders: FlowRenders | null = null,
 ): FlowPayload {
   const components = react ? pruneComponents(steps, react.components) : {};
   const carries = react !== null && react !== undefined && Object.keys(components).length > 0;
@@ -309,6 +328,10 @@ export function buildPayload(
     // "state capture was off" and "no store changed" are indistinguishable
     // without them, and a reader that cannot tell picks the worse one.
     ...(state ? { state } : {}),
+    // On `state`'s terms exactly: absent when the recording has nothing to say
+    // about renders, present — including with `read: false` — the moment it
+    // does, because "sampling was off" is an answer and silence is not.
+    ...(renders ? { renders } : {}),
   };
 }
 
@@ -354,6 +377,8 @@ export async function sendFlow(
   archivedSettings?: Overrides | null,
   /** An archived flow's frozen state, on the same split as `archivedReact`. */
   archivedState?: FlowState | null,
+  /** An archived flow's frozen render summary, on the same split again. */
+  archivedRenders?: FlowRenders | null,
 ): Promise<Result<SendResult>> {
   if (steps.length === 0) return err(flowError('MCP_UNREACHABLE', 'nothing to send'));
 
@@ -400,6 +425,14 @@ export async function sendFlow(
   // the clearer promise.
   const react = include.react ? (archivedReact ?? (await readCurrentReact(sending))) : null;
   const state = archivedState ?? (await readCurrentState());
+  /*
+   * Not behind an include switch, for the reason `state` is not: what is sent
+   * is bounded by `recording.renders`, which is the switch that decides whether
+   * it was ever sampled, and a `FlowRenders` saying it was not is a few dozen
+   * bytes. It is dropped along with the steps' own lists when React is switched
+   * off, because without the component table it names nothing.
+   */
+  const renders = include.react ? (archivedRenders ?? (await readCurrentRenders())) : null;
   // The recording's own time, not the moment Send was pressed. The server
   // prints this as "Recorded" and orders `list_flows` by it, so stamping now
   // dated a week-old flow to this afternoon and pushed it above the recording
@@ -413,6 +446,7 @@ export async function sendFlow(
     include,
     stamp,
     state,
+    renders,
   );
   const first = payload.startUrl;
 

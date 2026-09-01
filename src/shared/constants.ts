@@ -498,9 +498,16 @@ export const CAPTURE_RENDERS = true;
  * The walk runs twice per step and the first of the two runs inside the user's
  * gesture, so this number is click latency on a page being recorded — which is
  * why it is a third of `DISCOVERY_NODE_CAP`, whose walk runs only on the
- * settled sample where nobody is waiting. It was measured rather than picked:
- * see `tests/render-walk-budget.test.ts`, which fails if a walk of this size
- * stops fitting in the budget below.
+ * settled sample where nobody is waiting.
+ *
+ * At this cap one sample costs about 0.2ms over synthetic fibers carrying eight
+ * props each (`tests/render-walk-budget.test.ts`, jsdom, this machine). That
+ * number is not a browser measurement and must not be quoted as one — a real
+ * fiber is not a plain object and jsdom is not Chrome. What the test actually
+ * holds is the property the cap exists for: the work is a function of the cap
+ * and not of the page, so an app with fifty thousand fibers pays what an app
+ * with two thousand pays, and a walk that quietly became quadratic goes red
+ * there rather than in somebody's recording.
  *
  * When the cap bites, `FlowRenders.capped` says so. A recording that reports no
  * re-renders while capped is reporting on the cap.

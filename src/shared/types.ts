@@ -733,6 +733,16 @@ export interface LocalStorageShape {
    */
   stateStores: StateStoreRef[];
   /**
+   * What the live recording could and could not see of the app's renders.
+   *
+   * On its own key for `stateStores`' reason — it is a fact about the
+   * *recording* rather than about any one step, and `recordedSteps` is
+   * rewritten whole by every capture. `capped` is sticky across the recording:
+   * one step whose walk was cut is enough to make "nothing re-rendered" a
+   * statement about the cap for the flow that contains it.
+   */
+  flowRenders: FlowRenders | null;
+  /**
    * Search needles for components still awaiting resolution.
    *
    * Deliberately a separate key from `reactComponents`: a needle is 200
@@ -821,6 +831,18 @@ export function savedFlowReactKey(id: string): `savedFlowReact_${string}` {
  */
 export function savedFlowStateKey(id: string): `savedFlowState_${string}` {
   return `savedFlowState_${id}`;
+}
+
+/**
+ * An archived flow's render summary, one key per flow.
+ *
+ * Beside the state key and on the same terms: a flow archived before render
+ * sampling existed has no such key, which reads as "renders were never
+ * sampled" — which is exactly what it meant then, and is a different answer
+ * from "nothing re-rendered".
+ */
+export function savedFlowRendersKey(id: string): `savedFlowRenders_${string}` {
+  return `savedFlowRenders_${id}`;
 }
 
 /**

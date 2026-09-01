@@ -34,6 +34,12 @@ import type { RecordingSettings } from './fields.js';
  * cross should not: this channel is `window.postMessage`, and the page can read
  * every value on it.
  *
+ * The two `recording.render*` entries follow the same split for the same
+ * reason: `recording.renders` and `recording.renderNodeCap` govern a walk of
+ * the page's own fibers and must cross, while `renderMaxComponents` and
+ * `renderMaxChanges` budget the evaluation `core/render` does on this side of
+ * the boundary and stay here.
+ *
  * The three `react.*` entries are Phase 6's, and they are here rather than in the
  * content script because the fiber walk happens in the MAIN world — it is the
  * page's own React that is being read, and nothing in the isolated world can
@@ -59,5 +65,7 @@ export function toAgentConfig(settings: RecordingSettings): AgentConfig {
     stateMaxEntries: settings['recording.stateMaxEntries'],
     stateStringCap: settings['recording.stateStringCap'],
     stateMaxStores: settings['recording.stateMaxStores'],
+    captureRenders: settings['recording.renders'],
+    renderNodeCap: settings['recording.renderNodeCap'],
   };
 }

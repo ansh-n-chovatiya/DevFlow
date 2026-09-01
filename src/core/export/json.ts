@@ -99,7 +99,13 @@ export function exportToJSON(steps: Step[], options: JsonExportOptions = {}): st
         // Component ids with no table to read them against are bytes that
         // answer nothing, whether React was switched off for this export or the
         // resolver never found anything worth keeping.
-        if (!carries) out.element = stripReactRef(step).element;
+        if (!carries) {
+          out.element = stripReactRef(step).element;
+          // `renders` is keyed by those same ids and goes with them, for the
+          // reason `pruneSteps` gives: a component list nothing can name is not
+          // a smaller answer, it is an unreadable claim.
+          delete out.renders;
+        }
 
         if (network === false) {
           delete out.networkCalls;

@@ -19,7 +19,14 @@ import { load as loadSettings } from '../../features/settings/index.js';
 import { getLocal, setLocal } from '../../chrome/storage.js';
 import { banner } from '../settings/components.js';
 import { flowHost } from '../../core/flow/index.js';
-import type { ExportOptions, FlowReact, FlowState, Overrides, Step } from '../../shared/types.js';
+import type {
+  ExportOptions,
+  FlowReact,
+  FlowRenders,
+  FlowState,
+  Overrides,
+  Step,
+} from '../../shared/types.js';
 import { formatBytes, formatTokenCount, formatTokens } from '../format.js';
 import { setIcon } from '../icons.js';
 import { showToast } from '../toast.js';
@@ -67,6 +74,8 @@ interface Session {
   settings: Overrides | undefined;
   /** An archived flow's frozen state, on the same split as `react`. */
   state: FlowState | undefined;
+  /** An archived flow's frozen render summary, on the same split again. */
+  renders: FlowRenders | undefined;
   /** What `export.send*` says this dialog opens on — see the export dialog. */
   configured: ExportOptions;
   /** `mcpServerUrl`, read once at open: the address this POST goes to. */
@@ -305,6 +314,7 @@ async function run(): Promise<void> {
     session.recordedAt,
     session.settings,
     session.state,
+    session.renders,
   );
 
   session.busy = false;
@@ -352,6 +362,8 @@ export interface OpenSendOptions {
   settings?: Overrides | null;
   /** An archived flow's frozen state. Absent for the live recording. */
   state?: FlowState | null;
+  /** An archived flow's frozen render summary. Absent for the live recording. */
+  renders?: FlowRenders | null;
 }
 
 export function openSend({
@@ -362,6 +374,7 @@ export function openSend({
   recordedAt,
   settings,
   state,
+  renders,
 }: OpenSendOptions): void {
   if (steps.length === 0) {
     showToast({ message: 'There is nothing to send yet.' });
@@ -390,6 +403,7 @@ export function openSend({
       recordedAt: recordedAt ?? undefined,
       settings: settings ?? undefined,
       state: state ?? undefined,
+      renders: renders ?? undefined,
       // Read from the same `load()` the four switches came from, so the address
       // on screen and the defaults beside it describe one moment.
       target: settingsNow.mcpServerUrl,

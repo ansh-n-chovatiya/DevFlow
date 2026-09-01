@@ -46,6 +46,7 @@ import { stepKey } from '../core/flow/index.js';
 import {
   sendToWorker,
   type AgentMessage,
+  type AgentRenderMessage,
   type AgentStateMessage,
   type AgentStateStore,
   type CapturedComponent,
@@ -61,6 +62,7 @@ import type {
   StepStateDelta,
 } from '../shared/types.js';
 import { diff } from '../core/state/patch.js';
+import { blame } from '../core/render/index.js';
 /*
  * Type-only, so nothing of the agent is bundled into the content script — an
  * ordinary import would pull `injected/agent.ts` and its console, fetch and XHR
@@ -229,7 +231,15 @@ function onStateSample(data: AgentStateMessage): void {
   // No step claimed this interaction — a click the recorder dropped, or one
   // whose step was deleted in the review tab while the app was still settling.
   if (!key) return;
-  stepByEventTime.delete(data.eventTime);
+  /*
+   * The key is *not* consumed here, and that is load-bearing.
+   *
+   * One interaction now produces two messages — the stores and the renders,
+   * off the same pair of samples — and deleting the key on the first to arrive
+   * silently dropped the second on every step. The map is bounded and evicts
+   * oldest-first, which is what stops an unclaimed interaction leaking; nothing
+   * needed the delete except tidiness, and tidiness cost a whole feature.
+   */
 
   const budget = { maxOps: frozen['recording.statePatchOps'] };
   const deltas: StepStateDelta[] = [];
@@ -268,6 +278,45 @@ function onStateSample(data: AgentStateMessage): void {
     key,
     deltas,
     ...(stores.length ? { stores } : {}),
+  });
+}
+
+/**
+ * Turn what the page observed of one interaction into what the step says
+ * re-rendered.
+ *
+ * The judgement is `core/render/blame.ts`'s and happens here for
+ * `onStateSample`'s reason: which components survive the budget, and whether
+ * "nothing changed" may be called `wasted`, are decisions that have to be
+ * testable without a browser. The agent sends observations; this decides what
+ * they are worth.
+ *
+ * Sent even when nothing survived, if the walk was capped or the page had
+ * something to say. A recording that reports no re-renders while its walk was
+ * cut is reporting on the cut, and `FlowRenders` is where a reader is told.
+ */
+function onRenderSample(data: AgentRenderMessage): void {
+  const key = stepByEventTime.get(data.eventTime);
+  if (!key) return;
+
+  const { renders, note } = blame(data.observed, {
+    maxComponents: frozen['recording.renderMaxComponents'],
+    maxChanges: frozen['recording.renderMaxChanges'],
+  });
+
+  // The page's note is about the page — no React root — and the budget's is
+  // about this step. Both are the same field on `FlowRenders`, so both travel;
+  // the page's goes first because it explains the larger absence.
+  const notes = [data.note, note].filter(Boolean).join(' ');
+
+  if (!renders.length && !data.capped && !notes) return;
+
+  void sendToWorker({
+    type: 'STEP_RENDERS',
+    key,
+    renders,
+    ...(data.capped ? { capped: true } : {}),
+    ...(notes ? { note: notes } : {}),
   });
 }
 
@@ -325,6 +374,8 @@ window.addEventListener('message', (event: MessageEvent<AgentMessage | AgentQuer
     void sendToWorker({ type: 'REACT_SCRIPTS', urls: data.urls, pageUrl: location.href });
   } else if (data.kind === 'state') {
     onStateSample(data);
+  } else if (data.kind === 'renders') {
+    onRenderSample(data);
   } else if (data.kind === 'react-meta') {
     void sendToWorker({
       type: 'REACT_META',

@@ -23,9 +23,11 @@ import {
   savedFlowKey,
   savedFlowReactKey,
   savedFlowStateKey,
+  savedFlowRendersKey,
   type FlowMeta,
   type FlowReact,
   type FlowState,
+  type FlowRenders,
   type Overrides,
   type Step,
 } from '../../shared/types.js';
@@ -60,6 +62,13 @@ export interface Flow {
    * capture existed, which says nothing about state either way.
    */
   state: FlowState | null;
+  /**
+   * What the recording could see of the app's renders, including when the
+   * answer is "nothing, and here is why". `null` only for a flow archived
+   * before render sampling existed — which is a different answer from "nothing
+   * re-rendered", and the reason this is not simply absent.
+   */
+  renders: FlowRenders | null;
 }
 
 /** The name the unsaved recording is shown under until it is given one. */
@@ -260,6 +269,40 @@ export async function readCurrentState(): Promise<FlowState | null> {
 }
 
 /**
+ * What the recording could and could not see of the app's renders.
+ *
+ * `readCurrentState`'s shape and its reasoning: the switch is read from the
+ * settings *frozen for this recording*, not from live settings, so a flow
+ * recorded with sampling off still says so after the user turns it back on.
+ *
+ * The difference from state is which half of the answer comes from where.
+ * Whether sampling ran is a settings question and is answered here; whether it
+ * was cut short is something only the walk knows, so `capped` and the note are
+ * carried on `flowRenders` by `attachRenders` and read back off it. A recording
+ * where sampling ran and nothing was ever cut has neither, which is the plain
+ * "it looked, and it saw everything it looked at" answer.
+ */
+export async function readCurrentRenders(): Promise<FlowRenders | null> {
+  const stored = await getLocal(['flowRenders', 'recordingSettings']);
+  if (!stored.ok) return null;
+
+  const settings = resolve(stored.value.recordingSettings ?? {});
+  if (!settings['recording.renders']) {
+    return {
+      read: false,
+      note: 'Which components re-rendered was not recorded — “Record which components re-rendered” was off for this recording.',
+    };
+  }
+
+  const seen = stored.value.flowRenders ?? null;
+  return {
+    read: true,
+    ...(seen?.capped ? { capped: true } : {}),
+    ...(seen?.note ? { note: seen.note } : {}),
+  };
+}
+
+/**
  * What storage actually holds for an id, with the two ways a flow can be absent
  * kept apart.
  *
@@ -277,6 +320,7 @@ interface FlowRecord {
   steps: Step[] | null;
   react: FlowReact | null;
   state: FlowState | null;
+  renders: FlowRenders | null;
 }
 
 async function readFlowRecord(id: string): Promise<Result<FlowRecord>> {
@@ -284,12 +328,13 @@ async function readFlowRecord(id: string): Promise<Result<FlowRecord>> {
   if (!flows.ok) return flows;
 
   const meta = flows.value.find((flow) => flow.id === id) ?? null;
-  if (!meta) return ok({ meta: null, steps: null, react: null, state: null });
+  if (!meta) return ok({ meta: null, steps: null, react: null, state: null, renders: null });
 
   const key = savedFlowKey(id);
   const reactKey = savedFlowReactKey(id);
   const stateKey = savedFlowStateKey(id);
-  const stored = await getLocal([key, reactKey, stateKey]);
+  const rendersKey = savedFlowRendersKey(id);
+  const stored = await getLocal([key, reactKey, stateKey, rendersKey]);
   if (!stored.ok) return stored;
 
   const steps = stored.value[key];
@@ -298,8 +343,17 @@ async function readFlowRecord(id: string): Promise<Result<FlowRecord>> {
   // Nor before state was. Null reads as "this recording says nothing about
   // state", which is exactly what a flow from that build does say.
   const state = (stored.value[stateKey] as FlowState | undefined) ?? null;
+  // Nor before renders were sampled, and null says so rather than claiming the
+  // recording looked and found nothing.
+  const renders = (stored.value[rendersKey] as FlowRenders | undefined) ?? null;
 
-  return ok({ meta, steps: Array.isArray(steps) ? (steps as Step[]) : null, react, state });
+  return ok({
+    meta,
+    steps: Array.isArray(steps) ? (steps as Step[]) : null,
+    react,
+    state,
+    renders,
+  });
 }
 
 /**
@@ -312,10 +366,10 @@ export async function readFlow(id: string): Promise<Result<Flow | null>> {
   const record = await readFlowRecord(id);
   if (!record.ok) return record;
 
-  const { meta, steps, react, state } = record.value;
+  const { meta, steps, react, state, renders } = record.value;
   if (!meta || !steps) return ok(null);
 
-  return ok({ id, name: meta.name, steps, meta, react, state });
+  return ok({ id, name: meta.name, steps, meta, react, state, renders });
 }
 
 // ── Describing ───────────────────────────────────────────────────────────────
@@ -420,6 +474,7 @@ export async function saveAsFlow(name: string, steps: Step[]): Promise<Result<Fl
   await sendToWorker({ type: 'RESOLVE_COMPONENTS', final: true });
   const react = await readCurrentReact(numbered);
   const state = await readCurrentState();
+  const renders = await readCurrentRenders();
 
   // Steps first: if the index went first and the steps failed, the library would
   // list a flow that cannot be opened.
@@ -427,6 +482,7 @@ export async function saveAsFlow(name: string, steps: Step[]): Promise<Result<Fl
     [savedFlowKey(id)]: numbered,
     ...(react ? { [savedFlowReactKey(id)]: react } : {}),
     ...(state ? { [savedFlowStateKey(id)]: state } : {}),
+    ...(renders ? { [savedFlowRendersKey(id)]: renders } : {}),
   });
   if (!written.ok) return written;
 
@@ -442,7 +498,12 @@ export async function saveAsFlow(name: string, steps: Step[]): Promise<Result<Fl
      * occupied by a key nothing can name — which is the failure they were
      * already having, made permanent.
      */
-    await removeLocal([savedFlowKey(id), savedFlowReactKey(id), savedFlowStateKey(id)]);
+    await removeLocal([
+      savedFlowKey(id),
+      savedFlowReactKey(id),
+      savedFlowStateKey(id),
+      savedFlowRendersKey(id),
+    ]);
     return indexed;
   }
 
@@ -556,6 +617,7 @@ export async function deleteFlow(id: string): Promise<Result<DeletedFlow>> {
       savedFlowKey(id),
       savedFlowReactKey(id),
       savedFlowStateKey(id),
+      savedFlowRendersKey(id),
     ]);
     if (!removed.ok) return removed;
   }

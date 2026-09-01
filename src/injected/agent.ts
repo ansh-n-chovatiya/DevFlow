@@ -55,7 +55,9 @@ import {
   MAX_FIBER_WALK,
   REACT_PREWARM_TTL_MS,
   STACK_FRAMES,
+  CAPTURE_RENDERS,
   CAPTURE_STATE,
+  RENDER_NODE_CAP,
   STATE_MAX_DEPTH,
   STATE_MAX_ENTRIES,
   STATE_MAX_KEYS,
@@ -68,7 +70,8 @@ import type {
   AgentQueryMessage,
   PickQuery,
 } from '../shared/messages.js';
-import { redactUrl } from '../core/redact/index.js';
+import { isSecretStateKey, redactUrl } from '../core/redact/index.js';
+import type { SnapshotBudget } from '../core/state/snapshot.js';
 
 /**
  * What this agent has been told to do, and what it does until it is told.
@@ -103,6 +106,8 @@ const config: AgentConfig = {
   stateMaxEntries: STATE_MAX_ENTRIES,
   stateStringCap: STATE_STRING_CAP,
   stateMaxStores: STATE_MAX_STORES,
+  captureRenders: CAPTURE_RENDERS,
+  renderNodeCap: RENDER_NODE_CAP,
 };
 
 /**
@@ -164,6 +169,14 @@ function applyConfig(next: Partial<AgentConfig> | undefined): void {
   }
   if (typeof next.stateMaxStores === 'number' && Number.isFinite(next.stateMaxStores)) {
     config.stateMaxStores = Math.max(1, next.stateMaxStores);
+  }
+  if (typeof next.captureRenders === 'boolean') config.captureRenders = next.captureRenders;
+  if (typeof next.renderNodeCap === 'number' && Number.isFinite(next.renderNodeCap)) {
+    // Floored at one for `maxFiberWalk`'s reason. A zeroed cap would report a
+    // page on which nothing ever re-renders, which is the answer a reader is
+    // least able to tell from a working one — and `FlowRenders.capped` would
+    // be the only trace of it.
+    config.renderNodeCap = Math.max(1, next.renderNodeCap);
   }
 }
 
@@ -716,6 +729,12 @@ import {
   type StateBudget,
   type StateSample,
 } from './state.js';
+import {
+  compareRenders,
+  renderNote,
+  sampleRenders,
+  type RenderSample,
+} from './render.js';
 import { cancelPick, pickedEntry, startPick } from './picker.js';
 import { hide as hideHighlight, highlight } from './highlight.js';
 
@@ -919,10 +938,10 @@ function abandonReact(): void {
   sendReactMeta(false);
 }
 
-// ── Application state ────────────────────────────────────────────────────────
+// ── Application state, and what re-rendered ──────────────────────────────────
 
 /**
- * The sample taken when the gesture started, waiting for the app to settle.
+ * The samples taken when the gesture started, waiting for the app to settle.
  *
  * One slot rather than one per interaction, and the coalescing that follows from
  * that is the point rather than a saving. Typing fires an `input` event per
@@ -931,8 +950,18 @@ function abandonReact(): void {
  * step ever claims. Keeping the first `before` and restarting the timer on each
  * new interaction produces exactly the pair the step wants: the state as it was
  * before the user started typing, and the state once they had stopped.
+ *
+ * The stores and the fiber tree are read at the same two moments, from one
+ * timer. They are two answers to one question — *what did this interaction
+ * do?* — and a second timer would be a second definition of "settled" and a
+ * second walk of the same tree, on the same click. Either half can be `null`:
+ * `recording.state` and `recording.renders` are independent switches.
  */
-let pendingState: { before: StateSample[]; timer: ReturnType<typeof setTimeout> } | null = null;
+let pendingState: {
+  before: StateSample[] | null;
+  renders: RenderSample | null;
+  timer: ReturnType<typeof setTimeout>;
+} | null = null;
 
 function stateBudget(): StateBudget {
   // Read per call, like every other setting here — see `config` above.
@@ -942,6 +971,24 @@ function stateBudget(): StateBudget {
     maxEntries: config.stateMaxEntries,
     stringCap: config.stateStringCap,
     maxStores: config.stateMaxStores,
+  };
+}
+
+/**
+ * The caps a changed prop, hook or context value is snapshotted under.
+ *
+ * The state caps, deliberately: `RenderChange` says its values are "bounded
+ * snapshots taken under the same caps a state snapshot is taken under", and a
+ * prop holding an entire API response should cost what a store holding one
+ * costs. Four settings for one budget is three too many.
+ */
+function renderSnapshotBudget(): SnapshotBudget {
+  return {
+    maxDepth: config.stateMaxDepth,
+    maxKeys: config.stateMaxKeys,
+    maxEntries: config.stateMaxEntries,
+    stringCap: config.stateStringCap,
+    secretKey: isSecretStateKey,
   };
 }
 
@@ -989,37 +1036,78 @@ function pairSamples(
  * Called before the chain walk and before the target check, because state is a
  * fact about the app rather than about the element: a click on a plain `<div>`
  * that dispatches an action is exactly the step whose state change explains it.
+ * The same is true of a render — the component that re-rendered is very often
+ * not the one that was clicked, which is the question the feature exists for.
+ *
+ * What the gesture pays is one bounded breadth-first walk plus shallow reads
+ * per component. Nothing is snapshotted here: the deep work is done at the
+ * settled sample below, and only on the values that actually differ.
  */
 function onStateInteraction(event: Event): void {
-  if (!config.captureState) return;
+  const wantState = config.captureState;
+  const wantRenders = config.captureRenders;
+  if (!wantState && !wantRenders) return;
 
-  const budget = stateBudget();
   // The first sample of the gesture is the `before`; a later interaction in the
   // same gesture keeps it. This listener is `capture: true` on the document, so
   // it runs ahead of React's own root listener and the handlers below it — the
   // whole basis of calling this reading "before".
   const before = pendingState
     ? pendingState.before
-    : sampleStores(budget, identifyComponent, false, Date.now());
+    : wantState
+      ? sampleStores(stateBudget(), identifyComponent, false, Date.now())
+      : null;
+  const renders = pendingState
+    ? pendingState.renders
+    : wantRenders
+      ? sampleRenders(config.renderNodeCap)
+      : null;
   if (pendingState) clearTimeout(pendingState.timer);
 
   const eventTime = event.timeStamp;
   const timer = setTimeout(() => {
     pendingState = null;
-    const after = sampleStores(stateBudget(), identifyComponent, true, Date.now());
-    const stores = pairSamples(before, after);
-    if (!stores.length) return;
-    emit({
-      kind: 'state',
-      // Claimed by the same number the chain is claimed by, and for the same
-      // reason: one dispatch, one `timeStamp`, identical in both worlds.
-      eventTime,
-      stores,
-      note: stateNote(),
-    });
+
+    if (before) {
+      const after = sampleStores(stateBudget(), identifyComponent, true, Date.now());
+      const stores = pairSamples(before, after);
+      if (stores.length) {
+        emit({
+          kind: 'state',
+          // Claimed by the same number the chain is claimed by, and for the same
+          // reason: one dispatch, one `timeStamp`, identical in both worlds.
+          eventTime,
+          stores,
+          note: stateNote(),
+        });
+      }
+    }
+
+    if (renders) {
+      const after = sampleRenders(config.renderNodeCap);
+      const { observed, capped } = compareRenders(
+        renders,
+        after,
+        renderSnapshotBudget(),
+        identifyComponent,
+      );
+      const note = renderNote(after);
+      // Sent when the walk was cut even though nothing was observed, which is
+      // the one case a silent message would be a lie: a recording that says
+      // nothing re-rendered while capped is reporting on the cap.
+      if (observed.length || capped || note) {
+        emit({
+          kind: 'renders',
+          eventTime,
+          observed,
+          ...(capped ? { capped: true } : {}),
+          ...(note ? { note } : {}),
+        });
+      }
+    }
   }, config.stateSettleMs);
 
-  pendingState = { before, timer };
+  pendingState = { before, renders, timer };
 }
 
 /** Drops a sample nobody will claim — a recording that stopped, a page that left. */

@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+**A recording can say which components re-rendered across each step, and it
+learns it by looking rather than by joining in.** The page agent takes the two
+readings of the fiber tree it already takes for state — one inside the click,
+one once the app has settled — and reports every component whose `memoizedProps`
+object was replaced between them, with the props, `useState`/`useReducer` values
+and contexts that stopped being the same reference. Nothing is installed on the
+page: no commit hook, no patched React DevTools global, no subscription, no new
+window property. The v3.2.0 attempt at this walked the whole tree on every
+commit on every page it was loaded into; this walks a bounded breadth-first
+slice twice per step, and only when a recording is running.
+
+**It says when it could not see everything, rather than reporting silence.** The
+walk stops at `recording.renderNodeCap` fibers and the recording carries the
+fact that it was cut, because "nothing re-rendered" and "nothing was looked at"
+are the same sentence otherwise. Changed values are snapshotted under the state
+caps, secrets are masked by name, and a component's children are reported as
+changed without printing the element tree behind them — which is also what stops
+a wasted render being claimed over a change that was real and simply not
+printable.
+
+**A component that re-rendered while nothing it was handed changed value is
+marked wasted, and the mark is withheld the moment the evidence thins.** That is
+the actionable finding — a parent re-rendered and passed down a fresh object
+holding the values its child already had — and it is also the easiest thing to
+assert falsely: a component reported as re-rendering needlessly when in fact its
+own state moved sends a reader to delete a `memo()` that was doing its job. So
+the claim rests on having looked at all three of props, own hook state and
+contexts, and any observation cut at a snapshot cap is reported *without* it.
+When more components re-rendered than one step reports, the wasted ones are kept
+first: ordering by how much changed is the obvious rule and it drops every
+wasted render before anything else, worst on the busiest steps.
+
+**`get_step_detail` gained a `render` part, and it answers four questions rather
+than one.** Renders were never sampled, sampling was switched off, the walk hit
+its cap, or nothing re-rendered — only the last is about the application, and an
+empty list under a hit cap is a statement about the cap. Nothing it prints
+counts renders: two readings of a fiber tree can say *which* components
+re-rendered and never how many times, so the summary counts components and says
+so out loud.
+
 **`get_anomalies` now says how much it actually looked at.** An empty answer was
 two different answers wearing one sentence — *nothing is wrong* and *nothing has
 enough history to judge yet* — and the tool could not tell them apart, so it
