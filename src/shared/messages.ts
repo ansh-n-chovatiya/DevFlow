@@ -30,6 +30,7 @@ import type {
   TreeGroup,
 } from './types.js';
 import type { Pos1 } from '../core/react/positions.js';
+import type { ComponentStamp } from '../core/react/stamp.js';
 
 /**
  * One component the agent found above an interaction.
@@ -53,6 +54,19 @@ export interface CapturedComponent {
    * but not the same answer, and not interchangeable with a bundle-search hit.
    */
   debugSource?: { source: string; line: Pos1; column: Pos1 } | null;
+  /**
+   * `@devflow/compiler-plugin`'s stamp, read straight off the component
+   * function. Absent on every build that does not use the plugin, which is
+   * every build by default.
+   *
+   * Beside `debugSource` rather than replacing it, because they are different
+   * facts and the difference decides which wins: `debugSource` is where the
+   * JSX element was *written* — a position in the parent's file — and a stamp
+   * is where the component was *defined*, which is what `ComponentSource` has
+   * always claimed to be. So the stamp goes first in `table.ts`, and
+   * `debug-source` is the compromise it beats.
+   */
+  stamp?: ComponentStamp | null;
 }
 
 // ── Page → worker ────────────────────────────────────────────────────────────

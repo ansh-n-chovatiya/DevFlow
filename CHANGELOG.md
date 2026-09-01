@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+**`@devflow/compiler-plugin` writes each React component's own file and line
+onto the component function at build time, and DevFlow reads it back.** It is a
+Babel plugin, it is optional, and nothing needs it: DevFlow finds a component's
+source by searching the page's own bundles, and that is still the path it is
+built and tested around. What the plugin is for is the builds that path cannot
+answer for — a bundle shipping no source map, a map the browser will not fetch,
+a compiled body that genuinely appears in more than one place. It is not the fix
+for poor attribution generally, and its README says so: the common failure is a
+lazy chunk that never loaded, and a chunk that did not load carries no stamp
+either.
+
+**It stamps the component function, never the JSX.** A `data-` attribute would
+reach the DOM and change your application — your snapshot tests, your attribute
+selectors, your accessibility tree — so what is emitted is
+`Cart.__devflow = { f, l }`, one property assignment at module scope, invisible
+to React and to the page. Development builds only unless you ask otherwise:
+stamping ships your repository's directory layout in the bundle, and shipping
+that to every visitor is a decision to make deliberately.
+
+**Every attribution says which path answered it.** `ComponentSource.via` gained
+`plugin` beside `debug-source` and `bundle-search`, and the panel spells it
+`build stamp`, so no recording can depend on the plugin without a reader being
+able to tell. A stamp beats React's `_debugSource` where both exist, and for a
+reason that is not about which is newer: `_debugSource` is where a component's
+JSX was *written*, a position in its parent's file, and a stamp is where the
+component was *defined* — which is what the source of a component has always
+meant here.
+
+**Babel only, and said rather than implied.** `@vitejs/plugin-react-swc` and
+Next.js compile with SWC, which takes no Babel plugin, so this serves a real but
+partial audience. Class components, components defined below module scope and
+anonymous default exports are not stamped either. All of it is listed in
+`compiler-plugin/README.md` as gaps rather than left to be discovered.
+
 **`replay_flow` runs a recorded journey again and says whether it still works —
 and it is off until you switch it on.** It is the only tool here that executes
 code on the machine it runs on: your own Playwright, your own application,

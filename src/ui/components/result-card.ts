@@ -78,11 +78,16 @@ export type CompiledPosition = NonNullable<ComponentSource['compiled']>;
 // ── The words ────────────────────────────────────────────────────────────────
 
 /**
- * How the source was found, in two words. CONTRACTS §4.4 freezes all three.
+ * How the source was found, in two words.
  *
- * `via` on the model has two values, not three, because `bundle-search` splits
- * on whether the search got all the way back to an original file:
+ * `via` on the model has three values and this has four, because
+ * `bundle-search` splits on whether the search got all the way back to an
+ * original file:
  *
+ *   - `build stamp` — `@devflow/compiler-plugin` wrote the component's own file
+ *     and line onto the component function at build time. No search happened,
+ *     and this is here so that no answer can come from the plugin without
+ *     saying so: see `ROADMAP_AND_PHASES.md` §1.1, rule 3.
  *   - `dev build` — React attached `_debugSource`, so this is the file the
  *     developer typed, read straight off the fiber. No search happened.
  *   - `source map` — found in a bundle, then mapped back through the bundle's
@@ -95,6 +100,7 @@ export type CompiledPosition = NonNullable<ComponentSource['compiled']>;
  * provenance for an answer that does not exist.
  */
 export function viaLabel(source: ComponentSource): string | null {
+  if (source.via === 'plugin') return 'build stamp';
   if (source.via === 'debug-source') return 'dev build';
   if (source.via !== 'bundle-search') return null;
   return source.source ? 'source map' : 'compiled';
@@ -102,6 +108,7 @@ export function viaLabel(source: ComponentSource): string | null {
 
 /** The sentence behind each `via`, as a tooltip. */
 const VIA_TITLE: Record<string, string> = {
+  'build stamp': 'Read from the location this app’s build wrote onto the component.',
   'dev build': 'Read directly from the location React recorded on the component.',
   'source map': 'The compiled position, mapped back through the bundle’s source map.',
   compiled: 'A position in the served bundle. No original source was available.',

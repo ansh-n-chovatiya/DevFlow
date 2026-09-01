@@ -20,6 +20,7 @@
  * or off the wire is an assertion (`pos1(raw.line)`) at exactly one edge.
  */
 
+import type { ComponentStamp } from '../core/react/stamp.js';
 import type { Pos0, Pos1 } from '../core/react/positions.js';
 
 export interface BoundingBox {
@@ -106,7 +107,16 @@ export interface ComponentSource {
   /** displayName at capture time — minified on a production build, which is fine. */
   name: string;
   status: ComponentStatus;
-  via?: 'debug-source' | 'bundle-search';
+  /**
+   * Which of the three paths answered.
+   *
+   * `'plugin'` is `@devflow/compiler-plugin`'s build stamp, and it is here so
+   * that no recording can depend on the plugin without saying so — see
+   * `ROADMAP_AND_PHASES.md` §1.1, rule 3. Absent on every status but
+   * `resolved` and `compiled-only`: labelling a `not-found` record would be
+   * claiming a provenance for an answer that does not exist.
+   */
+  via?: 'debug-source' | 'bundle-search' | 'plugin';
   /** Normalised, repo-relative where possible: `src/components/Cart.tsx`. */
   source?: string;
   /**
@@ -1046,6 +1056,17 @@ export interface PickedComponent {
    * search — React records 1-based lines, so this is `Pos1` with no conversion.
    */
   debugSource?: { source: string; line: Pos1; column: Pos1 } | null;
+  /**
+   * `@devflow/compiler-plugin`'s stamp, when the app was built with it.
+   *
+   * Beats `debugSource` wherever both are present, and for a reason that is not
+   * about which is newer: `debugSource` is where the JSX element was *written*,
+   * a position in the parent's file, and a stamp is where the component was
+   * *defined* — which is what `ComponentSource` has always claimed to be. The
+   * stamp is the better match for the contract and `debug-source` is the
+   * compromise. There is no column: the plugin records a line and nothing else.
+   */
+  stamp?: ComponentStamp | null;
 }
 
 export interface PickSuccess {

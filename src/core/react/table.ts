@@ -101,7 +101,30 @@ export function mergeComponents(
       break;
     }
 
-    if (component.debugSource?.source && !isPlaceholderId(component.id)) {
+    if (component.stamp && !isPlaceholderId(component.id)) {
+      // The build recorded where this component was defined.
+      //
+      // First, and not because it is the newest path. `_debugSource` is where
+      // the JSX element was *written* — a position in the parent's file — and a
+      // stamp is where the component was *defined*, which is what
+      // `ComponentSource` has always claimed to be. The stamp is the better
+      // match for the contract and `debug-source` is the compromise.
+      //
+      // The `isPlaceholderId` guard is kept for exactly the reason it exists
+      // below: the hazard is one row winning under an id every unnamed
+      // component in the flow shares, and where the location came from does not
+      // change it. A confidently wrong file is worse than no file whether a
+      // build stamped it or React did.
+      const { source, line } = component.stamp;
+      table[component.id] = {
+        name: component.name,
+        status: 'resolved',
+        via: 'plugin',
+        source,
+        line,
+        ...(isAbsolutePath(source) ? { absolutePath: source } : {}),
+      };
+    } else if (component.debugSource?.source && !isPlaceholderId(component.id)) {
       // A development build recorded the JSX position itself. This is where the
       // element was *written* — a position in the parent's file — which is a
       // different fact from where the component is defined, but it is free and

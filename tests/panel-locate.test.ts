@@ -155,6 +155,79 @@ describe('a component that resolves', () => {
   });
 });
 
+// ── The build already knew ───────────────────────────────────────────────────
+
+describe('a build stamp', () => {
+  const withStamp: PickedComponent = {
+    name: 'CartSummary',
+    stamp: { source: 'src/checkout/CartSummary.tsx', line: pos1(12) },
+  };
+
+  it('is preferred outright, and neither the page nor a bundle is read', async () => {
+    const provider = fakeProvider([[MAIN, BUNDLE]], { [MAP]: mapJson() });
+    const readSource = vi.fn(() => Promise.resolve(FN));
+
+    const outcome = await locateComponent(
+      {
+        component: withStamp,
+        pageUrl: 'https://shop.test/checkout',
+        useSourceMaps: true,
+        concurrency: 4,
+      },
+      { provider, readSource },
+    );
+
+    expect(outcome.source).toEqual({
+      name: 'CartSummary',
+      status: 'resolved',
+      via: 'plugin',
+      source: 'src/checkout/CartSummary.tsx',
+      line: 12,
+    });
+    expect(provider.scriptReads).toEqual([]);
+    // Nothing to search for, so the page is never asked for the function body.
+    expect(readSource).not.toHaveBeenCalled();
+    expect(outcome.resourcesSearched).toBe(0);
+  });
+
+  /*
+   * The precedence that has to match `core/react/table.ts`, and the reason it
+   * does: a stamp is where the component was *defined* and `_debugSource` is
+   * where its JSX was *written*, a position in the parent's file. The panel and
+   * a recorded flow naming different files for one component is a contradiction
+   * its reader cannot resolve.
+   */
+  it('beats the JSX position React recorded, which is a position in the parent', async () => {
+    const outcome = await run(fakeProvider([[MAIN, BUNDLE]], { [MAP]: mapJson() }), {
+      component: {
+        name: 'CartSummary',
+        stamp: { source: 'src/checkout/CartSummary.tsx', line: pos1(12) },
+        debugSource: { source: 'src/checkout/Page.tsx', line: pos1(88), column: pos1(4) },
+      },
+    });
+
+    expect(outcome.source.via).toBe('plugin');
+    expect(outcome.source.source).toBe('src/checkout/CartSummary.tsx');
+    expect(outcome.source.line).toBe(12);
+  });
+
+  it('marks a stamped node_modules path as a dependency, as every other path is', async () => {
+    const outcome = await run(fakeProvider([]), {
+      component: {
+        name: 'Button',
+        stamp: { source: 'node_modules/@ui/kit/Button.tsx', line: pos1(3) },
+      },
+    });
+
+    expect(outcome.source.dependency).toBe(true);
+  });
+
+  it('still answers after the page has navigated out from under the pick', async () => {
+    const outcome = await run(fakeProvider([]), { component: withStamp, fnSource: null });
+    expect(outcome.source.via).toBe('plugin');
+  });
+});
+
 // ── React already knew ───────────────────────────────────────────────────────
 
 describe('_debugSource', () => {

@@ -88,12 +88,17 @@ export function observationFor(component: PickedComponent): ComponentObservation
   const name = component.name?.trim();
   if (!name) return null;
 
-  const debug = component.debugSource;
-  const line = debug?.line;
+  // A build stamp says the same thing `debugSource` does and says it about the
+  // component's own file rather than its parent's, so it goes first here for the
+  // reason it goes first everywhere else. Read as a pair — taking the name from
+  // one and the line from the other would file a real line under a file it is
+  // not in.
+  const located = component.stamp ?? component.debugSource;
+  const line = located?.line;
 
   return {
     name,
-    ...(debug?.source ? { sourceFile: debug.source } : {}),
+    ...(located?.source ? { sourceFile: located.source } : {}),
     ...(Number.isInteger(line) && (line as number) > 0 ? { sourceLine: line as number } : {}),
   };
 }

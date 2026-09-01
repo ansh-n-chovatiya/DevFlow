@@ -362,6 +362,16 @@ export interface ChainEntry {
   name: string;
   /** Null for a lazy component that has not settled — name only, no needle. */
   fn: ComponentFn | null;
+  /**
+   * The raw `fiber.type`, before `getComponentFn` unwraps it.
+   *
+   * Carried because a build stamp lands on the value the module bound, and for
+   * `forwardRef(fn)` and `memo(fn)` that is the wrapper object rather than the
+   * function inside it — which is the only thing `fn` above holds. Required
+   * rather than optional so a new construction site cannot quietly drop it and
+   * leave every wrapped component unstamped with nothing going red.
+   */
+  type: unknown;
   debugSource: DebugSource | null;
   development: boolean;
 }
@@ -427,6 +437,7 @@ export function collectChain(
         entries.push({
           name,
           fn,
+          type: f.type,
           debugSource: getDebugSource(f),
           development: isDevelopmentFiber(f),
         });

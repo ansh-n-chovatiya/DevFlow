@@ -722,6 +722,7 @@ import {
 } from '../core/react/fiber.js';
 import { componentId, nameOnlyId } from '../core/react/id.js';
 import { buildNeedle } from '../core/react/needle.js';
+import { readStamp } from '../core/react/stamp.js';
 import {
   forgetStores,
   sampleStores,
@@ -788,18 +789,35 @@ function describeDebugSource(
   };
 }
 
+/**
+ * The build stamp, from the component function or from the wrapper around it.
+ *
+ * The function first, deliberately. `@devflow/compiler-plugin` stamps the value
+ * a module binds, so `const Fast = memo(Cart)` puts a stamp on the memo object
+ * naming the line `Cart` was *memoised* on, while `Cart` itself carries one
+ * naming the line it was *written* on. Reading the inner function first takes
+ * the better of the two; the wrapper is the fallback for
+ * `forwardRef((props, ref) => …)`, where there is no inner binding to stamp.
+ */
+function describeStamp(entry: ChainEntry): CapturedComponent['stamp'] {
+  return readStamp(entry.fn) ?? readStamp(entry.type);
+}
+
 function describeEntry(entry: ChainEntry): CapturedComponent {
   const debugSource = describeDebugSource(entry.debugSource);
+  const stamp = describeStamp(entry);
 
   if (!entry.fn) {
     // An unsettled lazy component. Its name is all there is, and forcing it to
     // resolve would mean recording the page changed what the page loaded.
-    return { id: nameOnlyId(entry.name), name: entry.name, debugSource };
+    return { id: nameOnlyId(entry.name), name: entry.name, debugSource, stamp };
   }
 
   const cached = componentCache.get(entry.fn);
   // The cache is keyed by function, but `_debugSource` is per JSX call site, so
   // it is filled in from whichever usage first carried one rather than cached.
+  // The stamp is not the same case — it is a property of the function, so one
+  // reading of it is every reading of it — and it is cached with the entry.
   if (cached) return debugSource && !cached.debugSource ? { ...cached, debugSource } : cached;
 
   let source = '';
@@ -807,15 +825,32 @@ function describeEntry(entry: ChainEntry): CapturedComponent {
     source = entry.fn.toString();
   } catch {
     // Exotic proxies can throw here; the name still tells the reader something.
-    const nameOnly: CapturedComponent = { id: nameOnlyId(entry.name), name: entry.name, debugSource };
+    const nameOnly: CapturedComponent = {
+      id: nameOnlyId(entry.name),
+      name: entry.name,
+      debugSource,
+      stamp,
+    };
     componentCache.set(entry.fn, nameOnly);
     return nameOnly;
   }
 
   const built = buildNeedle(source);
   const captured: CapturedComponent = built.ok
-    ? { id: componentId(entry.name, source), name: entry.name, needle: built.needle, debugSource }
-    : { id: nameOnlyId(entry.name), name: entry.name, needleRejection: built.reason, debugSource };
+    ? {
+        id: componentId(entry.name, source),
+        name: entry.name,
+        needle: built.needle,
+        debugSource,
+        stamp,
+      }
+    : {
+        id: nameOnlyId(entry.name),
+        name: entry.name,
+        needleRejection: built.reason,
+        debugSource,
+        stamp,
+      };
 
   componentCache.set(entry.fn, captured);
   return captured;
@@ -1001,7 +1036,7 @@ function renderSnapshotBudget(): SnapshotBudget {
  * ends up joining to nothing.
  */
 function identifyComponent(fn: ComponentFn, name: string): string {
-  return describeEntry({ name, fn, debugSource: null, development: false }).id;
+  return describeEntry({ name, fn, type: fn, debugSource: null, development: false }).id;
 }
 
 /** Pairs two samples by store id, keeping only the stores that actually moved. */

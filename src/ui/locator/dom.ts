@@ -294,6 +294,10 @@ export function rowBadge(
     };
   }
 
+  if (item.stamp) {
+    return { text: '◆', title: 'The build recorded where this component was defined.' };
+  }
+
   if (item.debugSource) {
     return { text: '◆', title: 'React recorded where this component’s JSX was written.' };
   }

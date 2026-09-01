@@ -25,6 +25,7 @@ src/
   ui/            popup/ viewer/ locator/ settings/ components/ styles/
   shared/        types, messages, constants, errors — frozen in Wave 0
 mcp-server/      a second npm package, published on its own
+compiler-plugin/ a third, optional and unpublished: the Babel build stamp
 scripts/         the build steps and the three lint gates
 tests/           vitest, node + jsdom
 docs/CONTRACTS.md   FROZEN. The interface freeze the parallel work was built against.
