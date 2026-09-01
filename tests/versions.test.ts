@@ -87,12 +87,18 @@ describe('the published MCP server', () => {
      * keeps working and the knowledge graph is simply, permanently, absent.
      * That is the one failure mode a test has to hold, because nothing else
      * would ever report it.
+     *
+     * `replay.js` is the fourth and is the same shape as `arkg.js` one step
+     * worse: it is imported dynamically and only once a user has switched
+     * replay on, so a publish that omits it works perfectly for everyone who
+     * never enables the feature and fails for exactly the person who did.
      */
     expect(server.files).toEqual([
       'server.js',
       'install.js',
       'core.js',
       'arkg.js',
+      'replay.js',
       'README.md',
     ]);
   });

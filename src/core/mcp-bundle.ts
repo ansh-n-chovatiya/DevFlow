@@ -80,6 +80,38 @@ export type { ActionPlan, ActionTarget, CandidateAction, ObservedFlow } from './
 export { planActions } from './actions/index.js';
 
 /*
+ * The compiler, so a replay runs the same spec a person downloads.
+ *
+ * `replay_flow` could have built its own smaller generator and that is exactly
+ * the mistake this file was made to stop: the server carried a second markdown
+ * renderer once, and the two disagreed about which of them was right. A replay
+ * that passes has to be evidence about the spec the user was handed, which
+ * means it has to *be* that spec.
+ */
+export { generatePlaywrightTest } from './export/playwright.js';
+
+/*
+ * Reading a runner's output into a verdict, and deciding where a spec goes.
+ *
+ * Pure because the dangerous half is: a harness that reports a crashed runner
+ * as a passing replay tells a repair loop its patch worked. Spawning belongs to
+ * `mcp-server/replay.js`, which has a filesystem to ask.
+ */
+export type { ReplayFailure, ReplayPlan, ReplayRun, ReplayStatus, ReplayVerdict } from './replay/index.js';
+export { planReplay, readReport, readRun } from './replay/index.js';
+
+/*
+ * What a recording's failures amount to, assembled but never concluded.
+ *
+ * `get_causal_chain` says what evidence links two events; this says what broke,
+ * where it was written, and — the part only the accumulated graph can supply —
+ * whether the thing that failed has failed before. It names no cause. See the
+ * module header for the line it does not cross.
+ */
+export type { Diagnosis, DiagnoseInputs, DiagnosisEvidence, HistoryFact, Standing } from './diagnose/index.js';
+export { MIN_HISTORY, diagnose } from './diagnose/index.js';
+
+/*
  * The one exception to "core only", and it earns it.
  *
  * `describeStamp` turns a flow's `settings` into the sentences the walkthrough

@@ -12,6 +12,7 @@
     "install.js",
     "core.js",
     "arkg.js",
+    "replay.js",
     "README.md"
   ],
   "license": "MIT",
