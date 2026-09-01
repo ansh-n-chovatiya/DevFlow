@@ -15,9 +15,12 @@
 
 import { transformAsync } from '@babel/core';
 import { afterEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import plugin, { type DevflowStampOptions } from '../compiler-plugin/index.js';
+import { readStamp } from '../src/core/react/stamp.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -202,6 +205,22 @@ describe('the path', () => {
     expect(stamps(code)).toEqual(['Cart src/ui/locator/Cart.jsx:1']);
   });
 
+  /*
+   * The one claim in this file that cannot be behavioural here.
+   *
+   * `f` is defined as POSIX-separated, and on Windows `path.relative` returns
+   * backslashes. On this machine `sep` is already `/`, so deleting the
+   * conversion changes nothing any transform can show — a mutation that
+   * survives every test in the suite. So the expression is asserted literally,
+   * exactly as written, because a grep for a nearby phrase passes against the
+   * deletion of the line under it. It is the weakest kind of test and here it
+   * is the only kind.
+   */
+  it('converts native separators to POSIX ones, asserted through the source', () => {
+    const source = readFileSync(resolve(ROOT, 'compiler-plugin/index.js'), 'utf8');
+    expect(source).toContain("return rel.split(sep).join('/');");
+  });
+
   it('honours an explicit root over Babel’s', async () => {
     const code = await transform('function Cart() { return null; }', {
       file: 'src/ui/locator/Cart.jsx',
@@ -232,5 +251,43 @@ describe('what it does to the application', () => {
   it('emits the assignment after the declaration, not inside it', async () => {
     const code = await transform('function Cart() {\n  return null;\n}');
     expect(code.indexOf('Cart.__devflow')).toBeGreaterThan(code.indexOf('return null'));
+  });
+});
+
+// ── The seam between the two packages ────────────────────────────────────────
+
+/*
+ * The plugin writes `__devflow` and `src/core/react/stamp.ts` reads it, and
+ * nothing else joins them: they are separate packages, one plain JS and one
+ * TypeScript, and the property name is a string in each. Renaming it in either
+ * breaks the whole feature and fails neither suite — every test above passes
+ * against a plugin writing `__devflowX`, and every test in `react-stamp.test.ts`
+ * passes against a reader looking for it.
+ *
+ * So this runs the plugin's actual output through the actual reader.
+ */
+/** Runs transformed output and hands back the named bindings. */
+function evaluate(code: string, ...names: string[]): Record<string, unknown> {
+  return runInNewContext(`${code};({${names.join(',')}})`) as Record<string, unknown>;
+}
+
+describe('the plugin and the reader agree', () => {
+  it('produces a stamp readStamp reads back, for a plain component', async () => {
+    const code = await transform('function Cart() {\n  return null;\n}');
+    const { Cart } = evaluate(code, 'Cart');
+
+    expect(readStamp(Cart)).toEqual({ source: 'src/Cart.jsx', line: 1 });
+  });
+
+  it('produces a stamp readStamp reads back off a forwardRef wrapper', async () => {
+    const code = await transform(
+      'const forwardRef = (render) => ({ render });\nconst Row = forwardRef((p, r) => null);',
+    );
+    const { Row } = evaluate(code, 'Row');
+
+    // The wrapper object, which is what the const bound — the arrow inside it
+    // has no binding of its own to stamp.
+    expect(readStamp(Row)).toEqual({ source: 'src/Cart.jsx', line: 2 });
+    expect(readStamp((Row as { render: unknown }).render)).toBeNull();
   });
 });
