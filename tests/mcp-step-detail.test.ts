@@ -79,6 +79,11 @@ function writeDetailFlow(): void {
         'cart-1': {
           name: 'CartButton',
           status: 'resolved',
+          // A `via` that is not the plugin's, and not the absence of one. With
+          // no `via` at all this fixture reads the same under the correct rule
+          // and under a `sourceProvenance` that labels every path, which is a
+          // negative case that proves nothing.
+          via: 'bundle-search',
           source: 'src/components/Cart.tsx',
           line: 34,
         },

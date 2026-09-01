@@ -5,6 +5,7 @@ import {
   formatSource,
   pruneComponents,
   referencedComponentIds,
+  sourceProvenance,
   stepOwner,
   stripReactRef,
   summarizeComponents,
@@ -106,6 +107,31 @@ describe('stepOwner', () => {
   it('is null for a step with no chain, and for a chain nothing in the table names', () => {
     expect(stepOwner(step(null), {})).toBeNull();
     expect(stepOwner(step(['missing']), {})).toBeNull();
+  });
+});
+
+describe('sourceProvenance', () => {
+  /*
+   * §1.1 rule 3. A stamped answer came out of a build step in somebody's own
+   * application, and a recording that depends on that without saying so is the
+   * one outcome the rule exists to prevent.
+   */
+  it('names the plugin’s path', () => {
+    expect(sourceProvenance({ name: 'Cart', status: 'resolved', via: 'plugin' })).toBe(
+      'build stamp',
+    );
+  });
+
+  /*
+   * And says nothing about DevFlow's own two. A reader has no decision to make
+   * between a bundle search and a `_debugSource` — both are the standalone
+   * product answering for itself — and two words on every component of every
+   * step buys that reader nothing.
+   */
+  it('says nothing about DevFlow’s own two paths, or about no path at all', () => {
+    expect(sourceProvenance({ name: 'Cart', status: 'resolved', via: 'bundle-search' })).toBeNull();
+    expect(sourceProvenance({ name: 'Cart', status: 'resolved', via: 'debug-source' })).toBeNull();
+    expect(sourceProvenance({ name: 'Cart', status: 'pending' })).toBeNull();
   });
 });
 
