@@ -106,15 +106,31 @@ At module scope, when the name begins with a capital letter:
 | `export default function Cart() {}` | yes |
 | `const Cart = () => {}` | yes |
 | `const Cart = function () {}` | yes |
-| `const Cart = forwardRef(…)` | yes |
-| `const Cart = memo(…)`, `React.memo(…)` | yes |
+| `const Cart = (() => {}) as React.FC` | yes |
+| `const Cart = forwardRef((p, ref) => …)` | yes — written here |
+| `const Cart = memo(() => …)`, `React.memo(…)` | yes — written here |
+| `const Fast = memo(Cart)` | **no** — see below |
 | `function helper() {}` | no — lowercase |
 | `const CONFIG = {}` | no — not a function |
 | `class Cart extends Component {}` | no — see the gaps |
 
+**A wrapper is stamped only when the component is written inside it.**
+`forwardRef((props, ref) => …)` binds no inner name, so the wrapper is the only
+place the stamp can go and it truthfully names where that component was written.
+`memo(Cart)` is different: if `Cart` is local it already carries its own, better
+stamp, and if `Cart` is imported — `memo(SomeLibraryIcon)`, the common case —
+the wrapper's stamp would name *your* file while React names the fiber after the
+library's function. DevFlow would then report that library component as living
+in your file, resolved and confident. So a wrapper around a name is left alone
+and the answer falls through to the paths that can be right about it.
+
 `f` is relative to the Babel `root` (your repo root, unless you pass a `root`
-option), with POSIX separators. `l` is the 1-based line the declaration begins
-on. A file outside the root is skipped rather than stamped with a machine path.
+option), with POSIX separators. A file outside the root is skipped rather than
+stamped with a machine path.
+
+`l` is the line the binding begins on — for a `const`, its declarator's line,
+which differs from the `const` keyword's only when a declaration is broken
+across lines.
 
 A capitalised `const` holding a plain function is stamped whether or not it is a
 component — nothing at build time can tell `const Multiply = (a, b) => a * b`
@@ -136,10 +152,18 @@ dependency. Production is detected from `BABEL_ENV` / `NODE_ENV`, which is what
 
 ## What it does to your application
 
-Nothing you can observe. The stamp is one property assignment per component, at
+Nothing that renders. The stamp is one property assignment per component, at
 module scope, evaluated once when the module is first imported. It touches no
-JSX, so nothing reaches the DOM: no attribute in your markup, your snapshot
-tests, your CSS selectors or your accessibility tree. React never sees it.
+JSX, so nothing reaches the DOM: no attribute in your markup, your DOM snapshot
+tests, your CSS selectors or your accessibility tree. React never reads it.
+
+**It is an ordinary enumerable own property, and that is worth knowing.** It
+shows up in `Object.keys(Cart)` and in `{...Cart}`, and `hoist-non-react-statics`
+copies it onto HOC wrappers — which is useful, and is the reason it is not
+hidden. If you assert on a component's static shape, that assertion will see it.
+Making it non-enumerable needs `Object.defineProperty`, which reads a global a
+module can shadow; the same reasoning keeps the guard below a `try` rather than
+an `Object.isExtensible` check.
 
 The assignment is wrapped in a `try`, and that is not caution for its own sake.
 A module is strict code, so assigning a new property to a frozen or sealed
@@ -150,5 +174,6 @@ instead, and the ones after it are unaffected.
 
 The stamp lands on the value the module binds. For `forwardRef` and `memo` that
 is the wrapper object rather than the function inside it, which is why DevFlow
-reads the inner function's stamp first: `const Fast = memo(Cart)` reports the
-line `Cart` was written on, not the line it was memoised on.
+reads the inner function's stamp first and the wrapper's second: `const Fast =
+memo(Cart)` reports the line `Cart` was written on, because `Cart` carries its
+own stamp and the wrapper carries none at all.

@@ -112,9 +112,14 @@ export interface ComponentSource {
    *
    * `'plugin'` is `@devflow/compiler-plugin`'s build stamp, and it is here so
    * that no recording can depend on the plugin without saying so — see
-   * `ROADMAP_AND_PHASES.md` §1.1, rule 3. Absent on every status but
-   * `resolved` and `compiled-only`: labelling a `not-found` record would be
-   * claiming a provenance for an answer that does not exist.
+   * `ROADMAP_AND_PHASES.md` §1.1, rule 3.
+   *
+   * Never set on a record that found nothing: a `pending`, `skipped`,
+   * `not-found` or `unfetchable` record has no provenance, and labelling one
+   * would claim a path for an answer that does not exist. Set otherwise
+   * wherever the code that produced the answer knew which path it was on —
+   * which includes `ambiguous`, `compiled-only` and a `map-error` that got as
+   * far as a bundle, so this is not a proxy for `status === 'resolved'`.
    */
   via?: 'debug-source' | 'bundle-search' | 'plugin';
   /** Normalised, repo-relative where possible: `src/components/Cart.tsx`. */

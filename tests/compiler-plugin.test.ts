@@ -89,30 +89,73 @@ describe('what is stamped', () => {
    * function before the wrapper, and why `memo(Cart)` reports where `Cart` was
    * written rather than where it was memoised.
    */
-  it('stamps forwardRef and memo consts, including the member-expression forms', async () => {
+  it('stamps a wrapper whose component is written inside it, member expressions included', async () => {
     const code = await transform(
       [
         'const Row = forwardRef((props, ref) => null);', // 1
-        'const Fast = memo(Cart);', // 2
-        'const Slow = React.memo(Cart);', // 3
-        'const Ref2 = React.forwardRef((p, r) => null);', // 4
-        'const Both = memo(forwardRef((p, r) => null));', // 5
+        'const Ref2 = React.forwardRef((p, r) => null);', // 2
+        'const Both = memo(forwardRef((p, r) => null));', // 3
+        'const Named = memo(function Inner() { return null; });', // 4
+        'const Typed = memo((() => null) as never);', // 5
       ].join('\n'),
+      { file: 'src/Cart.tsx' },
     );
 
     expect(stamps(code)).toEqual([
-      'Row src/Cart.jsx:1',
-      'Fast src/Cart.jsx:2',
-      'Slow src/Cart.jsx:3',
-      'Ref2 src/Cart.jsx:4',
-      'Both src/Cart.jsx:5',
+      'Row src/Cart.tsx:1',
+      'Ref2 src/Cart.tsx:2',
+      'Both src/Cart.tsx:3',
+      'Named src/Cart.tsx:4',
+      'Typed src/Cart.tsx:5',
     ]);
   });
 
-  it('stamps the inner declaration as well, which is the better of the two lines', async () => {
-    const code = await transform(['function Cart() {', '  return null;', '}', 'const Fast = memo(Cart);'].join('\n'));
+  /*
+   * The rule that keeps a wrapper's stamp honest, and it is worth stating as a
+   * failure rather than as a restriction.
+   *
+   * `memo(SomeIcon)` where `SomeIcon` is imported: the wrapper would carry a
+   * stamp naming *this* file, while React names the fiber after the library's
+   * function. DevFlow would then report `SomeIcon` as living in `src/Icons.ts`,
+   * resolved, `via: 'plugin'`, ahead of `_debugSource` and instead of a bundle
+   * search — a confidently wrong file, which `table.ts` calls the one outcome
+   * worse than no file. It would also refute the argument for putting the stamp
+   * first, since it is a position in the parent's file after all.
+   *
+   * A local declaration passed by name needs no wrapper stamp: it has its own,
+   * naming the line it was written on, and `readStamp` reads the inner function
+   * before the wrapper precisely so that one wins.
+   */
+  it('refuses a wrapper around a name, because the name may not have been written here', async () => {
+    const code = await transform(
+      [
+        'import { Icon } from "@acme/icons";', // 1
+        'const Fast = memo(Icon);', // 2
+        'const Slow = React.memo(Icon);', // 3
+        'const Ref = forwardRef(Icon);', // 4
+      ].join('\n'),
+    );
 
-    expect(stamps(code)).toEqual(['Cart src/Cart.jsx:1', 'Fast src/Cart.jsx:4']);
+    expect(stamps(code)).toEqual([]);
+  });
+
+  it('leaves the local declaration to carry its own, better line', async () => {
+    const code = await transform(
+      ['function Cart() {', '  return null;', '}', 'const Fast = memo(Cart);'].join('\n'),
+    );
+
+    // `Cart` and nothing else: the wrapper is silent, and `readStamp` finds
+    // `Cart`'s own stamp through it.
+    expect(stamps(code)).toEqual(['Cart src/Cart.jsx:1']);
+  });
+
+  it('stamps a const the type annotation is wrapped around', async () => {
+    const code = await transform(
+      ['const Cart = (() => null) as never;', 'const Header = (() => null)!;'].join('\n'),
+      { file: 'src/Cart.tsx' },
+    );
+
+    expect(stamps(code)).toEqual(['Cart src/Cart.tsx:1', 'Header src/Cart.tsx:2']);
   });
 });
 
@@ -184,6 +227,19 @@ describe('production builds', () => {
   it('stamps nothing when BABEL_ENV is production, whatever NODE_ENV says', async () => {
     process.env.NODE_ENV = 'development';
     process.env.BABEL_ENV = 'production';
+    const code = await transform('function Cart() { return null; }');
+    expect(code).not.toContain('__devflow');
+  });
+
+  /*
+   * An empty `BABEL_ENV` is not an answer, it is the absence of one. Under `??`
+   * it counts as set and masks `NODE_ENV`, which stamps the production build —
+   * the one outcome the default exists to prevent, caused by a shell exporting
+   * a variable blank.
+   */
+  it('falls through an empty BABEL_ENV to NODE_ENV rather than treating it as set', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.BABEL_ENV = '';
     const code = await transform('function Cart() { return null; }');
     expect(code).not.toContain('__devflow');
   });
@@ -292,12 +348,15 @@ describe('what it does to the application', () => {
 /*
  * The plugin writes `__devflow` and `src/core/react/stamp.ts` reads it, and
  * nothing else joins them: they are separate packages, one plain JS and one
- * TypeScript, and the property name is a string in each. Renaming it in either
- * breaks the whole feature and fails neither suite — every test above passes
- * against a plugin writing `__devflowX`, and every test in `react-stamp.test.ts`
- * passes against a reader looking for it.
+ * TypeScript, and the property name is a string in each. A rename in the
+ * *reader* breaks the whole feature and fails nothing — every test in
+ * `react-stamp.test.ts` builds its own fixture with the same literal, so it
+ * renames along with the code it is testing.
  *
- * So this runs the plugin's actual output through the actual reader.
+ * (A rename in the plugin does fail the tests above, because `stamps()` greps
+ * for the literal key. Half a seam is covered by accident; this covers the
+ * other half on purpose, by running the plugin's actual output through the
+ * actual reader.)
  */
 /**
  * Runs transformed output and hands back the named bindings.

@@ -74,9 +74,13 @@ function isComponentName(name) {
  * Read from the environment at transform time rather than through `api.env()`,
  * because Babel caches a plugin's configuration and a cached answer to this
  * question is the one that ships source paths to production.
+ *
+ * `||` rather than `??`, and the difference is the whole failure this guards:
+ * `??` keeps an empty `BABEL_ENV`, so a shell that exports it blank would mask
+ * `NODE_ENV=production` and stamp the production build anyway.
  */
 function isProduction() {
-  return (process.env.BABEL_ENV ?? process.env.NODE_ENV) === 'production';
+  return (process.env.BABEL_ENV || process.env.NODE_ENV) === 'production';
 }
 
 /**
@@ -103,22 +107,75 @@ function lineOf(node) {
   return Number.isInteger(line) && line > 0 ? line : null;
 }
 
-function isWrapperCall(node) {
+/** TypeScript and parentheses around an expression, which say nothing about it. */
+function unwrapExpression(node) {
+  let current = node;
+  while (
+    current &&
+    (current.type === 'TSAsExpression' ||
+      current.type === 'TSSatisfiesExpression' ||
+      current.type === 'TSNonNullExpression' ||
+      current.type === 'TSTypeAssertion' ||
+      current.type === 'ParenthesizedExpression')
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function isFunctionExpression(node) {
+  return node?.type === 'ArrowFunctionExpression' || node?.type === 'FunctionExpression';
+}
+
+function calleeName(node) {
+  const callee = node.callee;
+  if (callee.type === 'Identifier') return callee.name;
+  if (callee.type === 'MemberExpression' && !callee.computed && callee.property.type === 'Identifier') {
+    return callee.property.name;
+  }
+  return null;
+}
+
+/**
+ * A `forwardRef` or `memo` call whose component was written *here*.
+ *
+ * The argument has to be a function literal, and that restriction is the whole
+ * of the rule rather than a detail of it. The stamp on a wrapper says "the
+ * component this object wraps was defined on this line", and for
+ * `forwardRef((props, ref) => …)` that is exactly true — there is no inner
+ * binding to stamp and the arrow is written right there.
+ *
+ * For `memo(Cart)` it is not. If `Cart` is a local declaration it carries its
+ * own, better stamp and this one is redundant; if `Cart` is imported — the
+ * common case, `memo(SomeLibraryIcon)` — then the wrapper's stamp names the
+ * *consumer's* file while `getDisplayName` reads the library's name off the
+ * fiber. DevFlow would then report `SomeLibraryIcon` as living in
+ * `src/Icons.ts`, as `status: 'resolved'`, `via: 'plugin'`, ahead of
+ * `_debugSource` and instead of a bundle search. That is a confidently wrong
+ * file, which `table.ts` calls the one outcome worse than no file — and it
+ * would contradict the very argument for putting the stamp first, since it is
+ * a position in the parent's file after all.
+ *
+ * So an identifier argument is left unstamped and the answer falls through to
+ * the paths that can be right about it.
+ */
+function isInlineWrapperCall(node) {
   if (!node || node.type !== 'CallExpression') return false;
 
-  const callee = node.callee;
-  if (callee.type === 'Identifier') return WRAPPERS.has(callee.name);
-  if (callee.type === 'MemberExpression' && !callee.computed && callee.property.type === 'Identifier') {
-    return WRAPPERS.has(callee.property.name);
-  }
-  return false;
+  const name = calleeName(node);
+  if (name === null || !WRAPPERS.has(name)) return false;
+
+  const argument = unwrapExpression(node.arguments[0]);
+  // `memo(forwardRef((p, r) => …))` — nested, and still written here.
+  return isFunctionExpression(argument) || isInlineWrapperCall(argument);
 }
 
 /** A `const` whose value could be a component: a function, or a wrapped one. */
 function isComponentInit(init) {
-  if (!init) return false;
-  if (init.type === 'ArrowFunctionExpression' || init.type === 'FunctionExpression') return true;
-  return isWrapperCall(init);
+  const node = unwrapExpression(init);
+  if (!node) return false;
+  if (isFunctionExpression(node)) return true;
+  return isInlineWrapperCall(node);
 }
 
 /**

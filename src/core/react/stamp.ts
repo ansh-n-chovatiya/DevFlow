@@ -67,22 +67,29 @@ export interface ComponentStamp {
 export function readStamp(fn: unknown): ComponentStamp | null {
   if (fn === null || (typeof fn !== 'object' && typeof fn !== 'function')) return null;
 
-  let raw: unknown;
+  let f: unknown;
+  let l: unknown;
   try {
     // Own property only: a page that put `__devflow` on `Function.prototype`
     // would otherwise make every function in the app claim one file.
     if (!Object.hasOwn(fn, STAMP_KEY)) return null;
-    raw = (fn as Record<string, unknown>)[STAMP_KEY];
+
+    const raw = (fn as Record<string, unknown>)[STAMP_KEY];
+    if (raw === null || typeof raw !== 'object') return null;
+
+    // Reading `f` and `l` is inside the `try` and not after it. They are two
+    // more property reads on an object off somebody's page, so a getter or a
+    // proxy trap can throw on either — and a throw here does not merely lose a
+    // stamp. It escapes `describeEntry`, which is called from the agent's
+    // interaction listener, so the step is emitted with no component chain at
+    // all, silently, for the life of the page.
+    ({ f, l } = raw as { f?: unknown; l?: unknown });
   } catch {
     // A throwing getter or an exotic proxy. This runs inside the page agent, on
     // somebody else's page, in the middle of capturing a chain — a throw here
     // would cost the whole step. There is no stamp; that is the whole answer.
     return null;
   }
-
-  if (raw === null || typeof raw !== 'object') return null;
-
-  const { f, l } = raw as { f?: unknown; l?: unknown };
 
   if (typeof f !== 'string' || f === '' || f.length > MAX_SOURCE_LENGTH) return null;
   if (typeof l !== 'number' || !Number.isInteger(l) || l < 1) return null;

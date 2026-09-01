@@ -111,16 +111,51 @@ describe('readStamp', () => {
     });
   });
 
-  it('does not throw on an object whose property access throws', () => {
-    const hostile = {};
-    Object.defineProperty(hostile, '__devflow', {
+  /*
+   * Three places a page can throw at this, and the third is the one that was
+   * outside the guard: `f` and `l` are two more property reads on an object
+   * off somebody's page. A throw there does not lose a stamp — it escapes
+   * `describeEntry`, which the agent's interaction listener calls, so the step
+   * is emitted with no component chain at all, silently, for the life of the
+   * page. The first two cases passed against exactly that bug.
+   */
+  it('does not throw, wherever on the object the page put the trap', () => {
+    const onProperty = {};
+    Object.defineProperty(onProperty, '__devflow', {
       get() {
         throw new Error('no');
       },
       configurable: true,
     });
 
-    expect(readStamp(hostile)).toBeNull();
+    const onField = stamped({
+      get f(): string {
+        throw new Error('no');
+      },
+      l: 12,
+    });
+
+    const onLine = stamped({
+      f: 'src/Cart.tsx',
+      get l(): number {
+        throw new Error('no');
+      },
+    });
+
+    const onEverything = stamped(
+      new Proxy(
+        {},
+        {
+          get() {
+            throw new Error('no');
+          },
+        },
+      ),
+    );
+
+    for (const hostile of [onProperty, onField, onLine, onEverything]) {
+      expect(readStamp(hostile)).toBeNull();
+    }
   });
 });
 
