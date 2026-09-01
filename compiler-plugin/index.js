@@ -172,16 +172,37 @@ export default function devflowComponentStamp(api, options = {}) {
   const t = api.types;
   const { includeInProduction = false, root } = options;
 
+  /**
+   * `try { Cart.__devflow = {…}; } catch {}`.
+   *
+   * The `try` is not defensiveness for its own sake. A module is strict code,
+   * and assigning a new property to a frozen, sealed or otherwise
+   * non-extensible object throws a `TypeError` there rather than failing
+   * silently — so a component somebody froze would take their development build
+   * down at import, with a stack pointing at code they did not write. That is
+   * exactly the class of harm Invariant 1 forbids, and it costs four tokens to
+   * make impossible.
+   *
+   * `Object.isExtensible(Cart) && …` would be shorter and was rejected: it
+   * reads a global, and a module that binds its own `Object` — or runs where
+   * one has been shadowed — would have the guard mean something else entirely.
+   * A `try` reads nothing.
+   */
   const assignment = (name, file, line) =>
-    t.expressionStatement(
-      t.assignmentExpression(
-        '=',
-        t.memberExpression(t.identifier(name), t.identifier(STAMP_KEY)),
-        t.objectExpression([
-          t.objectProperty(t.identifier('f'), t.stringLiteral(file)),
-          t.objectProperty(t.identifier('l'), t.numericLiteral(line)),
-        ]),
-      ),
+    t.tryStatement(
+      t.blockStatement([
+        t.expressionStatement(
+          t.assignmentExpression(
+            '=',
+            t.memberExpression(t.identifier(name), t.identifier(STAMP_KEY)),
+            t.objectExpression([
+              t.objectProperty(t.identifier('f'), t.stringLiteral(file)),
+              t.objectProperty(t.identifier('l'), t.numericLiteral(line)),
+            ]),
+          ),
+        ),
+      ]),
+      t.catchClause(null, t.blockStatement([])),
     );
 
   return {

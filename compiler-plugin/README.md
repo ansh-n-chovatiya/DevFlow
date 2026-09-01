@@ -5,7 +5,7 @@ it was defined in:
 
 ```js
 function Cart() { … }
-Cart.__devflow = { f: "src/Cart.tsx", l: 12 };
+try { Cart.__devflow = { f: "src/Cart.tsx", l: 12 }; } catch {}
 ```
 
 DevFlow reads that property back and reports the component's source exactly,
@@ -33,13 +33,19 @@ either.
 
 **Nothing in DevFlow requires it.** Every feature works with the plugin absent,
 which is the point — the rule is written down in `ROADMAP_AND_PHASES.md` §1.1
-and there is a test that fails if it stops being true. What the plugin may do is
-make an answer DevFlow could already give *exact*. It may not produce an answer
-DevFlow could not give at all.
+and there is a test that fails if it stops being true.
+
+What the plugin may not do is produce a *kind* of answer DevFlow could not: a
+stamped attribution is the same shape with the same statuses, and there is no
+field only the plugin can fill. In individual cases it does answer where DevFlow
+alone cannot — the three builds listed above are exactly that, and it is the
+whole reason this package exists. Saying otherwise would be a tidier sentence
+and a false one.
 
 Attributions that came from the stamp are labelled. `ComponentSource.via` is
-`'plugin'`, and the panel shows `build stamp` beside the path, so no recording
-silently depends on this being installed.
+`'plugin'`; the panel shows `build stamp` beside the path, and so does the MCP
+server's `get_step_detail`, so no recording silently depends on this being
+installed — whether a person or a model is reading it.
 
 ## Install
 
@@ -130,10 +136,17 @@ dependency. Production is detected from `BABEL_ENV` / `NODE_ENV`, which is what
 
 ## What it does to your application
 
-Nothing that runs. The stamp is one property assignment per component, at module
-scope, evaluated once when the module is first imported. It touches no JSX, so
-nothing reaches the DOM: no attribute in your markup, your snapshot tests, your
-CSS selectors or your accessibility tree. React never sees it.
+Nothing you can observe. The stamp is one property assignment per component, at
+module scope, evaluated once when the module is first imported. It touches no
+JSX, so nothing reaches the DOM: no attribute in your markup, your snapshot
+tests, your CSS selectors or your accessibility tree. React never sees it.
+
+The assignment is wrapped in a `try`, and that is not caution for its own sake.
+A module is strict code, so assigning a new property to a frozen or sealed
+object throws there rather than failing quietly — a wrapper of yours that hands
+back a frozen object would otherwise take your development build down at import,
+with a stack pointing at code you did not write. That component goes unstamped
+instead, and the ones after it are unaffected.
 
 The stamp lands on the value the module binds. For `forwardRef` and `memo` that
 is the wrapper object rather than the function inside it, which is why DevFlow

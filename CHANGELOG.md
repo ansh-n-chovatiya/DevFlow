@@ -17,7 +17,10 @@ either.
 reach the DOM and change your application — your snapshot tests, your attribute
 selectors, your accessibility tree — so what is emitted is
 `Cart.__devflow = { f, l }`, one property assignment at module scope, invisible
-to React and to the page. Development builds only unless you ask otherwise:
+to React and to the page — and wrapped in a `try`, because a module is strict
+code and a wrapper of yours that hands back a frozen object would otherwise take
+your development build down at import with a stack pointing at code you did not
+write. Development builds only unless you ask otherwise:
 stamping ships your repository's directory layout in the bundle, and shipping
 that to every visitor is a decision to make deliberately.
 

@@ -252,6 +252,39 @@ describe('what it does to the application', () => {
     const code = await transform('function Cart() {\n  return null;\n}');
     expect(code.indexOf('Cart.__devflow')).toBeGreaterThan(code.indexOf('return null'));
   });
+
+  /*
+   * A module is strict code, so assigning a new property to a frozen or sealed
+   * object throws a TypeError rather than failing silently. Without the guard
+   * that takes somebody's development build down at import, with a stack
+   * pointing at code they did not write — the harm Invariant 1 forbids
+   * outright, caused by the tool that promised not to cause it.
+   *
+   * The reachable shape is a *wrapper* that freezes, not an `Object.freeze`
+   * further down the file: the stamp is emitted immediately after the
+   * declaration, so it always runs before any later statement. React's own
+   * `memo` and `forwardRef` return extensible objects; a shim or a library
+   * standing in for them need not.
+   */
+  it('cannot throw when a wrapper hands back a frozen object', async () => {
+    const code = await transform(
+      [
+        'const memo = (c) => Object.freeze({ type: c });', // 1
+        'const Fast = memo(() => null);', // 2
+        'function Header() { return null; }', // 3
+      ].join('\n'),
+    );
+
+    // The stamp is attempted — this is not a case the plugin skipped.
+    expect(stamps(code)).toEqual(['Fast src/Cart.jsx:2', 'Header src/Cart.jsx:3']);
+
+    expect(() => evaluate(code, 'Fast', 'Header')).not.toThrow();
+
+    const { Fast, Header } = evaluate(code, 'Fast', 'Header');
+    expect(readStamp(Fast)).toBeNull();
+    // And the refusal does not cost the components after it their stamps.
+    expect(readStamp(Header)).toEqual({ source: 'src/Cart.jsx', line: 3 });
+  });
 });
 
 // ── The seam between the two packages ────────────────────────────────────────
@@ -266,9 +299,16 @@ describe('what it does to the application', () => {
  *
  * So this runs the plugin's actual output through the actual reader.
  */
-/** Runs transformed output and hands back the named bindings. */
+/**
+ * Runs transformed output and hands back the named bindings.
+ *
+ * `'use strict'` is not decoration. `runInNewContext` evaluates a *script*, and
+ * a sloppy script fails silently where a module throws — assigning to a frozen
+ * object being exactly that case. Without this the frozen-wrapper test below
+ * passes whether or not the guard it is testing exists, which is what it did.
+ */
 function evaluate(code: string, ...names: string[]): Record<string, unknown> {
-  return runInNewContext(`${code};({${names.join(',')}})`) as Record<string, unknown>;
+  return runInNewContext(`'use strict';${code};({${names.join(',')}})`) as Record<string, unknown>;
 }
 
 describe('the plugin and the reader agree', () => {
