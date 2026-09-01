@@ -1471,6 +1471,24 @@ function ingestCausal(flowJson, steps, resolveComponent, flowId, now) {
 
   const positions = causalPositions(graph.events);
 
+  /*
+   * One recording is one observation of an edge, however many of its links
+   * project onto it.
+   *
+   * The projection is many-to-one by construction: every delta of one store
+   * lands on that store's node, so a response echoed into two keys of one store
+   * is two links and one fact — that endpoint's body reached that store, seen
+   * once. Counting it twice would put a number in `frequency` that no reader
+   * can arrive at from the recordings, and it is the same double-count
+   * `ingestState` keeps its own `drawn` set to avoid.
+   *
+   * Keyed on the whole edge identity, basis and confidence included, because
+   * that is what `upsertEdge` keys on: a `named` link and a `followed` one
+   * between the same two nodes are two claims and two rows, and each is still
+   * entitled to its own single observation.
+   */
+  const drawn = new Set();
+
   for (const link of links) {
     const type = causalType(link?.basis, link?.confidence);
     if (!type) continue;
@@ -1496,6 +1514,10 @@ function ingestCausal(flowJson, steps, resolveComponent, flowId, now) {
       (cause.type === 'component' && effect.type === 'api_endpoint') ||
       (cause.type === 'api_endpoint' && effect.type === 'component')
     ) continue;
+
+    const key = `${type}|${effect.type}|${effect.id}|${cause.type}|${cause.id}`;
+    if (drawn.has(key)) continue;
+    drawn.add(key);
 
     upsertEdge(type, effect.type, effect.id, cause.type, cause.id, flowId, now);
   }
