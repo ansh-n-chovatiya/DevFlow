@@ -50,6 +50,19 @@ partial audience. Components defined below module scope and anonymous default
 exports are not stamped either. All of it is listed in
 `compiler-plugin/README.md` as gaps rather than left to be discovered.
 
+**A Zustand store created outside a provider is still not read, and that is now
+a decision rather than a deferral.** It was carried as waiting for "a mechanism
+with a stable identity"; the mechanism has been looked for, against React 19 and
+Zustand 4 and 5, and reading fibers does not produce one. A consumer's
+`useSyncExternalStore` hook yields that component's *selection*, not the store —
+so the union of what can be read is a fact about which components happened to be
+mounted, a key leaves it when its component unmounts (a state change the store
+never made), and the shape it presents differs between two recordings of one
+store. The recording continues to say the gap exists rather than reading the
+page as stateless, the same store provided through a context is read in full as
+before, and the argument is written out in `ROADMAP_AND_PHASES.md` §1.2 with a
+test pinning it.
+
 **Class components are stamped too.** `class Cart extends React.Component` is a
 real shape and was left out of the first cut for no better reason than that it
 was not on the list. A class component's fiber `type` is the class itself, and a
