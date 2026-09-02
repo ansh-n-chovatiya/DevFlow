@@ -37,14 +37,18 @@ import {
   buildCausalGraph,
   callFailed,
   causesOf,
+  choosePair,
+  commitCaveats,
   compactBody,
   DEFAULTS,
+  describeCommit,
   describeStamp,
   diagnose,
   effectsOf,
   exportToMarkdown,
   fieldFor,
   findFeature,
+  flowCommit,
   flowHost,
   generatePlaywrightTest,
   flowRendering,
@@ -55,10 +59,14 @@ import {
   planReplay,
   readRun,
   renderComponents,
+  renderDeployDiff,
   renderStep,
   resolve as resolveSettings,
+  shaMatches,
+  isShaPrefix,
   snippet,
   stepFailed,
+  suspectFiles,
   traceValue,
   urlPath,
   valueOfStep,
@@ -553,6 +561,119 @@ function arkgTry(what, run, fallback = null) {
   }
 }
 
+// ── The checkout a recording is stamped from ────────────────────────────────
+
+/*
+ * `git.js`, on the same terms as the graph above it.
+ *
+ * It imports the built `core.js`, so an installation missing that artefact
+ * loses the stamp and nothing else — the same degradation as a machine with no
+ * `git` on its PATH, which is a state this has to survive anyway.
+ */
+let gitmod = null;
+try {
+  gitmod = await import('./git.js');
+} catch (error) {
+  gitmod = null;
+  log(`no commit stamping (${error.message}) — flows and every other tool are unaffected`);
+}
+
+/** `arkgTry`'s promise, for a module whose every function is async. */
+async function gitTry(what, run, fallback = null) {
+  if (!gitmod) return fallback;
+  try {
+    return await run(gitmod);
+  } catch (error) {
+    log(`commit: ${what} failed (${error.message})`);
+    return fallback;
+  }
+}
+
+/**
+ * The directory a commit is read out of, or null when there is not one to speak
+ * for.
+ *
+ * The same answer `get_source_snippet` reaches for, and null in the same case
+ * and for a sharper reason: a remote deployment's working directory is a
+ * container somebody built, and stamping a recording with *its* HEAD would
+ * label every flow in the database with a commit that has nothing to do with
+ * the caller's project. A wrong SHA is worse than no SHA everywhere in this
+ * feature, and nowhere more than here.
+ *
+ * A function rather than a constant because `PROJECT_ROOT_ENV` is declared
+ * beside the tool that needed it first, several hundred lines below.
+ */
+function gitRoot() {
+  return REMOTE ? PROJECT_ROOT_ENV : (PROJECT_ROOT_ENV ?? process.cwd());
+}
+
+/** Said once, not once per recording: the answer does not change between flows. */
+let loggedNoCommit = null;
+
+/**
+ * What commit to stamp the arriving recording with.
+ *
+ * The extension has no filesystem and no repository, so this is the only place
+ * the answer can come from and the stamp is added here rather than carried on
+ * the wire. What it means is narrower than "the build that was running" —
+ * `core/git`'s header has the whole of that argument, and `commitCaveats` is
+ * how every renderer says which of the two situations it is looking at.
+ */
+async function readStamp() {
+  const root = gitRoot();
+  const state = await gitTry('read checkout', (g) => g.readCheckout(root), {
+    known: false,
+    reason: 'failed',
+  });
+
+  if (state.known) {
+    loggedNoCommit = null;
+    return state.checkout;
+  }
+
+  if (loggedNoCommit !== state.reason) {
+    loggedNoCommit = state.reason;
+    log(`no commit stamp (${state.reason}) — recordings are saved without one`);
+  }
+  return null;
+}
+
+/** The stamp a flow stores, from a checkout. Null all the way through when there is none. */
+const stampOf = (checkout) => (checkout ? flowCommit(checkout) : null);
+
+/**
+ * A commit's changed files, remembered.
+ *
+ * The list for a given SHA cannot change, and the alternative is a subprocess
+ * on every recording made during one afternoon at one commit — which is what an
+ * afternoon of recording is.
+ */
+const commitFiles = new Map();
+const COMMIT_FILE_CACHE = 32;
+
+/**
+ * The commit node and its `changed_in` edges, after the flow that created the
+ * source file nodes they point at.
+ *
+ * Runs for a dirty tree as well as a clean one, and that is not an oversight:
+ * the commit is real and the files it changed are real whatever the working
+ * tree has on top of them. It is only the `git_sha` *column* that a dirty tree
+ * keeps out, because that column is a join key — see `core/git`.
+ */
+async function ingestCheckoutCommit(checkout) {
+  if (!checkout || !arkg) return;
+
+  const { sha } = checkout.commit;
+  let files = commitFiles.get(sha);
+  if (files === undefined) {
+    files = (await gitTry('commit files', (g) => g.commitFiles(gitRoot(), sha), null)) ?? [];
+    if (commitFiles.size >= COMMIT_FILE_CACHE) commitFiles.delete(commitFiles.keys().next().value);
+    commitFiles.set(sha, files);
+  }
+
+  arkgTry('commit ingest', (a) => a.ingestCommit(checkout.commit, files, checkout.prefix));
+}
+
 // ── Flow shape ─────────────────────────────────────────────────────────────
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -781,6 +902,13 @@ function generateMarkdown(flow, dir) {
     // see `describeStamp`. The file on disk and the tool response describe one
     // recording one way.
     settings: describeStamp(flow.settings),
+    /*
+     * And the commit, for the same reason one line up: the file in a flow's
+     * directory and the walkthrough a tool returns describe one recording one
+     * way. The extension's own export has no commit to print — it has no
+     * repository — so this is absent there and the header simply says less.
+     */
+    ...(flow.git ? { commit: describeCommit(flow.git) } : {}),
     limits: renderingFor(flow).limits,
   });
 }
@@ -858,8 +986,16 @@ const callSignature = (call) => `${call.method || 'GET'} ${urlPath(call.url) || 
  * status, a call that only one of them makes, or an error only one of them logs.
  * It does not try to explain the difference — that is the reader's job, and they
  * now have a paragraph to do it from instead of two recordings.
+ *
+ * `labels` exists because `compare_flows_across_deploys` puts two *builds* in
+ * these two positions rather than a working run and a broken one, and a report
+ * that called the newer build "the broken run" would be asserting something
+ * nobody observed. The defaults are the exact strings this printed before the
+ * parameter existed, so every existing caller reads identically.
  */
-function compareFlows(working, broken) {
+const RUN_LABELS = { working: 'the working run', broken: 'the broken run' };
+
+function compareFlows(working, broken, labels = RUN_LABELS) {
   const lines = [];
 
   // ── the journey ──
@@ -877,7 +1013,7 @@ function compareFlows(working, broken) {
     // answer: the runs diverge because the app put a different thing on screen.
     lines.push(
       `**Diverges at step ${shared + 1}:** "${brokenSteps[shared] ?? '(broken run ends)'}" ` +
-        `where the working run has "${workingSteps[shared] ?? '(working run ends)'}".`,
+        `where ${labels.working} has "${workingSteps[shared] ?? '(working run ends)'}".`,
     );
   }
 
@@ -912,9 +1048,10 @@ function compareFlows(working, broken) {
   const onlyWorking = [...before.keys()].filter((key) => !after.has(key));
 
   if (changed.length) lines.push('', '**Same endpoint, different answer:**', ...changed.map((c) => `- ${c}`));
-  if (onlyBroken.length) lines.push('', '**Only the broken run calls:**', ...onlyBroken.map((c) => `- ${c}`));
+  if (onlyBroken.length)
+    lines.push('', `**Only ${labels.broken} calls:**`, ...onlyBroken.map((c) => `- ${c}`));
   if (onlyWorking.length)
-    lines.push('', '**Only the working run calls:**', ...onlyWorking.map((c) => `- ${c}`));
+    lines.push('', `**Only ${labels.working} calls:**`, ...onlyWorking.map((c) => `- ${c}`));
 
   // ── console ──
   const messages = (flow) =>
@@ -923,7 +1060,7 @@ function compareFlows(working, broken) {
   const workingErrors = messages(working);
   const newErrors = [...messages(broken)].filter((message) => !workingErrors.has(message));
   if (newErrors.length) {
-    lines.push('', '**Errors only the broken run logs:**', ...newErrors.map((m) => `- ${m}`));
+    lines.push('', `**Errors only ${labels.broken} logs:**`, ...newErrors.map((m) => `- ${m}`));
   }
 
   // ── where to look ──
@@ -940,7 +1077,7 @@ function compareFlows(working, broken) {
     lines.push(
       '',
       'No network or console difference between the two. Whatever went wrong left no ' +
-        'trace in either — compare the screenshots, or record the broken run again with ' +
+        `evidence in either — compare the screenshots, or record ${labels.broken} again with ` +
         'network and console switched on.',
     );
   }
@@ -951,7 +1088,7 @@ function compareFlows(working, broken) {
 /** Sections the extension can leave out of a send, in the order it names them. */
 const OMITTABLE = ['images', 'network', 'logs', 'react'];
 
-async function saveFlow(flow) {
+async function saveFlow(flow, git = null) {
   const dir = flowDir(flow.id);
   if (!dir) throw new Error(`Invalid flow id: ${flow.id}`);
 
@@ -1046,6 +1183,24 @@ async function saveFlow(flow) {
     ...(flow.settings && typeof flow.settings === 'object' && !Array.isArray(flow.settings)
       ? { settings: flow.settings }
       : {}),
+    /*
+     * The commit the checkout was at when this arrived — see `core/git` for
+     * what that claim is and is not.
+     *
+     * Added here rather than taken off `flow`, because the extension has no
+     * repository to have known it from: a payload arriving with a `git` field
+     * would be a page describing a checkout it cannot see, and this line
+     * discards it by not reading it.
+     *
+     * Absent entirely when there is no commit, which is how a machine with no
+     * git, a directory that is not a repository, and every recording made
+     * before any of this existed all read — one shape, not three.
+     *
+     * In `meta.json` as well as `flow.json` because `list_flows` reads only the
+     * index, and choosing the two recordings to compare across a deploy is
+     * exactly a question asked of a list.
+     */
+    ...(git ? { git } : {}),
     schemaVersion: flow.schemaVersion ?? 1,
   };
 
@@ -1605,8 +1760,20 @@ const httpServer = http.createServer(async (req, res) => {
         return;
       }
 
-      const meta = await saveFlow(flow);
-      log(`saved "${meta.name}" — ${meta.stepCount} steps, ${meta.errorCount} with failures`);
+      /*
+       * Read before the save so both halves of the ingest see one reading, and
+       * not once each: a recording that landed in `flow.json` at one commit and
+       * in the graph at another would be two answers to one question, and the
+       * window is real — `git status` on a large repository is not instant.
+       */
+      const checkout = await readStamp();
+      const git = stampOf(checkout);
+
+      const meta = await saveFlow(flow, git);
+      log(
+        `saved "${meta.name}" — ${meta.stepCount} steps, ${meta.errorCount} with failures` +
+          (git ? ` at ${git.short}${git.dirty ? ' (dirty)' : ''}` : ''),
+      );
 
       /*
        * Into the graph here rather than from the extension, and that is the
@@ -1621,7 +1788,22 @@ const httpServer = http.createServer(async (req, res) => {
        * and an extension told the save failed would retry and store a second
        * copy.
        */
-      arkgTry('flow ingest', (a) => a.ingestFlow(flow));
+      const accumulated = arkgTry('flow ingest', (a) => a.ingestFlow(flow, git), false);
+
+      /*
+       * After the flow, and gated on the same answer.
+       *
+       * After, because `changed_in` joins a commit to a source file node and the
+       * flow is what creates those. Gated, because a re-send of an unchanged
+       * recording writes no `git_sha` — see `ingestFlow` — and a commit node
+       * filed for a stamp nobody wrote is a commit the graph claims to have
+       * observed something at and did not.
+       *
+       * Guarded like every other graph call and for the same reason: a commit
+       * node that did not get written is a worse answer to a later question,
+       * not a lost recording.
+       */
+      if (accumulated) await ingestCheckoutCommit(checkout);
 
       // Never allowed to fail the save: the flow is already on disk and readable,
       // and telling the extension otherwise would have it offer a retry that
@@ -1746,10 +1928,20 @@ const httpServer = http.createServer(async (req, res) => {
       // this server could not record is not a pick that failed: nobody is
       // waiting on it, and an extension told otherwise would retry a write that
       // has no reason to succeed the second time.
+      // A pick is an observation like any other, so it carries the commit like
+      // any other. `readCheckout` memoises for five seconds precisely because
+      // this path runs once per click.
+      const checkout = await readStamp();
+
       const stored = arkgTry('component ingest', (a) => {
-        a.ingestComponentPick(pick);
+        a.ingestComponentPick(pick, stampOf(checkout));
         return true;
       }) === true;
+
+      // Unconditional here, unlike the flow path, because a pick always writes
+      // its row and therefore always writes a stamp — and every `git_sha` in
+      // the graph must have a commit node to point at.
+      if (stored) await ingestCheckoutCommit(checkout);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, stored }));
@@ -3360,6 +3552,26 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'compare_flows_across_deploys',
+      description:
+        'Two recordings of one flow made at two different commits, and what shipped between them. Returns the same runtime comparison compare_flows gives — where the runs diverge, which endpoints answered differently, which errors are new — and then the commits between the two builds, and which of the files they changed DevFlow has actually watched code run in. That last list is a shortlist to read first, not a cause. Pass a flow name (or the id of any one recording of it); with no commits named it compares the two most recent builds of that flow. Needs recordings made after commit stamping, which is the server reading the project it runs in.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          flow: {
+            type: 'string',
+            description: 'The flow to compare: its name as list_flows reports it, or the id of any one recording of it',
+          },
+          sha: {
+            type: 'string',
+            description: 'Commit of one of the two builds — at least 7 hex characters, either case. Omit both to compare the two most recent builds.',
+          },
+          otherSha: { type: 'string', description: 'Commit of the other build' },
+        },
+        required: ['flow'],
+      },
+    },
+    {
       name: 'get_latest_flow',
       description:
         'The most recent recording, as get_flow would return it — including being paged when it is long. Shortcut for the common case of debugging what was just recorded.',
@@ -4155,12 +4367,25 @@ function flowPayload(dir, json, heading, from = 1, raw = undefined) {
    */
   const settings = describeStamp(json.settings);
 
+  /*
+   * The commit, above the settings and for the stronger version of the same
+   * argument: a moved switch changes how much of the recording was captured,
+   * while which build it was made against changes what every step below is
+   * evidence *of*. The caveats travel with it rather than being left for the
+   * reader to remember — a stamp read as "the build that was running" when the
+   * page came off staging is worse than no stamp at all.
+   */
+  const commit = json.git ? describeCommit(json.git) : null;
+  const caveats = json.git ? commitCaveats(json.git, json.startUrl ?? null) : [];
+
   const header = [
     `# ${json.name}`,
     '',
     `**Recorded:** ${new Date(json.timestamp).toLocaleString()}  `,
     `**Steps:** ${total}  `,
     json.startUrl ? `**Start URL:** ${json.startUrl}  ` : null,
+    commit ? `**Recorded at:** ${commit}  ` : null,
+    ...caveats.map((sentence) => `> ${sentence}  `),
     settings.length ? `**Recorded with non-default settings:** ${settings.join(' · ')}  ` : null,
     json.errorCount ? `**Steps with failures:** ${json.errorCount}  ` : null,
     json.errorCount ? `**What broke:** ${failureSummary(json) ?? '—'}  ` : null,
@@ -4562,6 +4787,160 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       return text(
         `## "${working.json.name}" (worked) vs "${broken.json.name}" (broken)\n\n` +
           compareFlows(working.json, broken.json),
+      );
+    }
+
+    /*
+     * Work Stream 3.4, and it is a join rather than a second comparison.
+     *
+     * `compare_flows` already answers what differs between two runs, so this
+     * decides which two recordings are the two builds, asks git what shipped
+     * between their commits, and crosses that against what the graph has seen
+     * running. Building a second comparison beside a working one is the mistake
+     * this package already made once with its markdown renderers.
+     *
+     * The roadmap's signature was `(flowId, sha1, sha2)` and it does not
+     * survive contact: a flow id names one recording, made at one commit, so no
+     * id has two builds to be asked for. What exists at two builds is a flow by
+     * *name*.
+     */
+    case 'compare_flows_across_deploys': {
+      const asked = typeof args.flow === 'string' ? args.flow.trim() : '';
+      if (!asked) {
+        return failure('Pass "flow" — a flow name as list_flows reports it, or the id of one recording of it.');
+      }
+
+      /*
+       * Normalised, then validated, then refused with the reason rather than
+       * left to silently match nothing.
+       *
+       * `isShaPrefix` takes lowercase only, and that is a rule about what may
+       * reach a `git` argument list rather than a rule about what a caller may
+       * type. Case-folding here is the boundary doing its job: one spelling
+       * gets past this line, so everything inside compares one value against
+       * one value. Refusing an uppercase SHA instead would be pedantry with a
+       * hex string.
+       */
+      for (const key of ['sha', 'otherSha']) {
+        const given = args[key];
+        if (given === undefined || given === null || given === '') continue;
+        if (!isShaPrefix(String(given).toLowerCase())) {
+          return failure(
+            `"${key}" must be at least 7 and at most 40 hex characters of a commit — got ${JSON.stringify(given)}.`,
+          );
+        }
+      }
+      const sha = args.sha ? String(args.sha).toLowerCase() : null;
+      const otherSha = args.otherSha ? String(args.otherSha).toLowerCase() : null;
+
+      const all = await listAllFlows();
+      const byId = all.find((meta) => meta.id === asked);
+      const name = byId ? byId.name : asked;
+      const named = all.filter(
+        (meta) => (meta.name ?? '').toLowerCase() === String(name).toLowerCase(),
+      );
+
+      if (!named.length) {
+        const known = [...new Set(all.map((meta) => meta.name))].slice(0, 12);
+        return failure(
+          `Nothing recorded is called "${asked}". ` +
+            (known.length
+              ? `Recorded flows: ${known.map((one) => `"${one}"`).join(', ')}.`
+              : 'Nothing has been recorded yet.'),
+        );
+      }
+
+      const chosen = choosePair(
+        named
+          .filter((meta) => meta.git?.sha)
+          .map((meta) => ({
+            id: meta.id,
+            name: meta.name,
+            timestamp: meta.timestamp,
+            startUrl: meta.startUrl ?? null,
+            git: meta.git,
+          })),
+        { sha, otherSha },
+      );
+      if ('problem' in chosen) return failure(chosen.problem);
+
+      const { older, newer } = chosen.pair;
+      let before;
+      let after;
+      try {
+        before = await readFlow(older.id);
+      } catch (error) {
+        return readFailure(error, older.id);
+      }
+      try {
+        after = await readFlow(newer.id);
+      } catch (error) {
+        return readFailure(error, newer.id);
+      }
+
+      const root = gitRoot();
+      const range = await gitTry(
+        'deploy range',
+        (g) => g.logRange(root, older.git.sha, newer.git.sha),
+        null,
+      );
+
+      /*
+       * An unreadable range and an empty one are different findings, and an
+       * empty one splits again: two builds on branches that diverged produce
+       * the same empty `git log` as two builds with nothing between them, and
+       * only the second means "nothing shipped".
+       */
+      let rangeProblem = null;
+      let reversed = null;
+      if (range === null) {
+        rangeProblem =
+          `The commits ${older.git.short}..${newer.git.short} could not be read out of ${root ?? 'this project'}. ` +
+          'Most often that is a recording made against a different checkout, or a commit that has since been ' +
+          'rebased away — the runtime comparison above stands either way.';
+      } else if (!range.length) {
+        reversed = await gitTry(
+          'deploy range, reversed',
+          (g) => g.rangeSize(root, newer.git.sha, older.git.sha),
+          null,
+        );
+      }
+
+      /*
+       * What has been seen running, graph first and the two recordings on top.
+       *
+       * The graph is the better answer — it pools every recording and every
+       * pick — and the recordings are what makes the tool work at all on an
+       * installation whose graph is missing, which `arkgTry` says is a state
+       * every tool has to survive.
+       */
+      const observed = { ...(arkgTry('observed files', (graph) => graph.getObservedFiles(), null) ?? {}) };
+      for (const recorded of [before.json, after.json]) {
+        for (const component of Object.values(recorded.react?.components ?? {})) {
+          if (!component?.source) continue;
+          const list = (observed[component.source] ??= []);
+          if (component.name && !list.includes(component.name)) list.push(component.name);
+        }
+      }
+
+      const checkout = await readStamp();
+
+      return text(
+        renderDeployDiff({
+          pair: chosen.pair,
+          runtimeDiff: compareFlows(before.json, after.json, {
+            working: 'the older build',
+            broken: 'the newer build',
+          }),
+          range,
+          rangeProblem,
+          reversed,
+          suspects: suspectFiles({
+            range: range ?? [],
+            prefix: checkout?.prefix ?? '',
+            observed,
+          }),
+        }),
       );
     }
 

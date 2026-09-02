@@ -170,9 +170,18 @@ Then record a flow in DevFlow and press **Send to Claude**. It lands in `~/.devf
 and Claude can read it immediately — `get_flow_summary` for whether it broke at all,
 in under 400 tokens, `get_flow_errors` for just what broke, `get_step_detail` for one
 part of one step, `get_source_snippet` for the lines the component was written on, and
-`compare_flows` for a working run beside a broken one. Screenshots are written to disk
+`compare_flows` for a working run beside a broken one, and
+`compare_flows_across_deploys` for two recordings of one flow made at two commits —
+which endpoints answered differently, what shipped in between, and which of the
+changed files DevFlow has actually watched code run in. Screenshots are written to disk
 and referenced by absolute path, so a 500-step recording costs nothing in context until
 a specific image is opened.
+
+The server reads the commit of the project it runs in and stamps each recording with
+it, which is what makes the cross-build comparison possible. It only ever reads the
+repository, and a directory that is not one simply means no stamp — see
+[`mcp-server/README.md`](mcp-server/README.md) for what the stamp does and does not
+claim.
 
 See [`mcp-server/README.md`](mcp-server/README.md) for its tools, its retention
 ceilings and how it is configured.

@@ -2,6 +2,80 @@
 
 ## Unreleased
 
+**A recording now carries the commit it was made at, and the knowledge graph's
+`git_sha` columns are no longer always NULL.** They were declared on five tables
+and written by nothing — `arkg.js` used them as the example of the defect its
+own header complained about. The commit is read by the MCP server from the
+project it runs in, at the moment a recording arrives, because that is the only
+place the answer exists: the extension has no filesystem and no repository, and
+asking the page means asking a browser about a checkout it cannot see.
+
+**What the stamp claims is narrower than "the build that was running", and every
+surface that prints one says which.** It is the state of the checkout *the
+server* runs in when the recording arrived. That is the same thing as the build
+that served the page when you record `localhost`, and an unrelated thing when you
+record a deployed environment — so a recording made against a page this machine
+did not serve is labelled as such wherever a commit is shown, rather than left
+for the reader to remember.
+
+**A dirty working tree records the SHA and stays out of the graph's join keys.**
+"HEAD plus my edits" is how people describe where they are, so the recording
+keeps it, with `dirty: true` beside it. A `git_sha` column is a join key with no
+room to carry that caveat, and a dirty tree names a build that exists on no
+machine, so nothing writes one. The column therefore means *the last commit at
+which this was observed with a clean tree* — one rule, in one expression, because
+the way a rule about a column dies is a sixth write site added by somebody who
+had not read the fifth.
+
+**Four surfaces print it, which was counted rather than assumed.** `list_flows`
+(whole metas, so it came free), the `get_flow` walkthrough header, the `flow.md`
+in a recording's own directory, and `compare_flows_across_deploys`. The caveats
+travel with the commit in every one of them, because a stamp read as "the build
+that was running" is worse than no stamp. `get_flow_summary` deliberately does
+not print it: its whole budget answers *did this break*, and a commit does not
+help with that.
+
+**`git_commits` nodes and `changed_in` edges.** A commit somebody recorded at
+becomes a node, and the files it changed become edges — but only onto source
+files the graph has already seen code running in, matched exactly or by an
+unambiguous suffix and never by a guess. So a deploy touching forty files may
+draw three edges, and three is the honest number: the other thirty-seven are
+files no recording has run through. A `changed_in` edge has no frequency to
+accumulate, because a commit changed a file once and re-recording at it is not a
+second time it happened. A merge commit gets a node and no edges, which is what
+`git show --name-only` says about a merge and is true.
+
+**`compare_flows_across_deploys` — two recordings of one flow, made at two
+commits.** It is a *join* rather than a second comparison: `compare_flows`
+already answers what differs between two runs, and building a second one beside
+a working one is the mistake this repository made once with its two markdown
+renderers. What the tool adds is the commits between the two builds, and then
+the part only an accumulated runtime graph can supply — which of the files those
+commits changed DevFlow has actually watched code run in. A deploy touching forty
+files may produce three, because the other thirty-seven are files no recording
+has ever run through, and that gap is the whole point.
+
+**That last list says "a shortlist, not a cause" in those words.** The roadmap
+asked for a causal hypothesis constructed automatically. The mechanism is an
+intersection of two sets and it cannot tell a coincidence from a culprit, so it
+does not get to imply that it can — the same line `diagnose_failure` holds. It also
+takes a flow **name** rather than the roadmap's flow id, because a flow id names
+one recording made at one commit and no id has two builds to be asked for; with
+no commits named it compares the two most recent builds. The pair is ordered by
+commit date and not recording date, since reproducing a regression means
+checking the old build out and recording it second.
+
+**Reading the repository is on by default, and it is not `replay_flow`.** That
+tool is off behind `DEVFLOW_REPLAY=1` because it executes your code; this reads
+`rev-parse`, `status`, `log` and `show` in a directory the server already opens
+source files out of, with a fixed argument list whose only non-literal is a
+commit checked against seven-to-forty lowercase hex before it reaches a process.
+Copying the gate reflexively would have made the feature unreachable and left the
+columns NULL by a different road. `DEVFLOW_GIT=0` turns it off. A directory that
+is not a repository, a repository with no commits, a detached HEAD and a machine
+with no `git` are four different answers, and nothing about any of them can fail
+a recording.
+
 **`@devflow/compiler-plugin` writes each React component's own file and line
 onto the component function at build time, and DevFlow reads it back.** It is a
 Babel plugin, it is optional, and nothing needs it: DevFlow finds a component's

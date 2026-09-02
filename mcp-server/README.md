@@ -127,6 +127,40 @@ A recording is ordered by when it was *made*, not when it was last sent, so
 re-sending an old flow does not make it look new. It is never evicted by its own
 save: the flow you just sent is always there when you go to read it.
 
+## The commit a flow was recorded at
+
+Every recording is stamped, as it arrives, with the commit the project this
+server runs in is at — the directory it was started in, or
+`DEVFLOW_PROJECT_ROOT`. `flow.json` and `meta.json` grow a `git` object: `sha`,
+`branch`, `dirty`, and the commit's subject line.
+
+**What that names, narrowly.** The state of *this checkout*, at the moment the
+recording arrived — not necessarily the build that served the page. The two
+coincide when you record `localhost` against the app you are editing, which is
+the ordinary case. They do not when you record a deployed environment: you are
+on a feature branch, the deployment is last Tuesday's, and the stamp names your
+branch. Every tool that prints a commit says which of the two it is looking at.
+
+A dirty working tree is still stamped, with `dirty: true` — "HEAD plus my
+edits" is where you actually were. The knowledge graph's `git_sha` join columns
+stay empty for it, because a dirty tree names a build that exists on no machine
+and a join key has no room beside it for a caveat.
+
+It only ever **reads** the repository — `rev-parse`, `status`, `log`, `show` —
+and never writes, checks out or fetches; the one argument it passes that is not
+a literal is a commit it has checked is hex. So unlike `replay_flow`, which
+runs your project's own code and stays off until you switch it on, this is on
+by default. `DEVFLOW_GIT=0` turns it off.
+
+A project root that is not a repository, a repository with no commits yet, and
+a machine with no `git` all mean the same thing: no stamp, a line on stderr,
+and a recording saved exactly as it would have been. Nothing about git can fail
+a send.
+
+In remote mode there is no stamp unless `DEVFLOW_PROJECT_ROOT` is set, for
+`get_source_snippet`'s reason: the server's own working directory is a
+container and not your project, and a wrong commit is worse than none.
+
 ## Settings
 
 Most of what this server decides — the response budget, the `raw` default, how

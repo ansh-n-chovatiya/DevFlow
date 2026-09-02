@@ -473,6 +473,85 @@ describe('merging two rows that turn out to be one component', () => {
     expect(renders[0].from_node_id).toBe('cart-1');
   });
 
+  /*
+   * `git_sha` means the last commit at which a row was observed with a clean
+   * tree, so a merge that simply kept the winner's would report the survivor as
+   * last seen before a change it had in fact been seen after — a false positive
+   * on exactly the cross the column exists for.
+   *
+   * "Later" is decidable without asking git, because every `git_sha` this file
+   * writes has an `arkg_git_commits` row and that row carries the commit date.
+   * The merged-away half here is the one at the newer commit, so keeping the
+   * winner's would pass a test that only checked the column was non-null.
+   */
+  it('keeps the later of the two commits, not the surviving row’s', () => {
+    const { db, path } = openFile();
+    split(db);
+
+    const older = 'a'.repeat(40);
+    const newer = 'b'.repeat(40);
+    const commit = (sha: string, at: number) =>
+      db.prepare(`
+        INSERT INTO arkg_git_commits (id, short_sha, subject, author, committed_at, first_observed_at, last_observed_at)
+        VALUES (?, ?, 'subject', 'T', ?, ?, ?)
+      `).run(sha, sha.slice(0, 10), at, NOW, NOW);
+
+    commit(older, NOW);
+    commit(newer, NOW + 1000);
+    // The row that survives the merge is the one at the *older* commit.
+    db.prepare('UPDATE arkg_components SET git_sha = ? WHERE id = ?').run(older, 'cart-1');
+    db.prepare('UPDATE arkg_components SET git_sha = ? WHERE id = ?').run(newer, MINTED_ID);
+
+    arkg.closeArkg();
+    const migrated = arkg.openArkg(path);
+
+    expect(one(migrated, "SELECT git_sha FROM arkg_components WHERE id = 'cart-1'").git_sha).toBe(newer);
+  });
+
+  /*
+   * The same rule with the sides swapped, and it is here because without it the
+   * suite passed against `loser.git_sha` as readily as against the real thing:
+   * every other fixture happens to have the merged-away half holding the newer
+   * commit, so "keep the later" and "keep the loser's" are indistinguishable.
+   */
+  it('keeps the surviving row’s commit when that is the later one', () => {
+    const { db, path } = openFile();
+    split(db);
+
+    const older = 'a'.repeat(40);
+    const newer = 'b'.repeat(40);
+    const commit = (sha: string, at: number) =>
+      db.prepare(`
+        INSERT INTO arkg_git_commits (id, short_sha, subject, author, committed_at, first_observed_at, last_observed_at)
+        VALUES (?, ?, 'subject', 'T', ?, ?, ?)
+      `).run(sha, sha.slice(0, 10), at, NOW, NOW);
+
+    commit(older, NOW);
+    commit(newer, NOW + 1000);
+    db.prepare('UPDATE arkg_components SET git_sha = ? WHERE id = ?').run(newer, 'cart-1');
+    db.prepare('UPDATE arkg_components SET git_sha = ? WHERE id = ?').run(older, MINTED_ID);
+
+    arkg.closeArkg();
+    const migrated = arkg.openArkg(path);
+
+    expect(one(migrated, "SELECT git_sha FROM arkg_components WHERE id = 'cart-1'").git_sha).toBe(newer);
+  });
+
+  it('takes the half that has a commit when only one of them does', () => {
+    const { db, path } = openFile();
+    split(db);
+
+    const sha = 'c'.repeat(40);
+    // Deliberately with no `arkg_git_commits` row, which is how a SHA written
+    // by a version of the file that did not record them reads.
+    db.prepare('UPDATE arkg_components SET git_sha = ? WHERE id = ?').run(sha, MINTED_ID);
+
+    arkg.closeArkg();
+    const migrated = arkg.openArkg(path);
+
+    expect(one(migrated, "SELECT git_sha FROM arkg_components WHERE id = 'cart-1'").git_sha).toBe(sha);
+  });
+
   it('keeps the merged-away id resolving, so nothing that quoted it breaks', () => {
     const { db, path } = openFile();
     split(db);

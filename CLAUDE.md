@@ -96,6 +96,8 @@ npm run verify     # everything below, in order
 | `npm run lint:tokens` | no colour outside `tokens.css` |
 | `npm run lint:settings-ui` | settings DOM stays encapsulated |
 | `npm run lint:graphify` | the graph config is committed, not just present locally |
+| `npm run lint:brand` | the other products' names and page globals stay gone — `docs/CONTRACTS.md` §4.5 |
+| `npm run lint:vocab` | the frozen glossary — a flow is not a session, a component is not an element |
 | `npm test` | vitest — `pretest` builds `mcp-server/core.js` first, which two suites need on disk |
 | `npm run build` | five builds: pages + worker, content script, page agent, MCP core |
 

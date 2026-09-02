@@ -95,6 +95,27 @@
  * the same reason the component join is: an over-merged node answers
  * approximately, while a per-recording node answers nothing, twice.
  *
+ * ## Which build a thing was last seen in
+ *
+ * `git_sha` was declared on five tables and written by nothing, and this file's
+ * own header used it as the example of the defect it was complaining about. It
+ * is written now, and the rule is one expression — `joinableSha` in `core/git`
+ * — because a rule about a column dies the moment a sixth write site is added
+ * by somebody who had not read the fifth.
+ *
+ * The column means **the last commit at which this node was observed with a
+ * clean working tree**, and each half of that carries weight. *Last*, because
+ * the COALESCE runs new-over-old, unlike the `source_file` beside it which
+ * keeps what it knows. *Clean*, because a bare SHA column has no room beside it
+ * to record that the tree was dirty, and a dirty tree names a build that exists
+ * on no machine. The recording's own `meta.json` keeps the whole truth, dirt
+ * and branch included; this keeps only what can be joined on.
+ *
+ * Crossed with a `changed_in` edge that is the fact worth having: a component
+ * whose `git_sha` is older than the commit that last changed its file is a
+ * component the graph knows about from before the change, which is exactly the
+ * thing a reader must not take for current.
+ *
  * ## What a baseline can be here, and what it cannot
  *
  * `getAnomalies` used to compare an entity to a constant — 10% failures, a p95
@@ -301,6 +322,38 @@ const DDL = `
     content_hash TEXT
   );
 
+  /*
+   * A commit at which DevFlow observed something — a recording that arrived, or
+   * a component somebody picked — and the only node here that is not itself an
+   * observation of a running application.
+   *
+   * One is filed whenever a git_sha is written anywhere, and never otherwise,
+   * so every git_sha in this database has a row here to point at. That is what
+   * makes the cross worth doing: without the commit node there is nothing for a
+   * changed_in edge to land on and the column is a bare hash again.
+   *
+   * It carries no timing_p50_ms, timing_p95_ms or failure_rate: nothing times a
+   * commit and nothing fails one, so those would be three more columns that are
+   * always NULL, which is the defect the git_sha columns were the example of.
+   * The same argument as arkg_state_keys, for the same reason.
+   *
+   * It carries no frequency either, and that one is worth a sentence because
+   * the count is genuinely wanted — how many recordings were made at this
+   * commit. It is a join away: every flow node has a git_sha, so counting them
+   * answers exactly, while a counter here would have to decide whether pressing
+   * Send twice on one recording is two recordings and would drift from the join
+   * the first time it decided wrong. Left as a hop, because that is what it is.
+   */
+  CREATE TABLE IF NOT EXISTS arkg_git_commits (
+    id TEXT PRIMARY KEY,
+    short_sha TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    author TEXT,
+    committed_at INTEGER NOT NULL,
+    first_observed_at INTEGER NOT NULL,
+    last_observed_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS arkg_edges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT NOT NULL,
@@ -331,6 +384,7 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_arkg_state_keys_store ON arkg_state_keys(store_id);
   CREATE INDEX IF NOT EXISTS idx_arkg_state_keys_last ON arkg_state_keys(last_observed_at);
   CREATE INDEX IF NOT EXISTS idx_arkg_state_stores_last ON arkg_state_stores(last_observed_at);
+  CREATE INDEX IF NOT EXISTS idx_arkg_git_commits_last ON arkg_git_commits(last_observed_at);
 `;
 
 // ── Identity ──────────────────────────────────────────────────────────────────
@@ -778,6 +832,34 @@ function repointEdges(loserId, winnerId) {
  * keeps it, which is what lets a provisional row survive a merge with an
  * anchored one that never resolved a source.
  */
+/**
+ * Which of two merged rows' commits the survivor keeps.
+ *
+ * `git_sha` means *the last commit at which this row was observed with a clean
+ * tree*, so a merge has to keep the later of the two rather than the winner's —
+ * and "later" is decidable here without asking git, because every `git_sha` in
+ * this database has an `arkg_git_commits` row and that row carries the commit
+ * date. That is the second thing the commit node is for.
+ *
+ * A SHA with no node is one written by a version of this file that did not file
+ * them; it loses to a SHA that can be dated, and wins against nothing. Two
+ * undated SHAs keep the survivor's, and that tie-break is arbitrary rather than
+ * a decision — with no dates there is no fact preferring either, so it is
+ * deliberately not asserted anywhere. A test over it would be a test of this
+ * line rather than of anything true.
+ */
+function laterCommit(a, b) {
+  if (!a || a === b) return b ?? a ?? null;
+  if (!b) return a;
+
+  const at = (sha) =>
+    sql('SELECT committed_at FROM arkg_git_commits WHERE id = ?').get(sha)?.committed_at ?? null;
+  const [whenA, whenB] = [at(a), at(b)];
+  if (whenA === null) return whenB === null ? a : b;
+  if (whenB === null) return a;
+  return whenB > whenA ? b : a;
+}
+
 function mergeComponents(loserId, winnerId, now) {
   if (loserId === winnerId) return winnerId;
   const loser = componentRow(loserId);
@@ -796,7 +878,8 @@ function mergeComponents(loserId, winnerId, now) {
       timing_p50_ms = ?,
       timing_p95_ms = ?,
       timing_samples = ?,
-      id_source = ?
+      id_source = ?,
+      git_sha = ?
     WHERE id = ?
   `).run(
     winner.frequency + loser.frequency,
@@ -809,6 +892,7 @@ function mergeComponents(loserId, winnerId, now) {
     // An anchored id on either side anchors the survivor: the extension has
     // named this component, so nothing else may be adopted onto it.
     winner.id_source === ANCHORED || loser.id_source === ANCHORED ? ANCHORED : (winner.id_source ?? loser.id_source ?? null),
+    laterCommit(winner.git_sha, loser.git_sha),
     winnerId,
   );
 
@@ -977,11 +1061,28 @@ export function closeArkg() {
  * is a graph that never learns where its components live.
  *
  * flowJson is the same payload the extension POSTs to /flows.
+ *
+ * Returns whether the ingest was new evidence, so the caller can decide whether
+ * to file the commit node beside it. Every `git_sha` this file writes has a
+ * `arkg_git_commits` row to point at, and that invariant only holds if the two
+ * writes are gated on one answer.
  */
-export function ingestFlow(flowJson) {
+export function ingestFlow(flowJson, git = null) {
   if (!db) return;
 
   const now = Date.now();
+  /*
+   * The commit every node and edge this ingest touches is stamped with, or
+   * null.
+   *
+   * `joinableSha` is the whole of the rule and it lives in `core/git`: a
+   * `git_sha` column is a join key with no room beside it to say "but the
+   * working tree was dirty", so a dirty observation writes nothing and the
+   * column means *the last commit at which this was observed with a clean
+   * tree*. The flow's own `meta.json` keeps the whole truth, dirt included;
+   * this keeps only what can be joined on.
+   */
+  const gitSha = core.joinableSha?.(git) ?? null;
   const flowId = flowJson.id;
   const steps = flowJson.steps ?? [];
   const components = flowJson.react?.components ?? {};
@@ -1010,13 +1111,34 @@ export function ingestFlow(flowJson) {
     .digest('hex')
     .slice(0, 32);
 
-  db.transaction(() => {
+  return db.transaction(() => {
     // ── Named flow node ──────────────────────────────────────────────────────
     const existingFlow = sql('SELECT content_hash FROM arkg_named_flows WHERE id = ?').get(flowId);
+
+    /*
+     * Whether this ingest is new evidence about the application — decided once,
+     * because it gates two different things and they have to agree.
+     *
+     * It gates the accumulation below, which it always did. It also gates the
+     * commit stamp, and that is the correction: the flow node is refreshed on
+     * every send so that a renamed recording updates, and `git_sha` rode along
+     * inside that refresh — so re-sending a byte-identical recording a week
+     * later relabelled the *flow* with today's commit while every component and
+     * source file in it kept the commit it was actually recorded at. The two
+     * columns then disagreed about one observation, and the disagreement landed
+     * exactly on the cross the column exists for: the component read as last
+     * seen *before* a change its own flow now claimed to be after.
+     *
+     * A re-send is not a second observation of the application — that rule
+     * already governs `frequency`, `failure_rate` and `change_count`. A commit
+     * stamp is evidence, not bookkeeping, so it belongs with them.
+     */
+    const accumulating = !existingFlow || existingFlow.content_hash !== contentHash;
+
     if (!existingFlow) {
       sql(`
-        INSERT INTO arkg_named_flows (id, name, host, step_count, failure_count, created_at, last_observed_at, settings, content_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO arkg_named_flows (id, name, host, step_count, failure_count, created_at, last_observed_at, settings, content_hash, git_sha)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         flowId,
         flowJson.name ?? 'Unnamed',
@@ -1027,37 +1149,55 @@ export function ingestFlow(flowJson) {
         now,
         flowJson.settings ? JSON.stringify(flowJson.settings) : null,
         contentHash,
+        gitSha,
       );
     } else {
       sql(`
-        UPDATE arkg_named_flows SET name = ?, host = ?, last_observed_at = ?, failure_count = ?, step_count = ?, content_hash = ? WHERE id = ?
-      `).run(flowJson.name ?? 'Unnamed', host, now, failureCount, steps.length, contentHash, flowId);
+        UPDATE arkg_named_flows SET name = ?, host = ?, last_observed_at = ?, failure_count = ?, step_count = ?, content_hash = ?, git_sha = COALESCE(?, git_sha) WHERE id = ?
+      `).run(
+        flowJson.name ?? 'Unnamed',
+        host,
+        now,
+        failureCount,
+        steps.length,
+        contentHash,
+        accumulating ? gitSha : null,
+        flowId,
+      );
     }
 
     // Everything below this line is accumulation, and accumulation is what a
     // second send of an unchanged recording must not do.
-    if (existingFlow && existingFlow.content_hash === contentHash) return;
+    if (!accumulating) return false;
 
     // ── Component nodes ───────────────────────────────────────────────────────
     const insertComponent = sql(`
-      INSERT INTO arkg_components (id, display_name, source_file, source_line, first_observed_at, last_observed_at, frequency, id_source)
-      VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+      INSERT INTO arkg_components (id, display_name, source_file, source_line, first_observed_at, last_observed_at, frequency, id_source, git_sha)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
     `);
+    /*
+     * `git_sha` is the one column here that takes the *new* value in
+     * preference to the old, and the COALESCE is the other way round from the
+     * two above it on purpose. `source_file` keeps what it knows because a
+     * later observation that lost the file learned nothing; the commit keeps
+     * the newer because the column's whole meaning is *last* observed clean.
+     */
     const updateComponent = sql(`
       UPDATE arkg_components SET
         last_observed_at = ?,
         frequency = frequency + 1,
         source_file = COALESCE(source_file, ?),
-        source_line = COALESCE(source_line, ?)
+        source_line = COALESCE(source_line, ?),
+        git_sha = COALESCE(?, git_sha)
       WHERE id = ?
     `);
     const selectSourceFile = sql('SELECT id FROM arkg_source_files WHERE id = ?');
     const insertSourceFile = sql(`
-      INSERT INTO arkg_source_files (id, path, first_observed_at, last_observed_at)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO arkg_source_files (id, path, first_observed_at, last_observed_at, git_sha)
+      VALUES (?, ?, ?, ?, ?)
     `);
     const updateSourceFile = sql(
-      'UPDATE arkg_source_files SET last_observed_at = ?, frequency = frequency + 1 WHERE id = ?',
+      'UPDATE arkg_source_files SET last_observed_at = ?, frequency = frequency + 1, git_sha = COALESCE(?, git_sha) WHERE id = ?',
     );
 
     /*
@@ -1079,7 +1219,7 @@ export function ingestFlow(flowJson) {
       let nodeId;
       if (componentRow(known)) {
         nodeId = known;
-        updateComponent.run(now, sourceFile, sourceLine, nodeId);
+        updateComponent.run(now, sourceFile, sourceLine, gitSha, nodeId);
       } else {
         const adopted = resolveFlowComponent(name, sourceFile);
         if (adopted) {
@@ -1087,11 +1227,11 @@ export function ingestFlow(flowJson) {
           // adoptable by anything else.
           nodeId = adopted.id;
           recordAlias(compId, nodeId, now);
-          updateComponent.run(now, sourceFile, sourceLine, nodeId);
+          updateComponent.run(now, sourceFile, sourceLine, gitSha, nodeId);
           sql('UPDATE arkg_components SET id_source = ? WHERE id = ?').run(ANCHORED, nodeId);
         } else {
           nodeId = compId;
-          insertComponent.run(compId, name, sourceFile, sourceLine, now, now, ANCHORED);
+          insertComponent.run(compId, name, sourceFile, sourceLine, now, now, ANCHORED, gitSha);
         }
       }
 
@@ -1101,11 +1241,11 @@ export function ingestFlow(flowJson) {
       // maps_to edge: component -> source file
       if (sourceFile) {
         if (!selectSourceFile.get(sourceFile)) {
-          insertSourceFile.run(sourceFile, sourceFile, now, now);
+          insertSourceFile.run(sourceFile, sourceFile, now, now, gitSha);
         } else {
-          updateSourceFile.run(now, sourceFile);
+          updateSourceFile.run(now, gitSha, sourceFile);
         }
-        upsertEdge('maps_to', 'component', nodeId, 'source_file', sourceFile, flowId, now);
+        upsertEdge('maps_to', 'component', nodeId, 'source_file', sourceFile, flowId, now, null, false, gitSha);
       }
     }
 
@@ -1115,8 +1255,8 @@ export function ingestFlow(flowJson) {
     // ── API endpoint nodes from network calls ─────────────────────────────────
     const selectEndpoint = sql('SELECT * FROM arkg_api_endpoints WHERE id = ?');
     const insertEndpoint = sql(`
-      INSERT INTO arkg_api_endpoints (id, method, url_pattern, first_observed_at, last_observed_at, frequency, timing_p50_ms, timing_p95_ms, timing_samples, failure_rate)
-      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+      INSERT INTO arkg_api_endpoints (id, method, url_pattern, first_observed_at, last_observed_at, frequency, timing_p50_ms, timing_p95_ms, timing_samples, failure_rate, git_sha)
+      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
     `);
     const updateEndpoint = sql(`
       UPDATE arkg_api_endpoints SET
@@ -1125,7 +1265,8 @@ export function ingestFlow(flowJson) {
         timing_p50_ms = ?,
         timing_p95_ms = ?,
         timing_samples = ?,
-        failure_rate = ?
+        failure_rate = ?,
+        git_sha = COALESCE(?, git_sha)
       WHERE id = ?
     `);
 
@@ -1146,18 +1287,18 @@ export function ingestFlow(flowJson) {
             : { samples: null, p50: null, p95: null };
           insertEndpoint.run(epId, method, pattern, now, now,
             ts.p50, ts.p95, ts.samples,
-            failed ? 1.0 : 0.0);
+            failed ? 1.0 : 0.0, gitSha);
         } else {
           const ts = durationMs !== null
             ? updateTimingStats(existing.timing_samples, durationMs)
             : { samples: existing.timing_samples, p50: existing.timing_p50_ms, p95: existing.timing_p95_ms };
           const newRate = updateFailureRate(existing.failure_rate, existing.frequency + 1, failed);
-          updateEndpoint.run(now, ts.p50, ts.p95, ts.samples, newRate, epId);
+          updateEndpoint.run(now, ts.p50, ts.p95, ts.samples, newRate, gitSha, epId);
         }
 
         // calls edge: component -> api_endpoint (when component is known)
         if (owner && components[owner]) {
-          upsertEdge('calls', 'component', resolvedNode(owner), 'api_endpoint', epId, flowId, now, durationMs, failed);
+          upsertEdge('calls', 'component', resolvedNode(owner), 'api_endpoint', epId, flowId, now, durationMs, failed, gitSha);
         }
       }
     }
@@ -1174,19 +1315,20 @@ export function ingestFlow(flowJson) {
         const to = resolvedNode(chain[i]);
         // A chain whose two neighbours merged into one row is a component
         // rendering itself, which is not a fact about anything.
-        if (from !== to) upsertEdge('renders', 'component', from, 'component', to, flowId, now);
+        if (from !== to) upsertEdge('renders', 'component', from, 'component', to, flowId, now, null, false, gitSha);
       }
     }
 
     // Inside the guard above, and it has to be: `change_count` is a count of
     // steps that changed something, and a second Send of one recording is not a
     // second time the application changed anything.
-    ingestState(flowJson, steps, resolvedNode, flowId, now);
+    ingestState(flowJson, steps, resolvedNode, flowId, now, gitSha);
 
     // Inside it for the same reason. A causal edge's frequency is how many
     // recordings showed one thing following from another; a re-send of one
     // recording is not a second showing.
-    ingestCausal(flowJson, steps, resolvedNode, flowId, now);
+    ingestCausal(flowJson, steps, resolvedNode, flowId, now, gitSha);
+    return true;
   })();
 }
 
@@ -1206,7 +1348,7 @@ export function ingestFlow(flowJson) {
  * through: a subscriber id written straight into an edge points at nothing the
  * moment that component's row is merged into another.
  */
-function ingestState(flowJson, steps, resolveComponent, flowId, now) {
+function ingestState(flowJson, steps, resolveComponent, flowId, now, gitSha = null) {
   const state = flowJson.state;
   if (!state || state.read !== true) return;
   const stores = Array.isArray(state.stores) ? state.stores : [];
@@ -1304,7 +1446,7 @@ function ingestState(flowJson, steps, resolveComponent, flowId, now) {
       // `getComponent`, which is the only way anybody reads these.
       if (!from || !componentRow(from) || drawn.has(`${node.id}|${from}`)) continue;
       drawn.add(`${node.id}|${from}`);
-      upsertEdge('subscribes_to', 'component', from, 'state_store', node.id, flowId, now);
+      upsertEdge('subscribes_to', 'component', from, 'state_store', node.id, flowId, now, null, false, gitSha);
     }
   }
 }
@@ -1457,7 +1599,7 @@ function causalNode(ref, flowJson, steps, positions, resolveComponent) {
  * back the components, the endpoints and the state of a recording that had
  * those to give, over a link it could not work out.
  */
-function ingestCausal(flowJson, steps, resolveComponent, flowId, now) {
+function ingestCausal(flowJson, steps, resolveComponent, flowId, now, gitSha = null) {
   if (typeof core.buildCausalGraph !== 'function' || typeof core.parseEventRef !== 'function') return;
 
   let graph;
@@ -1519,7 +1661,7 @@ function ingestCausal(flowJson, steps, resolveComponent, flowId, now) {
     if (drawn.has(key)) continue;
     drawn.add(key);
 
-    upsertEdge(type, effect.type, effect.id, cause.type, cause.id, flowId, now);
+    upsertEdge(type, effect.type, effect.id, cause.type, cause.id, flowId, now, null, false, gitSha);
   }
 }
 
@@ -1534,10 +1676,13 @@ function ingestCausal(flowJson, steps, resolveComponent, flowId, now) {
  * nothing, because the identity a pick can actually vouch for is its name and
  * its file. A minted id is the last resort and the only one marked provisional.
  */
-export function ingestComponentPick(pick) {
+export function ingestComponentPick(pick, git = null) {
   if (!db) return;
 
   const now = Date.now();
+  // Clean trees only, for the reason `ingestFlow` gives: this column is a join
+  // key with nowhere to record a caveat.
+  const gitSha = core.joinableSha?.(git) ?? null;
   const name = pick.name ?? '';
   const sourceFile = pick.sourceFile ?? null;
   const sourceLine = pick.sourceLine ?? null;
@@ -1558,14 +1703,15 @@ export function ingestComponentPick(pick) {
         ? updateTimingStats(null, durationMs)
         : { samples: null, p50: null, p95: null };
       sql(`
-        INSERT INTO arkg_components (id, display_name, source_file, source_line, first_observed_at, last_observed_at, frequency, timing_p50_ms, timing_p95_ms, timing_samples, failure_rate, id_source)
-        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+        INSERT INTO arkg_components (id, display_name, source_file, source_line, first_observed_at, last_observed_at, frequency, timing_p50_ms, timing_p95_ms, timing_samples, failure_rate, id_source, git_sha)
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
       `).run(compId, pick.name ?? compId, sourceFile, sourceLine, now, now,
         ts.p50, ts.p95, ts.samples,
         failed ? 1.0 : 0.0,
         // Anchored only when the caller vouched for the id. Nothing on the wire
         // does, so a pick's own row stays adoptable by the flow that names it.
-        pick.id ? ANCHORED : PROVISIONAL);
+        pick.id ? ANCHORED : PROVISIONAL,
+        gitSha);
     } else {
       const newRate = updateFailureRate(existing.failure_rate, existing.frequency + 1, failed);
       let ts = { p50: existing.timing_p50_ms, p95: existing.timing_p95_ms, samples: existing.timing_samples };
@@ -1580,14 +1726,85 @@ export function ingestComponentPick(pick) {
           timing_p50_ms = ?,
           timing_p95_ms = ?,
           timing_samples = ?,
-          failure_rate = ?
+          failure_rate = ?,
+          git_sha = COALESCE(?, git_sha)
         WHERE id = ?
-      `).run(now, sourceFile, sourceLine, ts.p50, ts.p95, ts.samples, newRate, compId);
+      `).run(now, sourceFile, sourceLine, ts.p50, ts.p95, ts.samples, newRate, gitSha, compId);
     }
 
     // A pick that has just taught the graph which file a component lives in may
     // have made it a visible twin of a row that already knew.
     reconcileIdentity(compId, now);
+  })();
+}
+
+/**
+ * One commit, and the source files it changed, into the graph.
+ *
+ * Called after `ingestFlow`, and the order is load-bearing: the flow is what
+ * creates the source file nodes, and this draws no edge to a file the graph has
+ * not already keyed.
+ *
+ * ## Both ends must land on a node the graph already keys
+ *
+ * That is the rule `caused_by` was built to, and it does more work here. Every
+ * other edge in this file joins two things observed in one browser; this joins
+ * a path git printed to a path a bundler wrote, and the two agree only after
+ * `core/git`'s `matchSourceFile` has said so — exactly, or by an unambiguous
+ * suffix, and never by a guess. Two files ending `src/index.ts` in a monorepo
+ * is precisely where a suffix rule becomes a coin toss, and a coin toss belongs
+ * in neither column of an edge. So a commit that touched forty files may draw
+ * three edges, and that is the honest number: the graph has seen three of them
+ * running.
+ *
+ * A merge commit reaches here with no files at all — see `parseLog` in
+ * `core/git` — and becomes a commit node with no edges, which is true.
+ */
+export function ingestCommit(commit, files = [], prefix = '') {
+  if (!db || !commit || !core.isSha?.(commit.sha)) return 0;
+
+  const now = Date.now();
+
+  return db.transaction(() => {
+    const existing = sql('SELECT id FROM arkg_git_commits WHERE id = ?').get(commit.sha);
+    if (!existing) {
+      sql(`
+        INSERT INTO arkg_git_commits (id, short_sha, subject, author, committed_at, first_observed_at, last_observed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        commit.sha,
+        core.shortSha(commit.sha),
+        commit.subject ?? '',
+        commit.author ?? null,
+        commit.committedAt ?? now,
+        now,
+        now,
+      );
+    } else {
+      sql('UPDATE arkg_git_commits SET last_observed_at = ? WHERE id = ?').run(now, commit.sha);
+    }
+
+    if (!files.length) return 0;
+
+    /*
+     * Read once and matched in memory. The alternative is a LIKE per changed
+     * path, which is a scan per file for a join that has to consider every
+     * candidate anyway — and `matchSourceFile` refuses an ambiguous suffix,
+     * which means it has to see all of them to know.
+     */
+    const known = sql('SELECT id FROM arkg_source_files').all().map((row) => row.id);
+    if (!known.length) return 0;
+
+    let drawn = 0;
+    for (const file of files) {
+      const projectPath = core.projectRelative(prefix, file);
+      if (!projectPath) continue;
+      const node = core.matchSourceFile(known, projectPath);
+      if (!node) continue;
+      insertFactEdge('changed_in', 'source_file', node, 'git_commit', commit.sha, now);
+      drawn += 1;
+    }
+    return drawn;
   })();
 }
 
@@ -1603,7 +1820,7 @@ export function ingestComponentPick(pick) {
  * `GET /api/cart` is, the edge says how slow it is *when CartButton is the one
  * calling it*, which is the question a blast radius is asked.
  */
-function upsertEdge(type, fromType, fromId, toType, toId, flowId, now, timingMs = null, failed = false) {
+function upsertEdge(type, fromType, fromId, toType, toId, flowId, now, timingMs = null, failed = false, gitSha = null) {
   const existing = sql(
     'SELECT * FROM arkg_edges WHERE type = ? AND from_node_type = ? AND from_node_id = ? AND to_node_type = ? AND to_node_id = ?',
   ).get(type, fromType, fromId, toType, toId);
@@ -1613,11 +1830,11 @@ function upsertEdge(type, fromType, fromId, toType, toId, flowId, now, timingMs 
       ? updateTimingStats(null, timingMs)
       : { samples: null, p50: null, p95: null };
     sql(`
-      INSERT INTO arkg_edges (type, from_node_type, from_node_id, to_node_type, to_node_id, flow_id, timing_p50_ms, timing_p95_ms, timing_samples, frequency, failure_rate, first_observed_at, last_observed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+      INSERT INTO arkg_edges (type, from_node_type, from_node_id, to_node_type, to_node_id, flow_id, timing_p50_ms, timing_p95_ms, timing_samples, frequency, failure_rate, first_observed_at, last_observed_at, git_sha)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
     `).run(type, fromType, fromId, toType, toId, flowId,
       ts.p50, ts.p95, ts.samples,
-      failed ? 1.0 : 0.0, now, now);
+      failed ? 1.0 : 0.0, now, now, gitSha);
   } else {
     const ts = timingMs !== null
       ? updateTimingStats(existing.timing_samples, timingMs)
@@ -1630,10 +1847,35 @@ function upsertEdge(type, fromType, fromId, toType, toId, flowId, now, timingMs 
         timing_p50_ms = ?,
         timing_p95_ms = ?,
         timing_samples = ?,
-        failure_rate = ?
+        failure_rate = ?,
+        git_sha = COALESCE(?, git_sha)
       WHERE id = ?
-    `).run(now, ts.p50, ts.p95, ts.samples, newRate, existing.id);
+    `).run(now, ts.p50, ts.p95, ts.samples, newRate, gitSha, existing.id);
   }
+}
+
+/**
+ * A `changed_in` edge: a source file was touched by a commit.
+ *
+ * Written by a different function from every other edge because it is a
+ * different kind of claim. Every other edge here is an *observation of a
+ * running application* — this component called that endpoint, and `frequency`
+ * counts the recordings that showed it. A commit changed a file once, in 2023,
+ * and will not do it again: incrementing a frequency on the second recording
+ * made at that commit would be counting how often somebody pressed Record and
+ * filing it as a fact about the repository.
+ *
+ * So an existing row is left exactly as it is, and re-ingesting is how a file
+ * the graph only learned about later gets its edge at all.
+ */
+function insertFactEdge(type, fromType, fromId, toType, toId, now) {
+  sql(`
+    INSERT INTO arkg_edges (type, from_node_type, from_node_id, to_node_type, to_node_id, frequency, failure_rate, first_observed_at, last_observed_at)
+    SELECT ?, ?, ?, ?, ?, 1, 0, ?, ?
+    WHERE NOT EXISTS (
+      SELECT 1 FROM arkg_edges WHERE type = ? AND from_node_type = ? AND from_node_id = ? AND to_node_type = ? AND to_node_id = ?
+    )
+  `).run(type, fromType, fromId, toType, toId, now, now, type, fromType, fromId, toType, toId);
 }
 
 // ── Queries ───────────────────────────────────────────────────────────────────
@@ -1954,6 +2196,40 @@ export function getBlastRadius(sourceFile, lineStart, lineEnd) {
 }
 
 /**
+ * Every source file the graph has observed, and the components seen in each.
+ *
+ * The candidate set `compare_flows_across_deploys` crosses a commit range
+ * against, and the reason that tool can say something `git log --name-only`
+ * cannot: these are the files DevFlow has actually watched code run in, pooled
+ * across every recording and every pick rather than only the two being
+ * compared.
+ *
+ * A file with an empty list is a real entry and not a gap — a source file node
+ * exists because something mapped to it, and a component whose row was later
+ * merged away leaves the file behind. It still says "this file has been seen",
+ * which is the question being asked.
+ */
+export function getObservedFiles() {
+  if (!db) return {};
+
+  const files = {};
+  for (const row of sql('SELECT id FROM arkg_source_files').all()) files[row.id] = [];
+
+  for (const row of sql(`
+    SELECT e.to_node_id AS file, c.display_name AS component
+    FROM arkg_edges e
+    JOIN arkg_components c ON c.id = e.from_node_id
+    WHERE e.type = 'maps_to'
+  `).all()) {
+    const list = (files[row.file] ??= []);
+    if (row.component && !list.includes(row.component)) list.push(row.component);
+  }
+
+  for (const list of Object.values(files)) list.sort();
+  return files;
+}
+
+/**
  * Compact graph summary for get_app_architecture.
  *
  * Top 20 components by frequency + their call edges + top 10 API endpoints.
@@ -2138,6 +2414,10 @@ function nodeLabel(nodeType, id) {
         ).get(id);
       case 'state_key':
         return sql('SELECT key_name AS label FROM arkg_state_keys WHERE id = ?').get(id);
+      case 'git_commit':
+        return sql(
+          "SELECT short_sha || ' ' || subject AS label FROM arkg_git_commits WHERE id = ?",
+        ).get(id);
       default:
         return null;
     }
@@ -2344,11 +2624,16 @@ export function pruneOldObservations(retentionDays) {
     const fileIds = ids('arkg_source_files');
     const storeIds = ids('arkg_state_stores');
     const keyIds = ids('arkg_state_keys');
+    const commitIds = ids('arkg_git_commits');
 
     deleteEdgesFor('component', compIds);
     deleteEdgesFor('api_endpoint', epIds);
     deleteEdgesFor('source_file', fileIds);
     deleteEdgesFor('state_store', storeIds);
+    // A commit node outlives nothing else here: its edges point at source files
+    // that are pruned on their own schedule, and a changed_in edge left behind
+    // by a pruned commit would name a node that is gone.
+    deleteEdgesFor('git_commit', commitIds);
 
     // An alias to a node that no longer exists resolves to nothing, which reads
     // as "never observed" — the same answer, one lookup later. Dropped with the
@@ -2365,6 +2650,7 @@ export function pruneOldObservations(retentionDays) {
     deleteNodes('arkg_source_files', fileIds);
     deleteNodes('arkg_state_stores', storeIds);
     deleteNodes('arkg_state_keys', keyIds);
+    deleteNodes('arkg_git_commits', commitIds);
 
     sql('DELETE FROM arkg_named_flows WHERE last_observed_at < ?').run(cutoff);
 

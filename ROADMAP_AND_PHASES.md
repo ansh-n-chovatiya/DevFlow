@@ -54,16 +54,16 @@ Nothing below is ticked on the strength of that branch.
 **Objective:** Lay the foundational data layer that every subsequent feature is built upon. The ARKG is DevFlow's deepest competitive moat and must be designed correctly from the start.
 
 ### Work Stream 0.1: ARKG Schema Design & SQLite Implementation
-- [~] **Core Graph Schema:**
+- [x] **Core Graph Schema:**
   - [x] Nodes: `components`, `api_endpoints`, `source_files`, `named_flows`
   - [x] Nodes: `state_keys` — one top-level key of one store, counting how often it was *changed* as well as how often it was seen. Keyed on the store's kind and label rather than its per-recording id, so one key is one node across recordings. `arkg_state_stores` beside it, so an edge has something to point at at the granularity it was observed.
-  - [ ] Nodes: `git_commits` (needs Phase 3)
+  - [x] Nodes: `git_commits` — **shipped in Phase 3.** A commit somebody made a recording at, stamped by the MCP server out of the project it runs in at the moment the recording arrives. There is nowhere else the answer could come from: the extension has no filesystem and no repository, so asking the page means asking a browser about a checkout it cannot see. The node carries no `timing_p50`/`timing_p95`/`failure_rate` — nothing times a commit and nothing fails one — and no `frequency` either, which is the more interesting omission: the count it would hold (*how many recordings were made at this commit*) is a join away, because every flow node has a `git_sha`. A counter beside it would have to decide whether pressing **Send** twice on one recording is two recordings, and would drift from the join the first time it decided wrong.
   - [x] Edges: `renders`, `calls`, `maps_to`
   - [x] Edges: `subscribes_to` — component → **store**, not component → key. `subscribers` is observed per store (a component is on the list because its own fiber carried the context dependency); crossing it with the store's keys would give a component that reads `state.cart` an edge to `state.auth`, indistinguishable in the graph from one somebody saw. The hop from store to key is left as a hop, because that is what it is.
   - [x] Edges: `caused_by` — **audited and ticked.** A causal link reaches the graph only when *both* ends project onto a node the ARKG already keys stably, and the projection is the whole of the claim: a step onto the component it was attributed to, a network event onto its `api_endpoint`, a state event onto its `state_store`. A console entry projects onto nothing — it has no stable identity across recordings — so every link ending on one is dropped rather than given a node invented to hold it, and `tests/arkg-causal.test.ts` asserts that against the real builder rather than a mock. Two further classes are refused: a self-loop where both ends land on one node, and the component ↔ endpoint pair, which is the `calls` edge drawn a second time out of the same fact. Nothing is a cross-product — `echoed` and `named` are gated on evidence per pair, `attributed` is one link per event from its own step. The audit did find one defect and it is fixed: the projection is many-to-one, so a response echoed into two keys of one store was counted as two observations of one edge, contradicting this file's own rule that `frequency` counts recordings. `ingestCausal` now dedupes per flow on the full edge identity, the way `ingestState` already did.
-  - [ ] Edges: `changed_in` (needs Phase 3)
+  - [x] Edges: `changed_in` — **shipped in Phase 3.** Source file → commit, drawn at ingest from the files the recorded-at commit touched, and **only onto source files the graph has already seen code running in**. That is the `caused_by` rule — both ends must project onto a node the graph already keys stably — and it does more work here than it does there: every other edge in the graph joins two things observed in one browser, while this joins a path git printed to a path a bundler wrote. The two meet through `matchSourceFile` in `core/git`, exactly after normalisation or by a suffix that exactly one known file answers, and never by a guess; two files ending `src/index.ts` in a monorepo is precisely where a suffix rule is a coin toss. So a deploy touching forty files may draw three edges, and three is the honest number — the other thirty-seven are files no recording has run through, and *that gap* is what the runtime graph knows and `git log --name-only` does not. A `changed_in` edge has no frequency to accumulate: a commit changed a file once and will not do it again, so incrementing on the second recording made at that commit would be counting button presses and filing them as a fact about the repository. It is written by `insertFactEdge` rather than `upsertEdge` for exactly that reason, and re-ingest is therefore how a file the graph only learned about later gets its edge at all. A merge commit gets a node and no edges, which is what `git show --name-only` says about a merge and is true.
   - [x] Properties on every node/edge: `timing_p50`, `timing_p95`, `frequency`, `failure_rate`, `last_observed_at`
-  - [ ] `git_sha` — columns exist and are always NULL; nothing writes them until Phase 3. The `state_keys` and `arkg_state_stores` tables deliberately have no `timing_p50`/`timing_p95` columns for the same reason: nothing times a state key, and a column that is always NULL is exactly what this line is complaining about.
+  - [x] `git_sha` — **shipped in Phase 3, and the meaning is narrower than the column name.** It reads *the last commit at which this node was observed with a clean working tree*, and each half of that was a decision. **Last**, because the `COALESCE` runs new-over-old, unlike the `source_file` beside it which keeps what it already knows — a later observation that lost the file learned nothing, while a later observation at a newer commit is exactly what the column is for. **Clean**, because a bare SHA column is a join key with no room beside it to record that the tree was dirty, and a dirty tree names a build that exists on no machine. So a dirty observation writes nothing — not even NULL, since erasing a commit that was true is not an improvement on failing to add one — and the recording's own `meta.json` keeps the whole truth, `dirty` and branch included. The rule is one expression (`joinableSha` in `src/core/git/index.ts`) rather than an `if` at each of the six write sites, because the way a rule about a column dies is a seventh site added by somebody who had not read the sixth. Crossed with `changed_in`, this is the fact worth having: a component whose `git_sha` is older than the commit that last changed its file is one the graph knows about from *before* the change. The `state_keys` and `arkg_state_stores` tables still have no `timing_p50`/`timing_p95` columns, for the reason this line originally gave: nothing times a state key.
 - [x] **Observation Ingestion Pipeline:**
   - Every recorded flow writes to the ARKG automatically on completion.
   - Every component inspection writes a `maps_to` edge linking the DOM element → source file.
@@ -268,6 +268,29 @@ Nothing below is ticked on the strength of that branch.
 ## Phase 3: Full-Stack Wire & Database Lineage (Months 7–9)
 **Objective:** Connect frontend user interactions to backend endpoints, microservices, and database queries. Introduce the Living Architecture Map and Temporal Diff.
 
+> **Where this phase stands: 3.4 is shipped and the other four are not started.**
+> 3.4 went first because it needed only the commit stamp and `compare_flows`,
+> both one step away, and because it closed the three Phase 0 items — `git_sha`,
+> `git_commits` and `changed_in` — on the way rather than as an errand
+> afterwards. Nothing below it is blocked by anything above it.
+>
+> **3.1 is next and its header injection is the first change DevFlow would make
+> to what a recorded app sends its own backend.** Everything shipped so far
+> observes. The hazard is concrete rather than theoretical: a custom header on a
+> **cross-origin** request makes it non-simple, so the browser sends an `OPTIONS`
+> preflight where it sent none, and a backend that does not name the header in
+> `Access-Control-Allow-Headers` **fails the request** — a working page broken by
+> DevFlow being installed, which is Invariant 1 and is exactly what got `v3.2.0`
+> reverted in a different subsystem. Note also that `traceparent` is a *standard*
+> header a backend may already accept and `X-DevFlow-Trace-Id` is bespoke; they
+> do not carry the same risk and must not be decided as one switch. The argument
+> belongs on the record before the first line of code, the way §1.1's rule was.
+>
+> **3.5 is out of scope as a unit and should be planned as three.** Vue 3,
+> Svelte 5 and React Server Components do not share React's fiber tree and
+> nothing in `src/core/react/` transfers, so each adapter is a Phase-1-sized body
+> of work. Starting one and leaving two would be worse than starting none.
+
 ### Work Stream 3.1: Distributed Trace Correlation
 - [ ] **Causality Trace Header Injection:**
   - Runtime injector automatically adds `X-DevFlow-Trace-Id` and `traceparent` headers to all outbound requests.
@@ -302,13 +325,20 @@ Nothing below is ticked on the strength of that branch.
   - `get_living_architecture()` → current snapshot of the full component/state/API graph
 
 ### Work Stream 3.4: Temporal Diff & Regression Detection
-- [ ] **Cross-Deploy Flow Comparison:**
-  - Compare two recordings of the same flow taken at different Git SHAs
-  - Automatically identify what changed: new network requests, response shape changes, re-render count changes, state mutation sequence changes, visual layout shifts
-- [ ] **"What Changed?" Incident Timeline:**
-  - On detecting an incident (error spike, latency regression): construct deployment timeline, per-deployment change set, runtime diff, and causal hypothesis automatically
-- [ ] **MCP Tool:**
-  - `compare_flows_across_deploys(flowId, sha1, sha2)` → semantic diff of what changed between the two builds
+- [x] **Cross-Deploy Flow Comparison:** — **shipped, and it is a join rather than a second comparison.** `compare_flows` already answers what differs between two runs: where they stop doing the same thing, which endpoints answered differently, what only one of them calls, which errors only one logs. Building a second comparison beside a working one is the mistake this repository has already made once, with its two markdown renderers, and `src/core/mcp-bundle.ts` exists because of it. So the new work is the commit join and nothing else — which is also why this was the cheapest of Phase 3's five work streams by a wide margin, and why it went first.
+
+  **The roadmap's signature does not survive contact, and the correction is the finding rather than a detail.** `compare_flows_across_deploys(flowId, sha1, sha2)` asks a recording for its two builds, and a `flowId` names *one* recording made at *one* commit. No id has two SHAs. What exists at two builds is a flow **by name**: somebody recorded "Checkout" on Tuesday and again on Thursday. So the tool takes a name — or the id of any one recording of it, and uses that recording's name — and the two SHAs select among the recordings carrying it. With neither SHA given it compares the two most recent builds, which is what somebody asking the question usually means.
+
+  **The pair is ordered by commit date, not recording date**, because reproducing a regression means checking the old build out and recording it *second*, and a report that called that the newer build would have every sentence after it backwards while still reading perfectly well.
+
+  Every refusal names what *is* available. A flow nobody recorded twice, a flow recorded ten times at one commit, a SHA that names no recording and a prefix that is ambiguous between two are four situations with four different next moves, and only one of them is a typo.
+- [x] **"What Changed?" Incident Timeline:** — shipped as the three sections below the comparison, and **the fourth is a shortlist, not a hypothesis.** The deployment timeline and per-deployment change set are `git log older..newer`; the runtime diff is `compare_flows`; and then the cross: the changed files DevFlow has actually watched code run in, pooled across every recording and pick rather than only the two being compared. That last section is deliberately *narrower* than the commit list above it — a deploy touching forty files may produce three entries, because the other thirty-seven are files no recording has ever run through, and that gap is the whole of what an accumulated runtime graph knows that `git log --name-only` does not.
+
+  **What was refused is the word "causal".** The roadmap asks for a causal hypothesis constructed automatically, and the answer prints *"A shortlist, not a cause"* in those words, on the same argument `core/diagnose` was built on: the mechanism is an intersection of two sets and it cannot tell a coincidence from a culprit, so it does not get to imply that it can. A file that changed in the range and renders a component that now behaves differently is worth reading first, and is not thereby the reason. `tests/deploy.test.ts` asserts that sentence is present, because it is the difference between a tool that offers evidence and one that names a culprit.
+
+  An unreadable range, an empty range and two builds on **diverged branches** are told apart. The last two produce the same empty `git log` and are not the same finding: one says nothing shipped between them, the other says the question has no single answer.
+- [x] **MCP Tool:**
+  - `compare_flows_across_deploys(flow, sha?, otherSha?)` — the signature above, for the reason above.
 
 ### Work Stream 3.5: Framework-Agnostic Adapters
 - [ ] **Vue 3 / Nuxt Adapter:** Reactivity Proxy and template AST mapper.
