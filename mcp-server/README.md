@@ -161,6 +161,55 @@ In remote mode there is no stamp unless `DEVFLOW_PROJECT_ROOT` is set, for
 `get_source_snippet`'s reason: the server's own working directory is a
 container and not your project, and a wrong commit is worse than none.
 
+## Backend traces
+
+Turning on DevFlow's trace header puts an id on the requests a recorded page
+makes. That id is useful on its own — it is the id in your own backend's logs,
+so you can go and search for it. This is the other end: your backend exports the
+spans it recorded under that id, DevFlow receives them, and the request the
+recording watched leave the browser is joined to the work it caused on the far
+side. `get_backend_trace` prints the result as the span tree it is — which
+service answered, what it called, how long each step took and which one failed.
+
+**It is off unless you turn it on.** Start the server with `DEVFLOW_OTEL=1`.
+This is the opposite default from the commit stamp, deliberately: that reads a
+repository this machine already owns, while this accepts a document from off the
+machine and turns it into rows in the accumulated graph. Every other write this
+server accepts is checked to have come from the DevFlow extension; this one
+cannot be, because the sender is your backend, which has no extension origin.
+
+Then point your exporter at this server:
+
+```sh
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:7734/v1/traces
+OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/json
+```
+
+`7734` is the default port; use whatever `mcp.port` is set to below.
+
+**The second line is required and is the one thing to get right.** OTLP's
+default encoding is protobuf and this endpoint reads JSON only; a protobuf
+delivery is refused with a `415` that names this variable. That is a decision
+rather than an omission: a protobuf decoder is a second wire format to get
+exactly right, and a subtly wrong one does not throw — it writes a plausible
+number into your graph.
+
+**Spans normally arrive before the recording does.** Your backend exports within
+seconds of the request; you press **Send** when you are ready. So spans are held
+and the join runs when a recording arrives. If your spans turn up late, re-send
+the recording and they will join.
+
+**Nothing that has only one end is written to the graph.** A span whose trace id
+matches no recording is real and DevFlow has nothing to attach it to, so it is
+held until it expires and never becomes a node. `get_backend_trace` keeps the
+three cases apart, because they have three different fixes: a call that was
+never traced (turn the header on), a traced call whose spans have not arrived
+(check the exporter, or the sampling), and a joined trace.
+
+The held spans are capped and expire. A trace id is 128 random bits, so nothing
+can attach a fabricated span to one of your recordings without guessing one; the
+cap is there for the nuisance that *is* reachable, which is filling the store.
+
 ## Settings
 
 Most of what this server decides — the response budget, the `raw` default, how

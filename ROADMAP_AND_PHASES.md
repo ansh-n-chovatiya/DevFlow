@@ -307,6 +307,36 @@ Nothing below is ticked on the strength of that branch.
 > no falling back from it either: by the time the browser reports the failure,
 > the request the page was waiting on has already rejected.
 >
+> **That hazard is now measured, not reasoned from the specification.** It had
+> been checked from the spec and from the server side with `curl`, and neither of
+> those watches a browser decide, so it was run against real Chromium (Playwright
+> 1.62.1, Chromium build 1234) — two origins, reproducible in ten minutes. A page
+> on `http://localhost:4311` fetches an API on `http://localhost:4312` that
+> answers the preflight and allows the origin and the method on **both** paths;
+> the only difference is that `/allowed` names the header in
+> `Access-Control-Allow-Headers` and `/notallowed` does not. With no custom
+> header the request goes straight out and resolves — no `OPTIONS` at all.
+> Against `/allowed` the browser preflights, then sends the real request, and the
+> API receives the header. Against `/notallowed` the page gets `TypeError: Failed
+> to fetch` and the real request is **never sent**: *"Request header field
+> x-devflow-trace-id is not allowed by Access-Control-Allow-Headers in preflight
+> response"*. The same-origin control is the other half of the asymmetry below —
+> a page fetching its own origin with both headers, against a server sending no
+> `Access-Control-*` headers and answering no `OPTIONS`, resolves with both
+> headers arriving and no preflight at all.
+>
+> **Two findings from that run sharpen the rules rather than confirm them.**
+> First, a failed preflight leaves **no server-side evidence**: the API logged
+> the `OPTIONS` and never a `GET`, so a developer whose app breaks this way sees
+> a failed fetch in the browser and nothing whatsoever in their backend logs.
+> That is a second reason the rule is not "try it and fall back", independent of
+> the rejection having already happened. Second, **DevFlow cannot observe the
+> preflight**: page-level instrumentation saw an outbound `GET` and then
+> `net::ERR_FAILED`, because Chromium makes the preflight in the network service
+> and never surfaces it as a page request, and DevFlow patches `fetch` and
+> `XMLHttpRequest` in the page. Any future "did our header break this?"
+> diagnostic has the rejection to work from and nothing else.
+>
 > **Same-origin requests are not subject to CORS at all**, and that asymmetry is
 > the whole design. Four rules:
 >
@@ -331,7 +361,10 @@ Nothing below is ticked on the strength of that branch.
 > **`traceparent` and `X-DevFlow-Trace-Id` are two switches, not one**, because
 > they differ in both directions. `traceparent` is a W3C standard a backend may
 > already accept and already allow — more likely to work, and more likely to
-> matter when it is already in use. `X-DevFlow-Trace-Id` is bespoke: no backend
+> matter when it is already in use. "More likely to work" is a claim about what
+> backends typically allow and not about the mechanism: measured, an unlisted
+> `traceparent` preflight-fails exactly as the bespoke header does, with the same
+> message. `X-DevFlow-Trace-Id` is bespoke: no backend
 > accepts it by accident, which makes it strictly likelier to fail a preflight
 > and strictly easier to grep for in a log, which is the whole of its Tier 1
 > value.
@@ -364,11 +397,23 @@ Nothing below is ticked on the strength of that branch.
   Three further refusals, each on its own grounds. A request the page has **already** put a `traceparent` on is left exactly as it was, because overwriting one reparents somebody's production spans under an id their backend has never seen. A `Request` carrying a **body** is left alone, because adding a header means rebuilding it and `new Request(req, { headers })` marks the original as `bodyUsed` — measured rather than assumed, and the reason the ordinary `fetch(url, { body })` *is* traced while the `new Request(url, { body })` form is not. And an id is minted **per request**, never per flow.
 
   Both `fetch` and `XMLHttpRequest` are covered; the latter is not a legacy corner, since `axios` still uses it in the browser. The XHR path found a pre-existing defect on its way: `open()` never cleared the recorded request headers, so the second request through a reused instance — which is how every long-poll and retry loop is written — was recorded carrying the first one's. It surfaced because a stale `traceparent` in that list made the second request refuse itself as already traced.
-- [ ] **OpenTelemetry (OTel) Collector Integration (Tier 2):** — **not started, and deliberately a separate body of work.** The header is what makes it *possible*; ingesting spans is an endpoint, a parser for a wire format this repo has never touched, and a set of ARKG edges. It is worth costing on its own rather than being finished in the tail of the work stream that unblocked it.
+- [x] **OpenTelemetry (OTel) Collector Integration (Tier 2):** — **shipped, and every decision in it was measured against a real exporter rather than read off the specification.** A throwaway service was built with `@opentelemetry/sdk-trace-node`, pointed at a capturing endpoint, and made to continue a `traceparent` of exactly the shape `core/trace` mints. Four facts came out of that and three of them would have been got wrong by reasoning, which is why the captured deliveries are the test fixture rather than hand-written JSON:
+
+  **Spans arrive leaf-first.** A span is exported when it *ends*, and a child ends before its parent — the `SELECT` at depth three arrived in the first delivery and the root server span in the third. So nothing may assume a parent has been seen, the tree is assembled from the accumulated set rather than from one delivery, and the receiver stores before it joins. **The root's parent will never arrive at all**: the backend parents its top span on the `traceparent` DevFlow sent, and DevFlow is not an OTel SDK and emits no spans, so a missing parent is the *ordinary* case. `buildSpanTree` therefore roots on "parent not present" and not on "no parent", which is a one-word difference that returns an empty forest for every good trace if it is got wrong. **Timestamps do not fit in a `number`** — `startTimeUnixNano` arrives as a JSON string two orders of magnitude past `Number.MAX_SAFE_INTEGER`, so they are subtracted as `BigInt` and only the difference crosses back.
+
+  **OTLP/JSON only, and protobuf is a named gap rather than an oversight.** A protobuf delivery is refused with a `415` naming the one line that fixes it. A decoder would be a second wire format to get exactly right, and a subtly wrong varint does not throw — it writes a plausible number into somebody's graph, which is the shape of the two defects mutation-testing found in Work Stream 3.4. The user is already editing exporter configuration to point it here at all, so the protocol variable beside the URL is a word rather than a step.
+
+  **A span is an event, and the graph needed something that outlives one.** This is the `caused_by` rule and it bites hardest here: a span has a random 64-bit id, happens once and is never seen again, so a node per span would stop the ARKG being an accumulation and make it a log. What is stable is the **service** (`service.name`) and the **operation** (that service plus the span's name), and a span is an observation *of* an operation exactly as a network call is an observation of an endpoint. Operation names collapse opaque path segments through the same rule `normaliseUrl` already applies to endpoints — reusing it rather than writing a second one that disagrees.
+
+  **A trace nobody recorded projects onto one node, so it is not written.** It is not dropped on arrival either, and the measurement is why: spans normally arrive *before* the recording does, because a backend exports within seconds and the user presses Send when they are ready. Dropping unjoined spans would drop very nearly all of them. So they are held in a capped, expiring store — deliberately a separate database from `arkg.db`, because a waiting room is not graph data — and the join runs at flow ingest. Re-sending a recording is therefore how a late trace gets joined at all, the same property `changed_in` has and for the same reason.
+
+  **Two things the backend nodes are wired into and one they are not, named rather than left to be discovered.** They age out on the ordinary retention sweep, and that was worth going back for: every other node kind is created by somebody recording, so the graph grows at the rate a person works, while a service and its operations are created by a span arriving on an endpoint nothing on this machine paces — a policy reaching every node kind *except* the two fed from off the machine would have been pointing exactly the wrong way round, and the symptom is a database that silently grows. They also count towards a graph being non-empty, because "services and no recordings" is the *ordinary* intermediate state given spans arrive first, and while it did not count, that state was indistinguishable from a fresh install. What they are **not** wired into is `explain_feature`: the lexical navigator has no `service` or `operation` entity kind, so a backend node cannot be found by name even though `get_app_architecture` lists it and `getNeighbours` will walk onto one and label it correctly. That is a gap and not a refusal — it is a widening of `EntityKind` in `core/navigator` plus a corpus arm in `getNamedEntities`, and it was left because a half-scored entity kind in a matcher whose whole risk is overstating what it knows is worse than an absence somebody can see.
+
+  **`DEVFLOW_OTEL=1`, which is the opposite default from `DEVFLOW_GIT`.** That asymmetry is argued rather than inherited. `git` reads a repository this machine already owns with a fixed argv; this accepts a document from off the machine, written by a process DevFlow has never met, and turns it into rows in the accumulated graph. Every other write endpoint on this port is guarded by `extensionOrigin` and this one **cannot** be — the sender is the user's own backend, which has no extension origin and never will — so the gate that is actually available is the user having asked for it. The store is not a security boundary and does not claim to be: a trace id is 128 random bits, so attaching a fabricated span to a real recording means guessing one; filling the store is the reachable nuisance and the cap is the answer to it.
 - [~] **Tier Model Enforcement:**
   - [x] Tier 1 (default, zero backend effort): FE-only correlation, response body, error detection, latency — **this is what ships, and it has standalone value that does not depend on Tier 2 ever arriving.** That is the test the header had to pass before it was worth changing anybody's traffic for: the id DevFlow puts on the request is the id in the backend's own logs, so a person or a model can go and grep for it. A header nobody can read back is a change to somebody's traffic in exchange for nothing, which is why the id is *rendered* — on failed calls in the walkthrough, in `get_flow_errors`, in `get_step_detail` and in the flow review — and not merely stored.
-  - [ ] Tier 2 (OTel SDK, one package): full FE → BE → service span correlation
-  - [ ] Tier 3 (enterprise): automatic SQL query capture (never prioritized over Tiers 1 & 2)
+  - [x] Tier 2 (OTel SDK, one package): full FE → BE → service span correlation — **shipped**, and "one package" survives contact: the user adds an OTel SDK to their own backend if they have not got one, sets two environment variables, and starts DevFlow's server with `DEVFLOW_OTEL=1`. `get_backend_trace` is the reader, and it keeps three situations apart that have three different fixes — a call that was never traced, a traced call whose spans have not arrived, and a joined trace. The second is the one worth the extra branch: telling somebody "no backend data" when the truth is "your exporter has not sent it yet" sends them to change a setting that was already correct.
+  - [~] Tier 3 (enterprise): automatic SQL query capture (never prioritized over Tiers 1 & 2) — **not built, and what ships is not it.** A span carrying `db.query.text` is rendered and stored, so the SQL a user's *own* tracer chose to record does reach the answer. That is Tier 2 data that happens to describe a query. Tier 3 is DevFlow instrumenting the database itself, which nothing here does and nothing here is a step towards. The distinction matters because the query text is the user's, parameterised or not as their instrumentation left it, and it is never rewritten — showing somebody a tidied query their database never saw would be the wrong kind of helpful.
 
 ### Work Stream 3.2: End-to-End Data Lineage Engine
 - [ ] **Wire-to-Database Inspector:**

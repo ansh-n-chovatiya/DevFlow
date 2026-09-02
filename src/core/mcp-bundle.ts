@@ -225,3 +225,43 @@ export { choosePair, renderDeployDiff, suspectFiles } from './deploy/index.js';
  * rather than being written a second time here.
  */
 export { describeTrace } from './trace/index.js';
+
+/*
+ * OpenTelemetry spans, and which of them may say anything about a recording.
+ *
+ * Here for `core/git`'s reason: the receiving is the small half. The decisions
+ * are what a span is allowed to become in a graph that outlives the recording,
+ * how a tree is assembled from spans that arrive leaf-first, and what to do
+ * with a trace that projects onto one node — none of which should need an HTTP
+ * server on a port to exercise, and the last of which is the admission rule the
+ * whole graph is built on.
+ */
+export type {
+  JoinResult,
+  OperationObservation,
+  OperationRef,
+  OtelEdge,
+  OtelProjection,
+  OtelSpan,
+  OtlpReading,
+  OtlpRejection,
+  ServiceObservation,
+  SpanKind,
+  SpanNode,
+  SpanSkip,
+  TraceJoin,
+  TracedCall,
+} from './otel/index.js';
+export {
+  UNNAMED_SERVICE,
+  buildSpanTree,
+  compareNano,
+  durationMs,
+  flattenTree,
+  joinTrace,
+  operationName,
+  projectTrace,
+  readOtlpTraces,
+  readSpanId,
+  readTraceId,
+} from './otel/index.js';
