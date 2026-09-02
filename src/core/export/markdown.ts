@@ -8,7 +8,7 @@
 
 import { isStableSelector } from '../selector/index.js';
 import { compactBody, type BodyLimits } from '../schema/index.js';
-import { flowHost, urlPath } from '../flow/index.js';
+import { callFailed, flowHost, urlPath } from '../flow/index.js';
 import {
   formatSource,
   referencedComponentIds,
@@ -261,6 +261,21 @@ function appendStep(
       lines.push(
         `\`${call.method || 'GET'}\` ${urlPath(call.url)} → ${call.status ?? 'err'} (${call.durationMs || 0}ms)`,
       );
+      /*
+       * The trace id, and only on a call that failed.
+       *
+       * It is 32 hex characters of pure identifier, so printing it beside every
+       * healthy call would cost thousands of tokens across a long recording to
+       * say something nobody asked. On a *failed* call it is the next thing the
+       * reader does — the same id their own backend logged, to grep for. That
+       * asymmetry is a decision, not an omission, and `tests/markdown.test.ts`
+       * asserts both halves of it.
+       *
+       * `callFailed` rather than a second `status >= 400` written here: the
+       * rule for what counts as a failure lives in `core/flow` and the server
+       * reads the same one.
+       */
+      if (call.traceId && callFailed(call)) lines.push(`  ↳ trace: ${inlineCode(call.traceId)}`);
       if (call.requestBody) {
         const body = truncate(
           flatten(

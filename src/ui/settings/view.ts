@@ -222,6 +222,16 @@ const DEPENDENCIES: readonly Dependency[] = [
     reason: 'Applies while bodies are being captured and summarised.',
   },
   {
+    /*
+     * Inert while both switches are off, and inert is the shipped state — so
+     * without this the row a user meets first in this group is the one that
+     * does nothing, with no hint that the two above it are what turn it on.
+     */
+    key: 'network.traceOrigins',
+    met: (settings) => settings['network.traceHeader'] || settings['network.traceparent'],
+    reason: 'Applies while one of the two trace headers above is being added.',
+  },
+  {
     key: 'network.summariseBodies',
     met: (settings) => settings['network.captureBodies'],
     reason: 'Applies while request and response bodies are being captured.',

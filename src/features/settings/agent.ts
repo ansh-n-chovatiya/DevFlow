@@ -14,6 +14,7 @@
  * should not.
  */
 
+import { parseOrigins } from '../../core/trace/index.js';
 import type { AgentConfig } from '../../shared/messages.js';
 import type { RecordingSettings } from './fields.js';
 
@@ -46,9 +47,35 @@ import type { RecordingSettings } from './fields.js';
  * see it. They are frozen for the same reason the body cap is: a chain limit
  * that moved halfway through would leave one recording carrying two different
  * answers to "how far up did you look", with nothing saying so.
+ *
+ * `trace` is the one member that does not narrow what is written down. It
+ * decides whether the page's own requests leave carrying a header they would
+ * not otherwise have carried, and it crosses for the plainest reason in this
+ * file: `fetch` and `XMLHttpRequest` belong to the page, so the only code that
+ * can add a header to one runs in the page's realm.
+ *
+ * It crosses as a policy object rather than as three loose fields because the
+ * rule that reads it is one pure function (`decideTrace` in `core/trace`) whose
+ * input is exactly this shape — a shape nobody can half-apply, which for a
+ * setting whose failure mode is somebody's application breaking is worth more
+ * than the flatness the rest of this object has. And it is in the freeze with
+ * everything else here, which is what makes a recording able to say that its
+ * requests carried a header: a switch flipped mid-flow would leave half a flow
+ * traced and nothing at all saying which half.
+ *
+ * `network.traceOrigins` is parsed on this side, by `core/trace`'s own parser,
+ * so the agent is handed origins rather than a string it would have to agree
+ * with us about how to split. One parser, in `core/`, is the point — a second
+ * one in the page is a second answer to "is this the same origin", and the two
+ * would disagree the first time somebody typed a trailing comma.
  */
 export function toAgentConfig(settings: RecordingSettings): AgentConfig {
   return {
+    trace: {
+      devflow: settings['network.traceHeader'],
+      traceparent: settings['network.traceparent'],
+      allowedOrigins: parseOrigins(settings['network.traceOrigins']),
+    },
     captureBodies: settings['network.captureBodies'],
     bodyCap: settings['network.bodyCap'],
     consoleLevels: settings['console.levels'],

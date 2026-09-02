@@ -43,6 +43,7 @@ import {
   DEFAULTS,
   describeCommit,
   describeStamp,
+  describeTrace,
   diagnose,
   effectsOf,
   exportToMarkdown,
@@ -2300,9 +2301,26 @@ function stepParts(flow, dir, step, render) {
 
     for (const call of calls) {
       const diagnostic = callFailed(call);
+      /*
+       * The trace id, on the call line, whether or not the call failed.
+       *
+       * A reader who asked for `network` on one step has already narrowed to
+       * the place a trace id is worth its 32 characters — this is the drilled-in
+       * view, not the walkthrough, so the budget argument that keeps it off a
+       * healthy call in `core/export/markdown.ts` does not apply here. It is
+       * absent on nearly every call, so the line is unchanged for nearly every
+       * recording.
+       *
+       * `trace <id>` and nothing more: `describeTrace`'s full sentence lives in
+       * `src/core/trace/index.ts`, which this package cannot reach — the MCP
+       * bundle (`src/core/mcp-bundle.ts`) does not export it. Copying the
+       * sentence here would be a second copy to drift; the short form is its
+       * own opening words.
+       */
       lines.push(
         `${call.method || 'GET'} ${call.url} → ${call.status ?? 'no response'} ` +
-          `(${call.durationMs || 0}ms)${at(call.timestamp)}`,
+          `(${call.durationMs || 0}ms)${at(call.timestamp)}` +
+          (call.traceId ? ` — trace ${call.traceId}` : ''),
       );
       const request = compactCall(
         call.requestBody,
@@ -4577,6 +4595,21 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
               status: call.status,
               durationMs: call.durationMs,
               /*
+               * The trace id, and this is the tool that most needs it.
+               *
+               * A failed call is exactly when somebody goes and greps their own
+               * backend, and this id is the one their backend logged. The
+               * object is built field by field, so a field not named here does
+               * not travel — which is how `traceId` would have been recorded,
+               * plumbed through three files, and then been invisible from
+               * outside.
+               *
+               * Left off entirely when absent rather than sent as null:
+               * `JSON.stringify` drops an `undefined`, and it is absent on
+               * nearly every call there is.
+               */
+              traceId: call.traceId,
+              /*
                * Diagnostic: these are the calls that broke, so the body stays.
                *
                * `render.limits` was missing here and is not decoration — this
@@ -4639,7 +4672,26 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
             }}).`
           : '';
 
-      return text(`${headline}${cut}\n\n\`\`\`json\n${JSON.stringify(shown)}\n\`\`\``);
+      /*
+       * What a `traceId` in the JSON below is *for*, said once.
+       *
+       * Per call it would be the same sentence repeated down the response; not
+       * said at all, a model is handed an opaque hex string and the whole Tier 1
+       * payoff goes unclaimed — the id DevFlow put on the request is the id the
+       * user's own backend logged, and going and searching for it there is the
+       * entire reason a header was worth changing anybody's traffic for.
+       *
+       * Only when one is actually present, which means off by default and then
+       * only for the calls the injection rule allowed, so the ordinary response
+       * pays nothing for this line. The wording comes from `core/trace` rather
+       * than being written a second time here.
+       */
+      const traced = shown
+        .flatMap((entry) => entry.failedCalls ?? [])
+        .find((call) => call.traceId);
+      const trace = traced ? `\n\n${describeTrace(traced.traceId)}` : '';
+
+      return text(`${headline}${cut}${trace}\n\n\`\`\`json\n${JSON.stringify(shown)}\n\`\`\``);
     }
 
     case 'get_flow_step': {

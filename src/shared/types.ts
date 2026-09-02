@@ -175,6 +175,20 @@ export interface FlowReact {
 export interface NetworkCall {
   method: string;
   url: string;
+  /**
+   * The trace id DevFlow added to this request, when it added one.
+   *
+   * Optional, and absent rather than null on a call that carried no header:
+   * "not traced" and "traced with nothing" are different, and only the first
+   * ever happens. It is present only for a request made inside a recording,
+   * with the switch on, to an origin the injection rule allowed — see
+   * `src/core/trace/index.ts` for why that last clause is most of the feature.
+   *
+   * Its Tier 1 value is that it is the same id the user's own backend logged,
+   * so a person or a model can go and grep for it. That is why it is rendered
+   * rather than merely stored.
+   */
+  traceId?: string;
   requestHeaders: Record<string, string>;
   requestBody: string | null;
   /** The request body was cut at the capture cap. */

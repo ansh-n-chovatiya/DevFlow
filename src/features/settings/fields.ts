@@ -109,6 +109,9 @@ import {
   THUMBNAIL_HEIGHT,
   THUMBNAIL_QUALITY,
   THUMBNAIL_WIDTH,
+  TRACE_HEADER_ENABLED,
+  TRACE_ORIGINS,
+  TRACEPARENT_ENABLED,
   USE_SOURCE_MAPS,
   WARN_STEPS,
 } from "../../shared/constants.js";
@@ -217,7 +220,7 @@ interface Common {
    * setting appears. There is nothing else to remember, and no second place for
    * the two lists to disagree.
    *
-   * **Every one of the seventy-three is wired as of Phase 6**, so the flag is
+   * **Every row is wired as of Phase 6**, so the flag is
    * currently true everywhere and `WIRED` is the whole table. It stays because
    * it is what the *next* setting needs: the one added between the day it is
    * tabled and the day something reads it, which is a gap every phase here had.
@@ -356,7 +359,7 @@ export type Field =
  * Phase 1 did not reach it, and Phase 3 is where it became visible, because the
  * export file shows the mixed namespace to the user.
  *
- * The cost of keeping them is cosmetic: eight of seventy-three keys sort oddly in
+ * The cost of keeping them is cosmetic: eight keys sort oddly in
  * an exported file. The cost of renaming them is not. Phase 0's own migration
  * recipe was "read the legacy key when the canonical one is absent, write only
  * the canonical key, and never delete the legacy one, because an older version
@@ -1009,6 +1012,86 @@ export const FIELDS = [
     description: "The schema/verbatim tradeoff is genuinely per-app.",
     consumers: ["ui", "mcp"],
     rendered: true,
+    wired: true,
+  },
+
+  // ── The three that change what the page sends ──────────────────────────────
+  //
+  // Every other row in this table narrows what DevFlow writes down. These three
+  // decide whether an outbound request leaves the page carrying a header it
+  // would not otherwise have carried, which is a different kind of act — so
+  // they are off by default, read only while a recording is running, and
+  // `recorded: true` so a flow says which of them its requests were made under.
+  // A reader who cannot tell whether a recording's traffic was modified has to
+  // assume it was. The rule itself is `decideTrace` in `core/trace`, and its
+  // header is where the argument for the shape of all three is written.
+  {
+    key: "network.traceHeader",
+    group: "network",
+    tier: 2,
+    type: "boolean",
+    default: TRACE_HEADER_ENABLED,
+    title: "Tag recorded requests with a trace id",
+    description:
+      "While a flow is recording, outbound requests carry an `X-DevFlow-Trace-Id` header holding the same id the recording shows — so the request in front of you can be found in your backend’s own logs by searching for that id. Nothing is added when no recording is running.",
+    consequence:
+      "A cross-origin request that gains a custom header stops being a simple request, so the browser sends an OPTIONS preflight it did not send before, and a backend that does not name the header in Access-Control-Allow-Headers fails the request outright. Same-origin requests are exempt from CORS and cannot fail this way; every other destination is left alone until it is named below.",
+    consequenceWhen: { is: true },
+    consumers: ["agent"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "network.traceparent",
+    group: "network",
+    tier: 2,
+    type: "boolean",
+    default: TRACEPARENT_ENABLED,
+    title: "Tag recorded requests with a W3C traceparent",
+    // A separate row and not a mode of the one above, because the two carry
+    // different risk in both directions: this one a backend is more likely to
+    // accept already, and more likely to act on once it has.
+    description:
+      "The standard header rather than the bespoke one, so a backend running OpenTelemetry files the request under the id the recording shows. A request the page already sent a traceparent on is left exactly as the page built it — overwriting one would splice a recording into the middle of somebody’s production trace tree.",
+    consequence:
+      "The header is marked sampled, which asks an OpenTelemetry backend to record traces it would otherwise have sampled away — a real cost on somebody’s observability bill, and one that has nothing to do with CORS. The preflight above applies here too: a cross-origin destination has to be named below or the request fails.",
+    consequenceWhen: { is: true },
+    consumers: ["agent"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "network.traceOrigins",
+    group: "network",
+    tier: 2,
+    type: "string",
+    default: TRACE_ORIGINS,
+    /*
+     * Absolute http(s) addresses, separated by whitespace or commas, or
+     * nothing at all. Deliberately no stricter than that: `parseOrigins` in
+     * `core/trace` is what turns each entry into the origin the rule compares,
+     * and it accepts the trailing slash and the path a person gets by pasting
+     * from an address bar. A pattern that rejected those would refuse the value
+     * the parser was written to forgive, and refuse it by silently resolving
+     * the whole field back to empty — which is the failure this row is least
+     * able to afford, since the visible symptom is a header that never appears.
+     *
+     * What it does reject is a value that is not addresses at all, and that
+     * falls back to empty. Empty is the safe direction: nothing cross-origin is
+     * given a header.
+     */
+    pattern: /^[,\s]*(?:https?:\/\/[^\s,]+(?:[,\s]+https?:\/\/[^\s,]+)*[,\s]*)?$/,
+    maxLength: 2048,
+    title: "Cross-origin destinations that accept a trace header",
+    // The cost is in the description rather than in a `consequence`, and the
+    // reason is the one `recording.state` gives: a consequence has to name the
+    // range it is true in, and for a list of origins that range is "not empty",
+    // which is the bare-consequence rule — and the bare rule is spoken for. The
+    // sentence a user needs here is the one they read before typing, not after.
+    description:
+      "Origins the two switches above may add a header to — `https://api.example.com`, separated by spaces or commas. Pasting the whole address of an endpoint works; only its origin is kept. Same-origin requests need no entry and never consult this list. Everything else is left alone until it is named here, because naming an origin is you saying that backend accepts the header: there is no way to discover that except by sending the request that might fail, and a failed preflight has already rejected the page’s own request by the time anyone hears about it.",
+    consumers: ["agent"],
+    recorded: true,
     wired: true,
   },
 

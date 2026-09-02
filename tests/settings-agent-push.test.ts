@@ -34,6 +34,8 @@ import {
   STATE_SETTLE_MS,
   STATE_STRING_CAP,
   REACT_PREWARM_TTL_MS,
+  TRACE_HEADER_ENABLED,
+  TRACEPARENT_ENABLED,
 } from '../src/shared/constants.js';
 import { DEFAULTS } from '../src/features/settings/fields.js';
 import { toAgentConfig } from '../src/features/settings/agent.js';
@@ -83,6 +85,17 @@ beforeAll(async () => {
 describe('what the content script sends', () => {
   it('is the agent-relevant subset and nothing else', () => {
     expect(toAgentConfig(DEFAULTS)).toEqual({
+      // The one member that does not narrow what is written down: it decides
+      // whether the page's requests leave carrying a header they would not
+      // otherwise have carried. It crosses as a policy object because the rule
+      // that reads it (`decideTrace` in `core/trace`) takes exactly this shape,
+      // and a shape nobody can half-apply is worth more here than the flatness
+      // of everything below it.
+      trace: {
+        devflow: TRACE_HEADER_ENABLED,
+        traceparent: TRACEPARENT_ENABLED,
+        allowedOrigins: [],
+      },
       captureBodies: true,
       bodyCap: BODY_CAP,
       consoleLevels: CONSOLE_LEVELS,
@@ -138,6 +151,7 @@ describe('what the content script sends', () => {
       'stateMaxStores',
       'stateSettleMs',
       'stateStringCap',
+      'trace',
     ]);
   });
 
@@ -146,6 +160,37 @@ describe('what the content script sends', () => {
 
     expect(changed.consoleLevels).toEqual(['error']);
     expect(changed.bodyCap).toBe(10);
+  });
+
+  /*
+   * The trace policy is the one thing on this channel that changes what the
+   * page *does*, so it gets its own cases: the defaults above prove nothing is
+   * sent by accident, and these prove something is sent when it is asked for.
+   * The parsing is `core/trace`'s, deliberately — one parser, on this side of
+   * the boundary, so the agent is handed origins rather than a string it would
+   * have to agree with us about how to split.
+   */
+  it('sends the two switches separately, because they are two decisions', () => {
+    const devflowOnly = toAgentConfig({ ...DEFAULTS, 'network.traceHeader': true });
+    expect(devflowOnly.trace.devflow).toBe(true);
+    expect(devflowOnly.trace.traceparent).toBe(false);
+
+    const w3cOnly = toAgentConfig({ ...DEFAULTS, 'network.traceparent': true });
+    expect(w3cOnly.trace.devflow).toBe(false);
+    expect(w3cOnly.trace.traceparent).toBe(true);
+  });
+
+  it('hands over parsed origins, not the string the user typed', () => {
+    const config = toAgentConfig({
+      ...DEFAULTS,
+      'network.traceHeader': true,
+      'network.traceOrigins': 'https://api.example.com, https://auth.example.com:8443',
+    });
+
+    expect(config.trace.allowedOrigins).toEqual([
+      'https://api.example.com',
+      'https://auth.example.com:8443',
+    ]);
   });
 });
 

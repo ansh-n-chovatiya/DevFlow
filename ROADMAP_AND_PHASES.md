@@ -268,23 +268,21 @@ Nothing below is ticked on the strength of that branch.
 ## Phase 3: Full-Stack Wire & Database Lineage (Months 7–9)
 **Objective:** Connect frontend user interactions to backend endpoints, microservices, and database queries. Introduce the Living Architecture Map and Temporal Diff.
 
-> **Where this phase stands: 3.4 is shipped and the other four are not started.**
+> **Where this phase stands: 3.4 is shipped, 3.1's Tier 1 is shipped, and 3.2,
+> 3.3 and 3.5 are not started.**
+>
 > 3.4 went first because it needed only the commit stamp and `compare_flows`,
 > both one step away, and because it closed the three Phase 0 items — `git_sha`,
 > `git_commits` and `changed_in` — on the way rather than as an errand
-> afterwards. Nothing below it is blocked by anything above it.
->
-> **3.1 is next and its header injection is the first change DevFlow would make
-> to what a recorded app sends its own backend.** Everything shipped so far
-> observes. The hazard is concrete rather than theoretical: a custom header on a
-> **cross-origin** request makes it non-simple, so the browser sends an `OPTIONS`
-> preflight where it sent none, and a backend that does not name the header in
-> `Access-Control-Allow-Headers` **fails the request** — a working page broken by
-> DevFlow being installed, which is Invariant 1 and is exactly what got `v3.2.0`
-> reverted in a different subsystem. Note also that `traceparent` is a *standard*
-> header a backend may already accept and `X-DevFlow-Trace-Id` is bespoke; they
-> do not carry the same risk and must not be decided as one switch. The argument
-> belongs on the record before the first line of code, the way §1.1's rule was.
+> afterwards. 3.1 went second because its header injection is **the first change
+> DevFlow makes to what a recorded app sends its own backend**, and a decision
+> that can break somebody's application is one to take deliberately rather than
+> under the time pressure of a phase that is nearly over. The rule it was built
+> to is below, and it was written before the first line of injector code. What
+> is *not* built is Tier 2: ingesting OTel spans is an endpoint, a wire format
+> this repo has never parsed and a set of graph edges, and it is worth costing on
+> its own rather than being finished in the tail of the work stream that
+> unblocked it.
 >
 > **3.5 is out of scope as a unit and should be planned as three.** Vue 3,
 > Svelte 5 and React Server Components do not share React's fiber tree and
@@ -292,16 +290,85 @@ Nothing below is ticked on the strength of that branch.
 > of work. Starting one and leaving two would be worse than starting none.
 
 ### Work Stream 3.1: Distributed Trace Correlation
-- [ ] **Causality Trace Header Injection:**
-  - Runtime injector automatically adds `X-DevFlow-Trace-Id` and `traceparent` headers to all outbound requests.
-- [ ] **OpenTelemetry (OTel) Collector Integration (Tier 2):**
-  - Ingest backend spans from Express, NestJS, FastAPI, Go Gin, and Spring Boot.
-  - Link frontend interaction ID → HTTP Request → Controller Span → DB Query Span.
-  - Store all backend span data as edges in the ARKG under the `calls` edge type.
-- [ ] **Tier Model Enforcement:**
-  - Tier 1 (default, zero backend effort): FE-only correlation, response body, error detection, latency
-  - Tier 2 (OTel SDK, one package): full FE → BE → service span correlation
-  - Tier 3 (enterprise): automatic SQL query capture (never prioritized over Tiers 1 & 2)
+
+> **The rule was written before the first line of injector code, the way §1.1's
+> was, and it lives in `src/core/trace/index.ts` where three inputs and an
+> answer can reach it.** What follows is the argument; the module header is the
+> same argument in the place a maintainer will actually be standing.
+>
+> **The hazard, exactly.** A *simple request* — one the browser sends with no
+> preflight — may carry only CORS-safelisted headers. Adding any other header
+> makes a **cross-origin** request non-simple, so the browser sends an `OPTIONS`
+> preflight where it previously sent none; if the backend does not name the
+> header in `Access-Control-Allow-Headers`, the browser **fails the request**
+> and the page's own `fetch` rejects. That is not a degraded recording. That is
+> a working application broken by DevFlow being installed — Invariant 1, and the
+> class of failure that got `v3.2.0` reverted in a different subsystem. There is
+> no falling back from it either: by the time the browser reports the failure,
+> the request the page was waiting on has already rejected.
+>
+> **Same-origin requests are not subject to CORS at all**, and that asymmetry is
+> the whole design. Four rules:
+>
+> 1. **Off by default.** Somebody who upgrades without reading release notes
+>    must not have their traffic changed.
+> 2. **Only while recording.** The patches are installed at `document_start` on
+>    every page, but a header is added only inside a flow — which is the only
+>    window the correlation is for. Ordinary browsing is never modified, and
+>    that is worth more than it costs: it turns "DevFlow is installed" into
+>    "DevFlow is recording", which is a state the user chose seconds ago.
+> 3. **Same-origin freely; cross-origin only for an origin the user named.** An
+>    SPA on `:3000` calling an API on `:8000` is the ordinary case and is *not*
+>    covered by rule 3's first half — a different port is a different origin —
+>    so an allow-list exists, and putting an origin on it is the user saying
+>    "my backend accepts this". Informed consent per backend is the only honest
+>    form this can take: DevFlow cannot discover whether a server allows a
+>    header without sending the request that might fail.
+> 4. **Never overwrite a `traceparent` the page already set.** A page that sends
+>    one has its own tracing, and replacing it would reparent somebody's
+>    production spans under an id their backend has never seen.
+>
+> **`traceparent` and `X-DevFlow-Trace-Id` are two switches, not one**, because
+> they differ in both directions. `traceparent` is a W3C standard a backend may
+> already accept and already allow — more likely to work, and more likely to
+> matter when it is already in use. `X-DevFlow-Trace-Id` is bespoke: no backend
+> accepts it by accident, which makes it strictly likelier to fail a preflight
+> and strictly easier to grep for in a log, which is the whole of its Tier 1
+> value.
+>
+> **The sampled flag is a decision about somebody else's bill.** `traceparent`'s
+> flags byte is `01` — sampled — because an unsampled trace header has no
+> purpose: a backend running OpenTelemetry honours the incoming flag, so `00`
+> would ask it to record nothing and Tier 2 would have nothing to ingest. Said
+> out loud rather than left in a constant, because turning this on makes the
+> user's backend record traces it would otherwise have sampled away. That is a
+> second reason for the default being off, unrelated to CORS.
+>
+> **One id per request**, not per flow and not per step. A W3C trace identifies
+> one distributed operation, so a per-flow id would tell somebody's tracing
+> system that forty unrelated operations were one. The recording already ties a
+> request to its step and does not need the header's help.
+>
+> **What the settings table allowed, and what it did not.** The allow-list wants
+> to be a list of origins and `src/features/settings/fields.ts` has no
+> free-form list type — `levels` is a multi-select over a *fixed* `options`
+> array, and `resolve()` filters anything not in it, so a user's origins would
+> be silently discarded. A sixth field type is expensive and deliberately
+> guarded: `tests/settings-row-shape.test.ts` asserts the five type names and
+> the shape count "so a sixth cannot arrive unnoticed". So the allow-list is a
+> pattern-validated `string`, parsed by a pure function in `core/trace`, and the
+> contract is not bent to fit.
+
+- [x] **Causality Trace Header Injection:** — **shipped, and "automatically … to all outbound requests" is the one phrase that did not survive.** It is off by default, active only while a flow is recording, and it adds nothing to a cross-origin request whose origin the user has not named. Each of those three is a refusal the rule above argues for, and the third is not a caution but the design: there is no way to discover whether a backend allows a header except by sending the request that might fail, and a failed preflight has already rejected the page's own request by the time anyone hears about it.
+
+  Three further refusals, each on its own grounds. A request the page has **already** put a `traceparent` on is left exactly as it was, because overwriting one reparents somebody's production spans under an id their backend has never seen. A `Request` carrying a **body** is left alone, because adding a header means rebuilding it and `new Request(req, { headers })` marks the original as `bodyUsed` — measured rather than assumed, and the reason the ordinary `fetch(url, { body })` *is* traced while the `new Request(url, { body })` form is not. And an id is minted **per request**, never per flow.
+
+  Both `fetch` and `XMLHttpRequest` are covered; the latter is not a legacy corner, since `axios` still uses it in the browser. The XHR path found a pre-existing defect on its way: `open()` never cleared the recorded request headers, so the second request through a reused instance — which is how every long-poll and retry loop is written — was recorded carrying the first one's. It surfaced because a stale `traceparent` in that list made the second request refuse itself as already traced.
+- [ ] **OpenTelemetry (OTel) Collector Integration (Tier 2):** — **not started, and deliberately a separate body of work.** The header is what makes it *possible*; ingesting spans is an endpoint, a parser for a wire format this repo has never touched, and a set of ARKG edges. It is worth costing on its own rather than being finished in the tail of the work stream that unblocked it.
+- [~] **Tier Model Enforcement:**
+  - [x] Tier 1 (default, zero backend effort): FE-only correlation, response body, error detection, latency — **this is what ships, and it has standalone value that does not depend on Tier 2 ever arriving.** That is the test the header had to pass before it was worth changing anybody's traffic for: the id DevFlow puts on the request is the id in the backend's own logs, so a person or a model can go and grep for it. A header nobody can read back is a change to somebody's traffic in exchange for nothing, which is why the id is *rendered* — on failed calls in the walkthrough, in `get_flow_errors`, in `get_step_detail` and in the flow review — and not merely stored.
+  - [ ] Tier 2 (OTel SDK, one package): full FE → BE → service span correlation
+  - [ ] Tier 3 (enterprise): automatic SQL query capture (never prioritized over Tiers 1 & 2)
 
 ### Work Stream 3.2: End-to-End Data Lineage Engine
 - [ ] **Wire-to-Database Inspector:**

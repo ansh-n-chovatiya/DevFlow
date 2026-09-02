@@ -36,6 +36,7 @@
 
 import { compactBody } from '../../core/schema/index.js';
 import { statusClass, withImportedScreenshot } from '../../core/flow/index.js';
+import { describeTrace } from '../../core/trace/index.js';
 import { ACCEPT, firstImage, importScreenshot } from '../../features/screenshots/import.js';
 import { getLocal } from '../../chrome/storage.js';
 import { deleteFlow, renameFlow } from '../../features/flows/store.js';
@@ -548,17 +549,42 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
     headers: Record<string, string>,
     body: string | null,
     meta?: { truncated?: boolean; bytes?: number },
+    trace?: string,
   ): HTMLElement {
     const panel = document.createElement('div');
     panel.className = 'call__panel';
 
     const entries = Object.entries(headers ?? {});
-    if (entries.length === 0 && !body) {
+    // A traced call is never "nothing captured": the id is the one thing on
+    // this panel a reader can take somewhere else.
+    if (entries.length === 0 && !body && !trace) {
       const empty = document.createElement('p');
       empty.className = 'meta';
       empty.textContent = 'Nothing captured.';
       panel.append(empty);
       return panel;
+    }
+
+    /*
+     * Above the headers, because that is what it is: a header this extension
+     * put on the request, and the reader looking for it is looking there.
+     *
+     * The whole sentence rather than the bare id — there is no token budget on
+     * a screen, and an id with nothing saying what to do with it is a string
+     * somebody copies and then wonders about. `describeTrace` owns that
+     * sentence so the panel, the walkthrough and the server never grow three
+     * accounts of one idea.
+     */
+    if (trace) {
+      const label = document.createElement('p');
+      label.className = 'label';
+      label.textContent = 'Trace';
+
+      const value = document.createElement('p');
+      value.className = 'meta';
+      value.textContent = describeTrace(trace);
+
+      panel.append(label, value);
     }
 
     if (entries.length > 0) {
@@ -639,10 +665,12 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
     find(node, '.call__ms').textContent = `${call.durationMs || 0}ms`;
 
     const panels = find(node, '.call__panels');
-    const request = buildBodyPanel(call.requestHeaders, call.requestBody, {
-      truncated: call.requestBodyTruncated,
-      bytes: call.requestBodyBytes,
-    });
+    const request = buildBodyPanel(
+      call.requestHeaders,
+      call.requestBody,
+      { truncated: call.requestBodyTruncated, bytes: call.requestBodyBytes },
+      call.traceId,
+    );
     request.dataset.panel = 'request';
     const response = buildBodyPanel(call.responseHeaders, call.responseBody, {
       truncated: call.responseBodyTruncated,

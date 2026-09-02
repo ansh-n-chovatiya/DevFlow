@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { exportToMarkdown, flowHost, urlPath } from '../src/core/export/markdown.js';
 import { CAPPED_ID } from '../src/core/react/table.js';
-import type { ComponentSource, FlowReact, Step } from '../src/shared/types.js';
+import type { ComponentSource, FlowReact, NetworkCall, Step } from '../src/shared/types.js';
 import { pos0, pos1 } from '../src/core/react/positions.js';
 
 const click = (over: Partial<Step> = {}): Step =>
@@ -140,6 +140,65 @@ describe('exportToMarkdown', () => {
   it('renders notes as a blockquote', () => {
     const md = exportToMarkdown([click({ notes: 'first\nsecond' })]);
     expect(md).toContain('> first\n> second');
+  });
+});
+
+/**
+ * The trace id in the walkthrough, and the decision that keeps it off most
+ * lines.
+ *
+ * The id is only worth anything if a renderer prints it — a field nobody can
+ * see from outside is a change to somebody's outbound traffic in exchange for
+ * nothing. But it is 32 hex characters, and this document is the one that is
+ * budgeted, so printing it beside every healthy call would cost a long
+ * recording thousands of tokens of identifier nobody asked for.
+ *
+ * So the walkthrough prints it on a *failed* call only. Both halves are
+ * asserted, because the second one is a decision: with only the positive test,
+ * a later edit that prints it everywhere passes, and the negative case reads as
+ * an omission nobody meant.
+ */
+describe('exportToMarkdown · trace ids', () => {
+  const TRACE = '4bf92f3577b34da6a3ce929d0e0e4736';
+
+  const called = (over: Partial<NetworkCall>): Step =>
+    click({
+      networkCalls: [
+        {
+          method: 'POST',
+          url: 'https://api.example.com/v1/orders',
+          requestHeaders: {},
+          requestBody: null,
+          status: 200,
+          responseHeaders: {},
+          responseBody: null,
+          durationMs: 12,
+          timestamp: 1,
+          ...over,
+        },
+      ],
+    });
+
+  it('prints the id on a call that failed', () => {
+    const md = exportToMarkdown([called({ status: 500, traceId: TRACE })]);
+    expect(md).toContain(TRACE);
+  });
+
+  it('prints the id on a call that never landed', () => {
+    const md = exportToMarkdown([called({ status: null, traceId: TRACE })]);
+    expect(md).toContain(TRACE);
+  });
+
+  it('leaves it off a healthy call, deliberately', () => {
+    const md = exportToMarkdown([called({ status: 200, traceId: TRACE })]);
+    expect(md).toContain('/v1/orders');
+    expect(md).not.toContain(TRACE);
+  });
+
+  it('says nothing about a trace on a call that carried no header', () => {
+    const md = exportToMarkdown([called({ status: 500 })]);
+    expect(md).toContain('/v1/orders');
+    expect(md).not.toContain('trace');
   });
 });
 

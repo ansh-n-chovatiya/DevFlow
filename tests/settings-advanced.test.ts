@@ -4,19 +4,26 @@
  * The plan's bet is that after five phases of building the mechanism, adding a
  * setting is adding a row to a table — no new markup, no new control, no new
  * screen state. Phase 6 added twenty-eight and the bet held; state capture
- * added six more and it held again, which is the only reason the numbers below
- * moved rather than the file. Two other files hold the
+ * added six more and it held again, and trace headers added three more without
+ * touching a stylesheet — which is the only reason the numbers below moved
+ * rather than the file. Two other files hold the
  * visible half of that: `settings-row-shape.test.ts` renders every entry and
- * asserts the row is one object seventy-three times, and
+ * asserts the row is one object once per entry in the table, and
  * `settings-page.test.ts` opens the Advanced disclosure on the real page and
  * counts what appears.
  *
- * This file holds the half that is not visible: that each of the twenty-eight is
+ * This file holds the half that is not visible: that each of the forty-two is
  * actually *read* by the process it names, and that each says what a bad value
  * costs. A Tier 2 control that does nothing would be worse here than anywhere
  * else on the screen — these are the settings whose symptom is a recording that
  * looks broken, so a user who changes one and sees no effect has no way at all
  * to tell "it did nothing" from "it worked and my recording is worse".
+ *
+ * The three trace settings are the exception this file has to say out loud,
+ * because they break that sentence rather than extending it: their symptom is
+ * not a recording that looks broken, it is the recorded *application* breaking.
+ * They are the only rows in the table that change what the page sends, and
+ * everything asserted about them below follows from that.
  */
 
 import { globSync, readFileSync } from 'node:fs';
@@ -47,7 +54,7 @@ import {
 const tier2 = (FIELDS as readonly Field[]).filter((field) => field.tier === 2);
 
 describe('the table', () => {
-  it('wires all thirty-nine, so the disclosure holds no control that does nothing', () => {
+  it('wires all forty-two, so the disclosure holds no control that does nothing', () => {
     /*
      * the list reads as twenty-two because it pairs four of them off —
      * `BUNDLE_CACHE_ENTRIES / BUNDLE_CACHE_BYTES`, `REACT_BUFFER_SIZE / _TTL_MS`
@@ -72,21 +79,30 @@ describe('the table', () => {
      * them is the only number in this table whose cost is paid inside the
      * user's own click.
      *
-     * The last two are the mutation observer's, and they are two rather than
-     * one because they bound different things: `recording.domMutationCap` is
+     * The two after those are the mutation observer's, and they are two rather
+     * than one because they bound different things: `recording.domMutationCap` is
      * how much *work* one step may cost and is enforced in the observer's own
      * callback, and `recording.domMaxChanges` is how much of the *recording*
      * one step may spend and is enforced after the folding. A single number set
      * low enough to keep a step readable would stop watching after a dozen
      * records; set high enough to watch a real interaction it would print four
      * hundred lines.
+     *
+     * The last three are the trace headers, and they are Tier 2 for a reason
+     * none of the others share. Everything above is Tier 2 because a bad value
+     * degrades a recording in a way that looks like a bug; these are Tier 2
+     * because a wrong value breaks the application being recorded. Tier 1 is
+     * the wrong shelf for a switch whose failure is somebody's own `fetch`
+     * rejecting, and Tier 3 — a constant with a paragraph next to it — is wrong
+     * too, because whether a backend accepts a header is a fact about that
+     * backend and only its owner knows it.
      */
-    expect(tier2).toHaveLength(39);
+    expect(tier2).toHaveLength(42);
     expect(tier2.filter((field) => field.wired !== true)).toEqual([]);
     expect(WIRED).toHaveLength(FIELDS.length);
   });
 
-  it('gives every one of them a consequence, and a range for it to be true in', () => {
+  it('gives every one of them a consequence, and all but one a range for it to be true in', () => {
     /*
      * The phase's own instruction: these need their consequence lines more than
      * anything in Tier 1 does. A setting whose cost cannot be stated in one
@@ -97,9 +113,34 @@ describe('the table', () => {
      * consequences: a Tier 2 default is a working value by definition, so
      * "modified" is never the honest condition here — what matters is which way
      * it was moved and how far.
+     *
+     * `network.traceOrigins` is the one exception, and it is an exception to the
+     * *threshold* rule only. It still states its cost — in its description,
+     * where every reader sees it rather than only the reader who has already
+     * typed something. The rule cannot apply to it as written: `below` and
+     * `above` are numeric and this is a list of origins, and the honest
+     * condition — "the list is not empty" — is the bare-consequence rule, which
+     * `settings-view.test.ts` deliberately holds to three named keys with the
+     * argument written beside each. A `consequenceWhen` that can never be true
+     * would be worse than either: a Tier 2 row whose warning is invisible at
+     * every value the user can enter, and nothing to say so.
+     *
+     * The two switches it serves do carry thresholds, and they carry the CORS
+     * sentence, which is the cost this row is about — so the warning a user
+     * needs is on screen the moment either switch goes on.
      */
-    expect(tier2.filter((field) => !field.consequence).map((f) => f.key)).toEqual([]);
-    expect(tier2.filter((field) => !field.consequenceWhen).map((f) => f.key)).toEqual([]);
+    const BARE = ['network.traceOrigins'];
+
+    expect(tier2.filter((f) => !f.consequence).map((f) => f.key)).toEqual(BARE);
+    expect(
+      tier2.filter((f) => !f.consequenceWhen && !BARE.includes(f.key)).map((f) => f.key),
+    ).toEqual([]);
+
+    // And the exception earns itself: the sentence a `consequence` would have
+    // carried is in the description instead, rather than missing.
+    expect(field('network.traceOrigins').description).toContain('Same-origin');
+    expect(field('network.traceHeader').consequence).toContain('preflight');
+    expect(field('network.traceparent').consequence).toContain('sampled');
   });
 
   it('says nothing at the default, and speaks when the value goes the wrong way', () => {
@@ -115,7 +156,7 @@ describe('the table', () => {
     expect(consequenceApplies(field('react.bundleCacheBytes'), 400 * 1024 * 1024, true)).toBe(true);
   });
 
-  it('freezes the twenty-three that shape a recording, and leaves the rest live', () => {
+  it('freezes the twenty-six that shape a recording, and leaves the rest live', () => {
     /*
      * The freeze, applied to Tier 2. A setting the *recorder* reads while a recording
      * runs has to be frozen or the flow describes two rules at once; a setting
@@ -144,6 +185,15 @@ describe('the table', () => {
      * observer watched twenty are not comparable, and `StepDomChanges.capped`
      * says the observer stopped without being able to say what it stopped at.
      *
+     * The three trace settings are frozen on a different argument, and it is
+     * the strongest one in this list. Every freeze above is about a recording
+     * being comparable to itself; this one is about a reader being able to tell
+     * that the recorded application's own traffic was modified. Injection
+     * happens only while a flow is recording, so the switch is snapshotted at
+     * `START_RECORDING` and stamped on the flow — and a flow whose header was
+     * switched on halfway through would carry two answers to "did these
+     * requests go out with a header on them" and be able to print only one.
+     *
      * The count in this test's name has been wrong before. It is asserted
      * below, so it cannot silently drift again — but a number in a sentence is
      * not asserted by anything, and the sentence is the half a reader believes.
@@ -152,6 +202,9 @@ describe('the table', () => {
     expect(frozenT2).toEqual([
       'console.logArgCap',
       'console.stackFrames',
+      'network.traceHeader',
+      'network.traceOrigins',
+      'network.traceparent',
       'react.bufferSize',
       'react.bufferTtlMs',
       'react.chainTimeoutMs',

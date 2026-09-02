@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * The setting row is the same object seventy-three times.
+ * The setting row is the same object once per field in the table.
  *
  * The whole design rests on it, so this
  * asserts it rather than hoping. Every entry in `fields.ts` is rendered, reduced

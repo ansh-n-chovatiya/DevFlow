@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+**DevFlow can now tag the requests a recorded page makes with a trace id, and
+this is the first thing it has ever done that is not observation.** Everything
+before it watches. With `network.traceHeader` on, an outbound request carries
+`X-DevFlow-Trace-Id` holding the same id the recording shows — so the request in
+front of you can be found in your own backend's logs by searching for that id.
+`network.traceparent` sends W3C Trace Context instead, or as well, so a backend
+running OpenTelemetry files the request under that id without being taught
+anything.
+
+**Both are off by default, and only ever active while a flow is recording.** The
+patches on `fetch` and `XMLHttpRequest` have always been installed on every page
+at `document_start`; what is new is scoped to the window you opened deliberately,
+so ordinary browsing is never modified. That turns "DevFlow is installed" into
+"DevFlow is recording", which is a state you chose seconds ago.
+
+**Cross-origin requests are left alone unless you name the origin, and that is
+the whole design rather than a caution.** A request that gains a
+non-CORS-safelisted header stops being a *simple* request, so the browser sends
+an `OPTIONS` preflight it did not send before — and a backend that does not name
+the header in `Access-Control-Allow-Headers` **fails the request outright**. That
+is a working application broken by DevFlow being installed, and there is no
+falling back from it: by the time the browser reports the failure, the page's own
+`fetch` has already rejected. Same-origin requests are exempt from CORS entirely
+and cannot fail this way, so they are traced freely; everything else waits for
+`network.traceOrigins`, because naming an origin is you saying that backend
+accepts the header, and there is no way to discover that except by sending the
+request that might fail.
+
+**Three more refusals, each for its own reason.** A request the page has already
+put a `traceparent` on is left exactly as it was — overwriting one would reparent
+somebody's production spans under an id their backend has never seen. A `Request`
+carrying a body is left alone, because adding a header means rebuilding it and
+`new Request(req, { headers })` marks the original as `bodyUsed` — measured, not
+assumed. And a new id is minted per request, never per flow: a W3C trace names
+one distributed operation, so a shared id would tell somebody's tracing system
+that forty unrelated operations were one.
+
+**`traceparent` asks a backend to record a trace it would otherwise have sampled
+away.** The flags byte is `01`, because an unsampled trace header has no purpose
+— but that is a real cost on somebody's observability bill, and it is a second
+reason the switch is off by default that has nothing to do with CORS.
+
+**A reused `XMLHttpRequest` no longer reports the previous request's headers.**
+`open()` never cleared them, so the second request through one instance — which
+is how every long-poll and retry loop is written — was recorded carrying the
+first one's. Found because a stale `traceparent` in that list made the second
+request refuse itself as already traced.
+
 **A recording now carries the commit it was made at, and the knowledge graph's
 `git_sha` columns are no longer always NULL.** They were declared on five tables
 and written by nothing — `arkg.js` used them as the example of the defect its

@@ -111,6 +111,44 @@ export const BODY_CAP = 51_200;
 /** Bodies longer than this are replaced by an inferred schema in exports. */
 export const SCHEMA_THRESHOLD = 1024;
 
+// ── Trace headers ────────────────────────────────────────────────────────────
+//
+// The three defaults that describe the one thing this product does to somebody
+// else's traffic. Everything else here bounds what is written down; these decide
+// whether an outbound request leaves the page carrying a header it would not
+// otherwise have carried, and the argument for each is in `core/trace`.
+//
+// All three ship off or empty, and that is the substance rather than a
+// formality. Past same-origin, a request that gains a header the backend does
+// not list in `Access-Control-Allow-Headers` is a request the browser fails
+// outright — a working application broken by an extension being installed — and
+// there is no falling back from a preflight that has already rejected. So the
+// upgrade path has to be "nothing changed", and the allow-list has to be the
+// user naming a backend they know accepts it.
+
+/** Whether an outbound request may carry `X-DevFlow-Trace-Id` while recording. */
+export const TRACE_HEADER_ENABLED = false;
+
+/**
+ * Whether an outbound request may carry a W3C `traceparent` while recording.
+ *
+ * A second answer to what looks like one question, for the reason `core/trace`
+ * gives: a standard header a backend may already accept is more likely to work
+ * *and* more likely to matter, because the flag it carries asks an
+ * OpenTelemetry backend to record a trace it would otherwise have dropped.
+ */
+export const TRACEPARENT_ENABLED = false;
+
+/**
+ * Cross-origin destinations the user has named as accepting a trace header.
+ *
+ * Empty, so nothing but same-origin — which CORS does not apply to at all — can
+ * be given one. There is no default that could be right here: whether a backend
+ * accepts the header is a fact about that backend, and DevFlow cannot discover
+ * it without sending the request that might fail.
+ */
+export const TRACE_ORIGINS = '';
+
 /** Where recorded flows are POSTed when the MCP integration is enabled. */
 export const DEFAULT_MCP_URL = 'http://127.0.0.1:7734/flows';
 
