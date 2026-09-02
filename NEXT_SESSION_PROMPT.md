@@ -1,48 +1,52 @@
 # DevFlow — Phase 3, continued
 
 Read `CLAUDE.md`, `ROADMAP_AND_PHASES.md` (start at "Status key", then the
-**Phase 3** preamble and **Work Streams 3.1 and 3.2** in full) and
+**Phase 3** preamble and **Work Streams 3.2 and 3.3** in full) and
 `graphify-out/GRAPH_REPORT.md` before touching anything. This file is the
 handoff; the roadmap is the truth about what is done.
 
 ## Where the project is
 
-**You are on `main`, working tree clean, `npm run verify` green: 142 test files,
-3019 tests.** Two branches are merged into it and neither still exists as work in
-progress: `phase-3/git-lineage` (Work Stream 3.4 and the Phase 0 git items) and
-`phase-3/trace-headers` (Work Stream 3.1 Tier 1).
+**You are on `main`, working tree clean, `npm run verify` green: 145 test files,
+3152 tests.** Three branches have been merged and none is work in progress:
+`phase-3/git-lineage` (3.4 and the Phase 0 git items), `phase-3/trace-headers`
+(3.1 Tier 1) and `phase-3/otel-ingest` (3.1 Tier 2, and the preflight
+measurement).
 
-**`main` is two commits ahead of `origin/main`** — the 3.4 work reached the
-remote, the 3.1 work has not. Pushing has not been asked for since. Do not push
-without being asked, and check `git rev-list --count origin/main..main` rather
-than trusting this sentence, which was true when it was written.
+**`main` is two commits ahead of `origin/main`** — Tier 2 has not reached the
+remote. Pushing has not been asked for. Do not push without being asked, and
+check `git rev-list --count origin/main..main` rather than trusting this
+sentence, which was true when it was written.
 
-**Phases 0–2 are finished, and now genuinely so.** The three items that were
-blocked on Phase 3 — `git_sha`, `git_commits`, `changed_in` — are closed. What is
-left in those phases is five refusals with the argument on the record, listed at
-the foot of this file.
+**Phases 0–2 are finished.** What is left in them is five refusals with the
+argument on the record, listed at the foot of this file.
 
-**Phase 3: 3.4 is shipped, 3.1's Tier 1 is shipped, and 3.2, 3.3 and 3.5 are not
-started.** 3.1's Tier 2 — ingesting OpenTelemetry spans — is the one piece of a
-started work stream left undone, and it was left deliberately: it is an endpoint,
-a wire format this repo has never parsed and a set of graph edges, and it is
-worth costing on its own rather than being finished in the tail of the work
-stream that unblocked it. Nothing among the rest is blocked by anything else.
+**Phase 3: 3.1 and 3.4 are shipped; 3.2, 3.3 and 3.5 are not started.** 3.1 is
+now complete through Tier 2 — the header goes out, the spans come back, and the
+two are joined. Tier 3 is `[~]` and the distinction is written down: a span
+carrying `db.query.text` is rendered, but that is Tier 2 data that happens to
+describe a query, not DevFlow instrumenting a database.
 
 > **Run `npm run verify` and read its exit code, not its tail.**
 > `npm run verify 2>&1 | tail -20` reports *`tail`'s* exit code, which is always
 > 0. Use `npm run verify > /tmp/v.log 2>&1; echo "EXIT=$?"` and believe the
-> number.
+> number. **`${PIPESTATUS[0]}` does not work either** — this shell is zsh, where
+> the array is `$pipestatus[1]` and the bash spelling silently expands to the
+> empty string. It looks exactly like a passing gate.
 >
 > **Never `git checkout -- <file>` to undo a mutation you made for a red-check.**
 > A checkout restores `HEAD`, not the tree, so it silently reverts any
-> *uncommitted* work in that file. Snapshot the file's text and write it back —
-> four lines of Python.
+> *uncommitted* work in that file. Snapshot the file's text and write it back.
+>
+> **`git diff --stat <path>` proves nothing about a file git is not tracking.**
+> It returns empty for an untracked file and for a perfectly restored one, and
+> the two are indistinguishable. A whole new directory — `src/core/otel/` was
+> one — is untracked until its first commit, so the obvious restoration check
+> passes vacuously. **Compare checksums against your snapshot instead.** This
+> was caught by a subagent auditing its own report, not by the parent.
 >
 > **If you run subagents, give each a private scratch directory.** The session
-> scratchpad is shared. Two agents wrote `mutate.py` to the same path last
-> session, one silently executed the other's script, and its first mutation run
-> read as a survival when nothing had been mutated at all.
+> scratchpad is shared.
 
 A previous AI ("Antygravity") built Phase 0–2 badly and it shipped as v3.2.0. An
 audit found the MCP server would not boot, typecheck was red, 29 tests failed,
@@ -53,175 +57,161 @@ source of *ideas*, never of code to copy.
 
 ---
 
-## What the last two sessions built
+## What the last session built
 
-### Work Stream 3.1 — the trace header, and the six refusals that make it safe
+### The preflight, finally watched — 3.1's one unmeasured claim is closed
 
-**This is the first thing DevFlow does that is not observation**, so read
-`src/core/trace/index.ts`'s header before touching any of it. The rule was
-written before the first line of injector code and it is a pure module three
-inputs can be handed, for exactly the reason `core/replay` is.
+The previous handoff named it: the whole work stream rested on the belief that a
+cross-origin request carrying a non-safelisted header preflights, and fails when
+the backend does not allow it. It had been checked from the specification and
+from the *server* side with `curl`, neither of which watches a browser decide.
 
-The short version: off by default; only while a flow is recording; same-origin
-freely; cross-origin only for an origin the user named; never over a
-`traceparent` the page already set; never by rebuilding a `Request` that carries
-a body; and a fresh id per request. `traceparent` and `X-DevFlow-Trace-Id` are
-two switches because they carry different risk in both directions.
+**It now has, against real Chromium**, and the method is recorded in
+`src/core/trace/index.ts`'s header so it reproduces in ten minutes: two origins,
+an API that answers the preflight and allows the origin and method on *both*
+paths, differing only in whether `Access-Control-Allow-Headers` names the
+header. Every clause held. Two findings sharpen the rules rather than confirm
+them, and both are in the header:
 
-**The one thing that was not measured, and should be.** The claim the whole work
-stream rests on — that adding a non-safelisted header to a cross-origin request
-makes the browser preflight it, and that a backend which does not allow the
-header fails the request — was verified only as far as `curl` reaches, because
-the Chrome extension was not connected. The design does not depend on it (the
-rule is safe whether or not the preflight fails), but **nobody has watched Chrome
-do it**. If you have a browser to hand, it is a ten-minute experiment: two local
-origins, a page on one fetching the other with and without the header, and the
-API allowing the header on one path and not the other. That is worth doing before
-Tier 2 is built on top of it.
+- **A failed preflight leaves no server-side evidence.** The API logged the
+  `OPTIONS` and never a `GET`. Somebody whose app breaks this way sees a failed
+  fetch in the browser and *nothing whatsoever* in their backend logs.
+- **DevFlow cannot observe the preflight.** Page-level instrumentation saw an
+  outbound `GET` and then `net::ERR_FAILED`; Chromium makes the preflight in the
+  network service and never surfaces it as a page request, and DevFlow patches
+  `fetch` and `XMLHttpRequest` *in the page*. Any future "did our header break
+  this?" diagnostic has the rejection and nothing else.
 
-**A pre-existing bug this work surfaced, and its shape is the lesson.** A reused
-`XMLHttpRequest` never cleared its recorded request headers on `open()`, so the
-second request through one instance — which is how every long-poll and retry loop
-is written — was recorded carrying the first one's. It was found only because a
-stale `traceparent` in that list made the second request refuse itself as already
-traced. The `loadend` listener a few lines away already carries a comment about a
-*different* bug of the same shape. **Instance reuse is this file's blind spot.**
+**The browser is reachable from here.** The Claude-in-Chrome extension was not
+connected, but Playwright 1.62.1 with a real Chromium is installed on this
+machine (resolvable out of the npx cache; `find ~/.npm/_npx -path
+'*node_modules/playwright/index.js'`). For any claim about *browser* behaviour
+that is as good as the extension — it is the same network stack.
 
-### Work Stream 3.4 — the commit stamp, and the four things it settled
+### Work Stream 3.1 Tier 2 — spans, and four facts that had to be measured
 
-#### The commit stamp, and what it does not claim
+Read `src/core/otel/index.ts`'s header before touching any of it. Everything was
+measured against a real `@opentelemetry/sdk-trace-node` exporter pointed at a
+capturing endpoint, and **the captured deliveries are the test fixture**, inlined
+in `tests/otel.test.ts`, `tests/otel-store.test.ts` and `tests/arkg-otel.test.ts`.
+Three of the four would have been got wrong by reasoning:
 
-`src/core/git/index.ts` is the pure half — the decisions — and
-`mcp-server/git.js` is the spawning. Read the first file's header before
-extending any of this; it carries four arguments you would otherwise have to
-re-derive.
+- **Spans arrive leaf-first.** A span is exported when it *ends*, and a child
+  ends before its parent — the `SELECT` at depth three arrived in the first
+  delivery, the root server span in the third. Nothing may assume a parent has
+  been seen.
+- **The root's parent will never arrive.** The backend parents its top span on
+  the `traceparent` DevFlow sent, and DevFlow is not an OTel SDK and emits no
+  spans. So `buildSpanTree` roots on **"parent not present"**, not on "no
+  parent" — a one-word difference that returns an empty forest for every good
+  trace if you get it wrong.
+- **`startTimeUnixNano` does not fit in a `number`.** It arrives as a JSON
+  *string* two orders of magnitude past `Number.MAX_SAFE_INTEGER`. Subtracted as
+  `BigInt`; only the difference crosses back.
+- Ids are hex in OTLP/JSON and raw bytes in protobuf, which is why this reads
+  JSON only.
 
-The one worth repeating here: **the stamp is the state of the checkout the
-server runs in when the recording arrived, and not the build that served the
-page.** Those coincide on `localhost` and are unrelated on staging.
-`recordedLocally()` and `commitCaveats()` exist so that every surface printing a
-commit says which of the two it is looking at. If you add a fifth surface, print
-the caveats with it — the field was deliberately wired into `list_flows` (which
-returns whole metas, so it came free), the `get_flow` header, `flow.md` and
-`compare_flows_across_deploys`, and `get_flow_summary` was deliberately left out
-because its whole budget is answering *did this break*.
+**A span is an event and the graph needed something that outlives one.** This is
+the `caused_by` rule and it bites hardest here: a node per span would stop the
+ARKG being an accumulation and make it a log. `services` and `operations` are
+the two node kinds; a span is an observation *of* an operation exactly as a call
+is an observation of an endpoint. **`frequency` counts recordings and the timing
+window counts spans**, deliberately — forty spans of one handler in one request
+is one thing the recording showed, but forty real measurements of a
+distribution. Do not "fix" that to agree.
 
-**A dirty tree records the SHA on the flow and writes no `git_sha` anywhere in
-the graph.** `joinableSha()` is that rule, in one expression, deliberately.
+**`DEVFLOW_OTEL=1`, the opposite default from `DEVFLOW_GIT`**, and the argument
+is in `mcp-server/otel.js`'s header. Every other write endpoint on that port is
+guarded by `extensionOrigin` and **this one cannot be** — the sender is the
+user's own backend, which has no extension origin and never will.
 
-#### `git` runs without `replay_flow`'s gate, and the argument is on the record
+### Three gaps the parallel agents found in files they did not own
 
-It reads, its argv is fixed, and the only non-literal argument is a commit
-`isShaPrefix()` has vouched for. `DEVFLOW_GIT=0` is the inverse switch. The full
-argument is at the top of `mcp-server/git.js`. **If you add a second command
-there, it takes a fixed argv or a validated hex, and nothing else.**
+This is the part worth copying. Each agent owned a disjoint file set and was
+asked to *report* rather than fix anything outside it. Every one of the three
+was real, and none would have been found by the agent that owned the file:
 
-#### 3.4 is a join, not a second comparison
+- **Retention never reached the new node kinds.** Services and operations are
+  the ones that most need it: every other node is created by somebody recording,
+  so the graph grows at the rate a person works, while these are created by a
+  span arriving on an endpoint nothing on the machine paces.
+- **A graph fed only by an exporter reported as empty.** Since spans normally
+  arrive *before* the recording, "services and no recordings" is the ordinary
+  intermediate state, and it was indistinguishable from a fresh install.
+- **`mcp-server/otel.js` would have shipped unpublished.** Worse than the other
+  five files in that list: a missing `otel.js` degrades into a *wrong answer*
+  ("span ingest is off") rather than into silence, so the user turns the
+  variable on, sees the same sentence, and has no thread to pull.
 
-`compare_flows` already did the hard half. The roadmap's
-`compare_flows_across_deploys(flowId, sha1, sha2)` signature does not survive
-contact and the correction is in the roadmap: a flow id names one recording made
-at one commit, so the tool takes a flow **name**.
-
-The output has four sections and **three of them are observations and the fourth
-is a shortlist**, which is stated in the answer in those words and asserted in
-`tests/deploy.test.ts`. Do not let a later change blur that line.
-
-#### Two bugs the tests found, worth knowing about because of their shape
-
-Both were found by mutation-testing rather than by reading, and both had passed
-review:
-
-- `unquotePath` never decoded an octal escape — `i` had already advanced past the
-  backslash, so the gathering loop failed on its first test and emitted the
-  digits literally. Every non-ASCII filename silently failed to match.
-- `recordedLocally` tested `host === '::1'` under a comment claiming `new URL`
-  strips the brackets from an IPv6 literal. It does not; `hostname` is `[::1]`,
-  so the branch was dead and every IPv6 loopback recording was caveated as
-  remote.
-
-**Both were comments asserting a fact about a foreign API that nobody had run.**
-Phase 3 touches more foreign formats than any phase so far. Print the real shape.
+All three are fixed and covered by tests that go red without them.
 
 ---
 
 ## Phase 3, and what to do next
 
-### Do 3.1's Tier 2, or 3.2 — and 3.2 is the cheaper of the two
+### 3.2 is now unblocked, and it is the obvious next thing
 
-**Tier 2 is ingesting OpenTelemetry spans**, which is what turns the header
-already going out into the FE → BE → DB chain the roadmap promises. It is a
-receiver endpoint, a parser for the OTLP wire format, and `calls` edges in the
-ARKG. Two things to settle before writing any of it: whether spans arrive by
-push (a collector exporter pointed at this server) or by pull, and what happens
-to a span whose trace id matches no recording — the `caused_by` rule says both
-ends must project onto a node the graph already keys, and a span from a request
-DevFlow never saw has only one end.
-
-Note the header is only useful to Tier 2 if the backend records the trace, which
-is why `traceparent`'s sampled flag is `01` — and why turning it on costs the
-user money on their own observability bill. That is on the record in
-`core/trace`'s header; do not quietly re-decide it.
-
-**3.2's frontend half is cheaper and is mostly honesty work** — see the table
-below. `get_value_provenance` already finds one value across four layers; what
-it cannot do is say anything about the backend, and saying *that* clearly is most
-of the remaining work until Tier 2 exists.
-
-### 3.2 and 3.3 overlap tools that already ship
-
-Read these before designing a new tool, or you will build a second one beside a
-working first — which is the mistake 3.4 was written to avoid and which this
-package has already made once, with two markdown renderers.
+The previous handoff's table said 3.2's gap was "the backend half, and only Tier
+2/3 can supply it". **Tier 2 now supplies it.** What exists:
 
 | Roadmap asks for | What already exists | The actual gap |
 | --- | --- | --- |
-| **3.2** `get_full_lineage(domNodeId)` | `get_value_provenance` — the same value found across response body, store write, component and element, with the mechanism's limits stated in the reply | The backend half (controller, SQL), and only Tier 2/3 can supply it. And a recording has **no DOM node ids** — an element is described, not addressed. `domNodeId` in the roadmap is not a thing that exists. |
-| **3.3** `get_living_architecture()` | `get_app_architecture` — the accumulated graph across every recording and pick | "Real-time" and "currently mounted" are the gap, and they are a **live connection to an open page**, not a graph query. A different mechanism from everything shipped so far, and worth costing before promising. |
+| **3.2** `get_full_lineage(domNodeId)` | `get_value_provenance` — one value across response body, store write, component and element. And now `get_backend_trace` — the span tree under the request | Joining the two. A recording still has **no DOM node ids** — an element is described, not addressed — so `domNodeId` in the roadmap is not a thing that exists, and the correction belongs in the roadmap the way 3.4's signature correction did. |
+
+**Do not build a third tool beside those two.** That is the mistake this
+repository has already made once with two markdown renderers, and 3.4 was
+written to avoid it. The honest shape is almost certainly `get_value_provenance`
+gaining a fifth layer — the backend — when the step's call carries a trace id
+that joined. Its header already argues the four-layer ordering as "the direction
+a value travels in a React application"; a controller and a query are the next
+two steps in that same direction, and the module's central discipline (**this
+finds; it does not trace**) has to survive the extension. A value found in a
+response body and also in a `db.query.text` is two sightings, not a lineage.
+
+### 3.3 is a different mechanism and still worth costing before promising
+
+`get_app_architecture` is the accumulated graph. "Real-time" and "currently
+mounted" are a **live connection to an open page**, not a graph query — nothing
+shipped so far works that way.
 
 ### 3.5 is three work streams and should be planned as three
 
 Vue 3, Svelte 5 and React Server Components do not share React's fiber tree and
-nothing in `src/core/react/` transfers. Each adapter is a Phase-1-sized body of
-work. Treat 3.5 as out of scope unless told otherwise, and say so rather than
-starting one and leaving two.
+nothing in `src/core/react/` transfers. Treat 3.5 as out of scope unless told
+otherwise, and say so rather than starting one and leaving two.
 
-### Adding a setting, now that 3.1 has actually done it
+---
 
-`src/features/settings/fields.ts` is the one table — a setting not in it does not
-exist — and `docs/CONTRACTS.md` §3.6 enumerates the prefixes each concept owns,
-with §3 and §4 **frozen**. What that costs in practice, learned the expensive
-way:
+## Loose ends worth an hour, none of them blocking
 
-- **There is no free-form list type, and do not add one.** `levels` is a
-  multi-select over a *fixed* `options` array and `resolve()` filters out
-  anything not in it, so a user-authored list would be silently discarded.
-  `tests/settings-row-shape.test.ts` asserts the five type names and the shape
-  count specifically so a sixth cannot arrive unnoticed. 3.1's origins allow-list
-  is a pattern-validated `string` parsed by a pure function in `core/trace`, and
-  **the pattern must be no stricter than the parser is forgiving** — a value the
-  pattern rejects resolves back to the default, and the visible symptom is a
-  feature that silently never happens.
-- **Two test files assert counts in prose and in test names**, not only as
-  integers: `tests/settings-advanced.test.ts` (Tier 2 count, and the frozen
-  `recorded` array) and `tests/settings-agent-push.test.ts` (the exact sorted
-  `AgentConfig` key list). Update the sentences, not just the numbers — the file
-  says so about itself, having been wrong before. Several *other* files carried
-  counts that had been stale for many sessions; those are now written durably
-  ("every row", not "seventy-three") rather than renumbered, which is the fix
-  that does not come back.
-- **`recorded: true` is a real decision**, not boilerplate: it freezes the
-  setting at `START_RECORDING` and stamps it on the flow. 3.1's three are
-  recorded because injection only happens while recording and a reader of a
-  recording must be able to tell its requests carried a header.
-- Run `npm run build:settings`; the generated JSON is committed and compared
-  key-for-key.
-
-Note that neither the git work nor the trace work needed a setting for its
-*machine* half: `DEVFLOW_GIT`, `DEVFLOW_PROJECT_ROOT` and `DEVFLOW_REPLAY` are
-environment variables on the server's own environment, deliberately, because
-`POST /config` is reachable by any page the browser visits. **A machine-level
-capability is not a setting.** A per-recording preference is.
+- **`explain_feature` cannot see backend nodes.** `EntityKind` in
+  `src/core/navigator/index.ts` has six kinds and no `service` or `operation`,
+  and `NAVIGATOR_NODE_TYPE` in `mcp-server/arkg.js` has no arm for them — so a
+  service is listed by `get_app_architecture` and walked onto by
+  `getNeighbours` (which labels it correctly) and cannot be found by name. This
+  is a **named gap, not a refusal**; it was left because a half-scored entity
+  kind in a matcher whose whole risk is overstating what it knows is worse than
+  an absence somebody can see.
+- **OTLP/protobuf is refused with a `415`** naming the one line that fixes it.
+  A decoder is a second wire format to get exactly right and a subtly wrong
+  varint does not throw — it writes a plausible number into somebody's graph.
+  If you ever build it, real protobuf bytes are trivial to recapture: the
+  emitter is described in `core/otel`'s header.
+- **`componentTable` in `mcp-server/server.js:974` is dead** — still no caller,
+  noticed six sessions ago. Somebody should.
+- **Every call in the flow review draws four `.call__panel` elements, two
+  permanently empty.** `src/viewer.html`'s `<template id="tpl-call">` ships
+  `data-panel="request"` and `data-panel="response"` placeholders and `buildCall`
+  appends its own two instead of filling those. Harmless on screen; a trap for a
+  test, because a naive `querySelector('.call__panel[data-panel="request"]')`
+  matches the empty one and passes against a renderer printing nothing.
+  `tests/trace-render.test.ts` selects `[data-active]` and says why.
+- **`compiler-plugin` is `private: true` and unpublished**, and has never been
+  run against a real application's build. `sync-version.mjs` and
+  `tests/versions.test.ts` keep it in step, so publishing is one field — but the
+  honest gate is running it against a real app once.
+- **SWC is not covered and there is no port.** `@vitejs/plugin-react-swc` and
+  Next.js take no Babel plugin. The README says so rather than implying coverage.
 
 ---
 
@@ -233,9 +223,7 @@ capability is not a setting.** A per-recording preference is.
 not an omission. To overturn one, the argument to beat is in the roadmap.
 
 - **Module-level Zustand stores** (1.2) — refused on measurement against React
-  19.2.8 and Zustand 4.5.7/5.0.15. What a consumer's fiber offers is that
-  component's *selection*; the union of selections is a fact about the route the
-  recording visited. §1.2 names the evidence that would overturn it.
+  19.2.8 and Zustand 4.5.7/5.0.15. §1.2 names the evidence that would overturn it.
 - **Periodic layout snapshots** (2.1) — a timer reading layout forces a reflow on
   every recorded page, and a snapshot taken between steps belongs to no step.
 - **`causedBy` stamping** (2.1) — 1.3 derives the chain from facts the flow
@@ -244,65 +232,78 @@ not an omission. To overturn one, the argument to beat is in the roadmap.
 - **Generated store assertions in E2E specs** (2.1) — a fiber walk pasted into
   somebody's repo goes red when React moves an internal, reporting a bug in their
   app that is not there.
-- **Patch generation** (2.4) — DevFlow is not a model. Everything a model needs to
-  write the patch is in place.
+- **Patch generation** (2.4) — DevFlow is not a model.
 
 ---
 
-## Loose ends worth an hour, none of them blocking
+## Things earlier sessions learned the hard way
 
-- **`componentTable` in `mcp-server/server.js` is dead** — no caller. Noticed five
-  sessions ago while working nearby, still not removed. Somebody should. (The
-  stale `mcp-server/arkg.js.bak` that sat beside it is gone.)
-- **Every call in the flow review draws four `.call__panel` elements, two of them
-  permanently empty.** `src/viewer.html`'s `<template id="tpl-call">` already
-  ships `data-panel="request"` and `data-panel="response"` placeholders, and
-  `buildCall` appends its own two into `.call__panels` rather than filling those.
-  Harmless on screen, because the CSS keys off `data-active` — but it is a trap
-  for a test: a naive `querySelector('.call__panel[data-panel="request"]')`
-  silently matches the empty one and passes against a renderer printing nothing.
-  `tests/trace-render.test.ts` selects `[data-active]` and says why.
-- **`compiler-plugin` is `private: true` and unpublished.** It has never been run
-  against a real application's build. `sync-version.mjs` and
-  `tests/versions.test.ts` keep it in step, so publishing is one field rather than
-  a rediscovery — but the honest gate is running it against a real app once.
-- **SWC is not covered and there is no port.** `@vitejs/plugin-react-swc` and
-  Next.js take no Babel plugin, so the plugin serves a real but partial audience.
-  The README says so rather than implying coverage.
-
----
-
-## Three things earlier sessions learned the hard way
-
-- **`replay_flow` is the first tool that executes code.** Off behind
-  `DEVFLOW_REPLAY=1`, and it refuses to install anything. If you add a second such
-  tool, copy that shape rather than inventing a new one; both sides of the gate
-  are asserted against two real servers in `tests/mcp-repair-loop.test.ts`,
-  because a gate argued for in a comment is not a gate. **`mcp-server/git.js` is
-  deliberately not that shape, and its header says why** — reflex, not judgement,
-  is what would have put it behind the same switch.
+- **Measure the internals rather than reasoning about them.** This is now the
+  most load-bearing habit in the project. Ten minutes of throwaway git
+  repositories settled 3.4's parser before a line of it was written; a throwaway
+  OTel service settled every one of Tier 2's four wire facts, three of which
+  reasoning would have got wrong; a two-origin Playwright probe closed 3.1's
+  last open claim. **Foreign formats and foreign APIs are where this codebase's
+  bugs come from**, and every one of them was found by printing the real shape.
+- **Know what you did not measure, and say so.** An unmeasured claim you have
+  named is a known gap; one you have not is a belief.
+- **Comments asserting a fact about a foreign API that nobody ran are the
+  recurring defect.** Three now: `new URL` and IPv6 brackets, `new Request` and
+  `bodyUsed`, and `blob:` origins. Two were load-bearing and false.
+- **`replay_flow` is the first tool that executes code**, off behind
+  `DEVFLOW_REPLAY=1`. `mcp-server/git.js` is deliberately *not* that shape and
+  its header says why. `mcp-server/otel.js` is a third shape again — off by
+  default like replay, but for the input's provenance rather than for what it
+  does. Three gates, three arguments, none copied from another.
 - **A decision that cannot be reached by a test does not belong where it is.**
-  The rule for reading a runner's output first sat in `mcp-server/server.js`,
-  behind a real Playwright install and a real spawn; a mutation deleting it left
-  every suite green. Moving it into `core/replay` made it three inputs and an
-  answer. `core/git` and `core/deploy` are the same split for the same reason.
+  `core/replay`, `core/git`, `core/deploy` and `core/otel` are all the same split
+  for the same reason: the decisions are pure, the spawning and the sockets are
+  not.
 - **The write and the renderer are one deliverable, and there is usually more
-  than one renderer.** `sourceProvenance` was made pure and then had exactly one
-  call site, so a rule that was supposed to hold wherever a model reads a
-  component held in `get_step_detail` and nowhere else. **Count the renderers.**
-  The commit stamp has four and they were counted on purpose; the fifth is yours.
+  than one renderer.** The commit stamp has four, counted on purpose. Tier 2's
+  are `get_backend_trace`, `get_app_architecture`'s services section, and the
+  `flow.md`/tool surfaces that already print a trace id. **Count the renderers.**
+- **Test at the layer that can lose the data, not below it.** Two by-name
+  flow-level copies still silently drop new fields — `buildPayload` in
+  `src/features/mcp/send.ts` and `saveFlow` in `mcp-server/server.js`. Step
+  fields are spread and survive; flow-level fields are listed by name.
+- **A fixture frozen at a constant timestamp is outside every retention
+  window.** `tests/arkg-otel.test.ts` uses a fixed `NOW` in 2023; a retention
+  test written against it fails for a right reason and would have passed for a
+  wrong one. Retention is measured against `Date.now()` — ingest at the wall
+  clock when that is what you are testing.
+- **Vitest reads the `@vitest-environment` directive from anywhere in the file,
+  comments included.** Writing it inside a doc comment to explain why a file does
+  *not* use jsdom silently switches jsdom on.
+- **`src/injected/agent.ts` *can* be loaded**, and a source-text test over it is
+  almost never the right answer. `tests/agent-network.test.ts` and
+  `tests/agent-trace.test.ts` import it under jsdom, having installed their stubs
+  for `fetch` and `XMLHttpRequest` **before** the import. Drive it with a
+  `MessageEvent` carrying `source: window` and `origin: window.location.origin`
+  — a bare `postMessage` supplies neither and the agent's control guard silently
+  drops it.
+- **Use subagents in parallel with explicit file ownership.** Freeze the shared
+  contract yourself first — a typechecking module and a written-down interface,
+  not a description — tell them not to run `verify` or `build*`, and give each a
+  **private** scratch directory.
+  - **Ask them to report what they notice in files they do not own, and forbid
+    them from touching those files.** That instruction produced the three best
+    findings of the last session, none of which the owning agent could have
+    found. It also produced an agent correcting the *parent's* verification
+    method, which is worth more than any of them.
+  - **Verify their results independently.** Re-run their suites, and run your
+    own mutations rather than trusting a mutation report.
 
 ## Non-negotiables
 
 - `src/core/` is pure — no `chrome.*`, no DOM, no `fetch`, no clock, **and no
-  `node:` imports**. `core/git`'s `readCheckout` takes `relative` as an argument
-  for exactly that reason. It is bundled into `mcp-server/core.js` and imported
-  by a Node process. (`core/dom`, `core/selector` and `core/describe` take DOM
-  nodes as *arguments* and are not in `mcp-bundle.ts`; that is the line.)
+  `node:` imports**. It is bundled into `mcp-server/core.js` and imported by a
+  Node process. (`core/dom`, `core/selector` and `core/describe` take DOM nodes
+  as *arguments* and are not in `mcp-bundle.ts`; that is the line.)
 - Every `chrome.*` call goes through `src/chrome/`.
 - The ARKG stays additive, via the guarded `arkgTry` funnel. Nothing about the
-  graph may fail a recording — **and nothing about `git` may either**, which is
-  what `gitTry` is.
+  graph may fail a recording — and nothing about `git` or `otel` may either,
+  which is what `gitTry` and `otelTry` are.
 - Anything published must be in its package's `files` list — and there are
   **three** packages. `scripts/sync-version.mjs`, `scripts/cut-release.mjs` and
   `tests/versions.test.ts` all know about `compiler-plugin/`.
@@ -310,72 +311,33 @@ not an omission. To overturn one, the argument to beat is in the roadmap.
 - Strings obey the frozen `docs/CONTRACTS.md` §4. It is frozen — if it is wrong,
   say so; do not fix it locally.
 - A setting that is not in `src/features/settings/fields.ts` does not exist, and
-  after touching that table you run `npm run build:settings`. See **Adding a
-  setting** above for what else that drags with it.
+  after touching that table you run `npm run build:settings`. There is no
+  free-form list type and do not add one; `tests/settings-row-shape.test.ts`
+  asserts the five type names so a sixth cannot arrive unnoticed. **A
+  machine-level capability is not a setting** — `DEVFLOW_GIT`, `DEVFLOW_REPLAY`,
+  `DEVFLOW_OTEL` and `DEVFLOW_PROJECT_ROOT` are environment variables on the
+  server's own environment, because `POST /config` is reachable by any page the
+  browser visits.
 - Comments say **why**, not what.
 
 ## How to work
 
 - **Do not tick a checkbox unless `npm run verify` proves it** — and unless you
-  have read the thing it claims. `[~]` is always available and is never a failure.
-  But a `[~]` carrying a *condition* is not a decision: either meet the condition
-  or write the refusal.
+  have read the thing it claims. `[~]` is always available and is never a
+  failure. But a `[~]` carrying a *condition* is not a decision: either meet the
+  condition or write the refusal.
 - **Do not build a module with no caller.**
-- **Write tests that would fail against the bug.** Break the code the test covers,
-  confirm it goes red, revert — *by restoring the text, not with git*. When a
-  mutation survives, ask **where the code is** and **what the fixture actually
-  distinguishes** before you ask what the assertion missed. The last two sessions
-  ran mutations across nine files and three survivors were worth the exercise on
-  their own: one because the decision lived a function away and genuinely *was*
-  covered, one because a fixture happened to make the right rule and a wrong one
-  agree, and one because a whole transport — `XMLHttpRequest` — had no test at
-  all. **A survivor is a question, not a verdict.**
-- **Measure the internals rather than reasoning about them.** Git is not a
-  dependency of this repo. Ten minutes building throwaway repositories in a
-  scratch directory settled the four repository states, the merge-commit file
-  list and the exact `git status --porcelain --branch` shapes before a line of
-  parser was written, and every one of them is now a fixture built from real
-  output. The same habit corrected two comments that asserted things about
-  `new URL` and about `Request` that nobody had run.
-- **Know what you did not measure, and say so.** 3.1 rests on a browser
-  behaviour — that a cross-origin request with a custom header preflights, and
-  fails when the backend does not allow it — and the extension was not connected,
-  so it was checked from the specification and the *server* side of a probe and
-  no further. That is written into the commit message and the roadmap rather than
-  glossed. An unmeasured claim you have named is a known gap; one you have not is
-  a belief.
-- **Vitest reads the `@vitest-environment` directive from anywhere in the file,
-  comments included.** Writing it inside a doc comment to explain why a file does
-  *not* use jsdom silently switches jsdom on. It cost an agent a debugging cycle.
-- **`src/injected/agent.ts` *can* be loaded, and a source-text test over it is
-  almost never the right answer.** Earlier handoffs said it could not, and that
-  was wrong: `tests/agent-network.test.ts` and `tests/agent-trace.test.ts` both
-  import it under jsdom, having installed their stubs for `fetch` and
-  `XMLHttpRequest` **before** the import, because the agent binds whatever is
-  there at load. Drive it with a `MessageEvent` carrying `source: window` and
-  `origin: window.location.origin` — a bare `postMessage` supplies neither and
-  the agent's control guard silently drops it, which reads exactly like a
-  feature that does not work. A behavioural test over what the stub received is
-  worth many source-text tests: two of this work stream's bugs were invisible to
-  reading and obvious to a stub.
-- **Test at the layer that can lose the data, not below it.** Two by-name
-  flow-level copies still silently drop new fields — `buildPayload` in
-  `src/features/mcp/send.ts` and `saveFlow` in `mcp-server/server.js`. Step fields
-  are spread and survive; flow-level fields are listed by name. `git` is a
-  flow-level field and is tested from the POST and from the graph, never from a
-  fixture written onto disk. Do the same for the next one.
-- **Use subagents in parallel with explicit file ownership.** Freeze the shared
-  contract yourself first, tell them not to run `verify` or `build*`, and give
-  each one a **private** scratch directory.
-  - **Verify their results independently.** Across the last two sessions six
-    agents reported nine source findings; every one was real, one was a
-    regression the parent had just introduced, and one was a wrong claim in a
-    comment that read as a safety guarantee. Two agents also flagged that they
-    had *loosened* a check — both were right to, and both said so unprompted,
-    which is the behaviour to keep asking for.
+- **Write tests that would fail against the bug.** Break the code the test
+  covers, confirm it goes red, revert — *by restoring the text, and verifying
+  with a checksum rather than with `git diff`*. When a mutation survives, ask
+  **where the code is** and **what the fixture actually distinguishes** before
+  you ask what the assertion missed. **A survivor is a question, not a verdict**:
+  last session's one survivor was a pure short-circuit whose real decision lived
+  two lines away, and the finding was worth more than a new assertion would have
+  been — it is now a comment in the source saying which line is load-bearing.
 - Run `graphify update .` after modifying code.
 - Commit on a branch and merge; never commit straight to `main`. Suggested:
-  `phase-3/otel-ingest` for 3.1's Tier 2, or `phase-3/lineage` for 3.2.
+  `phase-3/lineage` for 3.2.
 
 ## When you finish a work stream
 
