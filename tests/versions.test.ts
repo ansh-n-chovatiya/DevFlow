@@ -115,6 +115,14 @@ describe('the published MCP server', () => {
      * recording is saved with no commit and the graph's `git_sha` columns are
      * NULL again — the exact defect the stamp exists to close, arrived at by
      * shipping rather than by deciding.
+     *
+     * `otel.js` is the sixth and is the quietest of the lot. It is reached
+     * through the same guarded dynamic import *and* is gated on `DEVFLOW_OTEL`,
+     * so omitting it looks exactly like the switch being off: `get_backend_trace`
+     * says span ingest is not on, which is what it says when span ingest is not
+     * on. The user turns the variable on, sees the same sentence, and has no
+     * thread to pull. Every other missing file here degrades into silence; this
+     * one degrades into a wrong answer.
      */
     expect(server.files).toEqual([
       'server.js',
@@ -123,6 +131,7 @@ describe('the published MCP server', () => {
       'arkg.js',
       'replay.js',
       'git.js',
+      'otel.js',
       'README.md',
     ]);
   });

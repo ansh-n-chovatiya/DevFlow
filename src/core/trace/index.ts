@@ -25,6 +25,27 @@
  * DevFlow being installed — Invariant 1, and the same class of failure that got
  * `v3.2.0` reverted in a different subsystem.
  *
+ * **That paragraph is measured, not reasoned.** It had been checked from the
+ * specification and from the server side with `curl`, and neither of those
+ * watches a browser decide — so it was run against real Chromium (Playwright
+ * 1.62.1, Chromium build 1234). The setup is two origins and reproduces in ten
+ * minutes: a page on `http://localhost:4311` fetching an API on
+ * `http://localhost:4312`, where the API answers the preflight and allows the
+ * origin and the method on **both** paths, and the only difference is that
+ * `/allowed` names the header in `Access-Control-Allow-Headers` and
+ * `/notallowed` does not. What the page saw: cross-origin with no custom header
+ * → no `OPTIONS` at all, resolved. With `X-DevFlow-Trace-Id` against `/allowed`
+ * → `OPTIONS` first, then the real request, and the API received the header.
+ * Against `/notallowed` → `TypeError: Failed to fetch`, Chromium reporting
+ * *"Request header field x-devflow-trace-id is not allowed by
+ * Access-Control-Allow-Headers in preflight response"*. `traceparent` against
+ * `/notallowed` failed identically, with the identical message — being a W3C
+ * standard buys no exemption from the mechanism. And the same-origin control is
+ * the other half of the asymmetry below: a page on `http://localhost:4313`
+ * fetching its own origin carrying both headers, against a server that sends no
+ * `Access-Control-*` headers at all and answers no `OPTIONS`, resolved — no
+ * preflight, both headers arrived.
+ *
  * **Same-origin requests are not subject to CORS at all**, so they cannot
  * preflight and cannot fail this way. That asymmetry is the whole design:
  *
@@ -41,7 +62,23 @@
  *
  * The rule is deliberately not "try it and fall back". There is no falling back
  * from a failed preflight — by the time the browser reports it, the request the
- * page was waiting on has already rejected.
+ * page was waiting on has already rejected. The measurement adds a second
+ * reason: the API process logged the `OPTIONS` and never a `GET`, so a failed
+ * preflight leaves **no server-side evidence at all**. Somebody whose app breaks
+ * this way sees a failed fetch in their browser and nothing whatsoever in their
+ * backend's logs, which is close to the worst debugging position DevFlow could
+ * put a person in.
+ *
+ * ## The limit: DevFlow cannot observe the preflight
+ *
+ * Measured with the same setup: page-level instrumentation saw an outbound `GET`
+ * and then `net::ERR_FAILED`, and the `OPTIONS` never appeared at that layer,
+ * because Chromium makes the preflight in the network service and does not
+ * surface it as a page request. DevFlow patches `fetch` and `XMLHttpRequest`
+ * *in the page*, so it can see the rejection and never the preflight that caused
+ * it. Any future "did our header break this?" diagnostic has to be built on the
+ * rejection alone — there is no layer here that can be asked what the preflight
+ * said.
  *
  * ## `traceparent` and `X-DevFlow-Trace-Id` are two decisions, not one switch
  *
@@ -49,7 +86,10 @@
  *
  *   - `traceparent` is **W3C Trace Context**, a standard a backend may already
  *     accept and already list in `Access-Control-Allow-Headers` — so it is more
- *     likely to work. It is also more likely to *matter*: a page that already
+ *     likely to work. That is a claim about what backends typically *allow*, not
+ *     about the mechanism: measured, an unlisted `traceparent` preflight-fails
+ *     exactly as the bespoke header does, with the same message. It is also more
+ *     likely to *matter*: a page that already
  *     sends one has its own tracing, and overwriting it would corrupt somebody's
  *     production trace tree. So an existing `traceparent` is never replaced.
  *   - `X-DevFlow-Trace-Id` is bespoke. No backend accepts it by accident, which

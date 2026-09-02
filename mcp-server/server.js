@@ -65,6 +65,10 @@ import {
   resolve as resolveSettings,
   shaMatches,
   isShaPrefix,
+  joinTrace,
+  joinableSha,
+  projectTrace,
+  readTraceId,
   snippet,
   stepFailed,
   suspectFiles,
@@ -107,6 +111,18 @@ const FLOWS_DIR = path.join(HOME, 'flows');
  * sweep would take its share of the answer with it.
  */
 const ARKG_DB = path.join(HOME, 'arkg.db');
+
+/*
+ * The held spans, in their own database rather than a table in `arkg.db`.
+ *
+ * They are not graph data. A span is one event that happened once, and what
+ * reaches the graph is the *operation* it was an observation of — so this file
+ * is a waiting room with a retention policy, and giving it its own file means
+ * deleting it costs nothing the accumulated graph knows. It is also the only
+ * store on this machine fed from off it, which is a second reason not to put it
+ * in the same file as everything DevFlow has learned.
+ */
+const SPAN_DB = path.join(HOME, 'spans.db');
 // The port is `mcp.port`, and it is settled below, once the settings layer that
 // decides it exists — see `HTTP_PORT`.
 
@@ -161,6 +177,14 @@ const MAX_CONFIG_BYTES = 64 * 1024;
  * `MAX_CONFIG_BYTES` are not: a bound the POST can raise is not a bound.
  */
 const MAX_PICK_BYTES = 64 * 1024;
+
+/*
+ * The ceiling on one span delivery, larger than a pick's because a batching
+ * exporter legitimately sends hundreds of spans at once and a stack trace on an
+ * exception event is not small. Read into memory before anything has vouched
+ * for it, which is the whole reason there is a number here at all.
+ */
+const MAX_SPAN_BYTES = 4 * 1024 * 1024;
 
 /**
  * How long an observation stays in the knowledge graph.
@@ -587,6 +611,126 @@ async function gitTry(what, run, fallback = null) {
   } catch (error) {
     log(`commit: ${what} failed (${error.message})`);
     return fallback;
+  }
+}
+
+/*
+ * `otel.js`, on the same terms as `git.js` above it.
+ *
+ * It holds the spans a backend exported and nothing else this server needs to
+ * boot, so an installation without it loses Tier 2 and keeps every other tool —
+ * the degradation `arkgTry` and `gitTry` were both written for.
+ *
+ * It is the one capability here that is **off unless the user turned it on**,
+ * and the asymmetry with `DEVFLOW_GIT` is deliberate rather than an oversight.
+ * `git` reads a repository this machine already owns, with a fixed argv. This
+ * accepts a document from off the machine, written by a process DevFlow has
+ * never met, and turns it into rows in the accumulated graph. Every other write
+ * endpoint here is guarded by `extensionOrigin`, and this one *cannot* be: the
+ * sender is the user's own backend or their collector, which has no extension
+ * origin and never will. So the gate that is available is the user having asked
+ * for it, and `DEVFLOW_OTEL=1` is that gate.
+ */
+let otelmod = null;
+try {
+  otelmod = await import('./otel.js');
+  if (otelmod.OTEL_ENABLED) {
+    otelmod.openSpanStore(SPAN_DB);
+    log(`span ingest on — POST /v1/traces, OTLP/JSON, held at ${SPAN_DB}`);
+  }
+} catch (error) {
+  otelmod = null;
+  log(`no span ingest (${error.message}) — flows and every other tool are unaffected`);
+}
+
+/** `arkgTry` for the span store. Nothing about a span may fail a recording. */
+function otelTry(what, run, fallback = null) {
+  if (!otelmod || !otelmod.OTEL_ENABLED) return fallback;
+  try {
+    return run(otelmod);
+  } catch (error) {
+    log(`spans: ${what} failed (${error.message})`);
+    return fallback;
+  }
+}
+
+/**
+ * The traced calls a recording carries, as `core/otel` wants them.
+ *
+ * A call has a `traceId` only when the injection rule allowed one — off by
+ * default, only while recording, and only to an origin the user named — so on
+ * almost every recording this is empty and the whole of Tier 2 costs nothing.
+ */
+function tracedCalls(flow) {
+  const out = [];
+  const steps = Array.isArray(flow?.steps) ? flow.steps : [];
+  for (const [index, step] of steps.entries()) {
+    for (const call of step.networkCalls ?? []) {
+      const traceId = readTraceId(call.traceId);
+      if (!traceId) continue;
+      out.push({ traceId, step: index + 1, method: call.method ?? 'GET', url: call.url ?? '' });
+    }
+  }
+  return out;
+}
+
+/**
+ * One span tree as indented lines.
+ *
+ * Indentation rather than a table because the shape *is* the answer here: a
+ * query three levels under the handler that answered the request is a different
+ * fact from one the handler issued itself, and a flat list loses exactly that.
+ *
+ * Each line carries only what a reader can act on \u2014 where it ran, what it
+ * was, how long it took, and whether it failed. The SQL is printed when the
+ * instrumentation supplied it and is never invented; `db.query.text` is what
+ * the user\u2019s own tracer chose to record, including whether it was
+ * parameterised, and rewriting it here would show them a query their database
+ * never saw.
+ */
+function flattenSpanLines(roots) {
+  const lines = [];
+  const walk = (node) => {
+    const span = node.span;
+    const pad = '  '.repeat(node.depth);
+    const mark = span.failed ? ' **FAILED**' : '';
+    const ms = `${span.durationMs.toFixed(1)}ms`;
+    const where = span.code ? ` \u00b7 ${span.code.file}${span.code.line ? `:${span.code.line}` : ''}` : '';
+    const status = span.http?.status !== null && span.http?.status !== undefined ? ` \u00b7 ${span.http.status}` : '';
+    lines.push(`${pad}- \`${span.service}\` ${span.name} \u00b7 ${ms}${status}${where}${mark}`);
+    if (span.db?.statement) lines.push(`${pad}  \u21b3 \`${span.db.statement}\``);
+    if (span.exception?.message) {
+      lines.push(`${pad}  \u21b3 ${span.exception.type ?? 'error'}: ${span.exception.message}`);
+    } else if (span.failed && span.statusMessage) {
+      lines.push(`${pad}  \u21b3 ${span.statusMessage}`);
+    }
+    for (const child of node.children) walk(child);
+  };
+  for (const root of roots) walk(root);
+  return lines.join('\n');
+}
+
+/**
+ * Cross a recording's trace ids against the spans already held, and write what
+ * joins.
+ *
+ * Runs at flow ingest rather than at span ingest because that is the order the
+ * two actually arrive in: a backend exports within seconds of the request and
+ * the user presses Send when they are ready, so at span time there is usually
+ * no recording to join to yet. Re-sending a recording is therefore how a trace
+ * that arrived late gets joined at all — the same property `changed_in` has,
+ * and for the same reason.
+ */
+function ingestSpansFor(flow, flowId, git) {
+  const calls = tracedCalls(flow);
+  if (!calls.length) return;
+
+  const spans = otelTry('read held spans', (o) => o.spansForTraces(calls.map((c) => c.traceId)), []);
+  if (!spans || !spans.length) return;
+
+  const { joined } = joinTrace({ calls, spans });
+  for (const join of joined) {
+    arkgTry('trace ingest', (a) => a.ingestTrace(projectTrace(join), flowId, joinableSha(git)));
   }
 }
 
@@ -1408,6 +1552,16 @@ async function enforceRetention(keepId) {
   const pruned = arkgTry('prune', (a) => a.pruneOldObservations(ARKG_RETENTION_DAYS), 0);
   if (pruned) log(`knowledge graph: pruned ${pruned} node(s) older than ${ARKG_RETENTION_DAYS} days`);
 
+  /*
+   * And the waiting room, on the same sweep for the same reason — plus one of
+   * its own. This is the only store here fed from off the machine, so it is the
+   * only one whose growth is not paced by how much the user records. The cap in
+   * `otel.js` is what actually bounds it; this is the sweep that collects what
+   * the cap has already made unreachable.
+   */
+  const dropped = otelTry('prune spans', (o) => o.pruneSpanStore(), { removed: 0 });
+  if (dropped?.removed) log(`spans: dropped ${dropped.removed} held span(s)`);
+
   return evicted.map((gone) => gone.id);
 }
 
@@ -1806,6 +1960,14 @@ const httpServer = http.createServer(async (req, res) => {
        */
       if (accumulated) await ingestCheckoutCommit(checkout);
 
+      /*
+       * And the backend half, gated on the same answer and after the flow for
+       * the same reason `changed_in` is: the `calls` edge this draws lands on
+       * the `api_endpoint` node `ingestFlow` has just created, and an edge is
+       * only admissible when both its ends are already nodes the graph keys.
+       */
+      if (accumulated) ingestSpansFor(flow, meta.id, git);
+
       // Never allowed to fail the save: the flow is already on disk and readable,
       // and telling the extension otherwise would have it offer a retry that
       // stores a second copy.
@@ -1825,6 +1987,79 @@ const httpServer = http.createServer(async (req, res) => {
       );
     } catch (error) {
       log(`error saving flow: ${error.message}`);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  /*
+   * Spans, from the far side of a request DevFlow watched leave the browser.
+   *
+   * `/v1/traces` is OTLP/HTTP's own path, so an exporter is configured by
+   * pointing it here and changing nothing else about how it is written.
+   *
+   * ## Why this one is not behind `extensionOrigin`, and what is there instead
+   *
+   * Every other write on this port is, and the guard works because the sender
+   * is the extension. This sender is the user's backend — a collector, or an
+   * SDK inside their own service — which has no extension origin and cannot be
+   * given one. The guard is not weakened here; it is unavailable, and pretending
+   * otherwise would be a check that reads like a boundary and is not.
+   *
+   * What is available is three things, and they are the whole of it:
+   *
+   *   - **The user asked for this.** `DEVFLOW_OTEL=1`, off otherwise, which is
+   *     the opposite default from `DEVFLOW_GIT` for the reason `otel.js`'s
+   *     header gives.
+   *   - **A trace id is 128 random bits.** A span can only ever attach itself
+   *     to a recording that carries its trace id, so forging a join means
+   *     guessing one. What is reachable without guessing is filling the store,
+   *     and the store is capped.
+   *   - **Nothing here is executed, resolved or spawned.** The body is JSON,
+   *     every field is read by name in `core/otel`, and no string in it names a
+   *     file this server opens.
+   *
+   * The response shape is OTLP's `ExportTraceServiceResponse`, because an
+   * exporter parses the reply and retries on a shape it does not recognise.
+   */
+  if (req.method === 'POST' && req.url === '/v1/traces') {
+    if (!otelmod || !otelmod.OTEL_ENABLED) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error:
+            'Span ingest is off. Start the DevFlow MCP server with DEVFLOW_OTEL=1 to accept OTLP traces.',
+        }),
+      );
+      return;
+    }
+
+    try {
+      let body = '';
+      let bytes = 0;
+      for await (const chunk of req) {
+        bytes += chunk.length;
+        if (bytes > MAX_SPAN_BYTES) {
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({ error: `A span delivery may not exceed ${MAX_SPAN_BYTES} bytes.` }),
+          );
+          req.destroy();
+          return;
+        }
+        body += chunk;
+      }
+
+      const answer = otelTry(
+        'ingest delivery',
+        (o) => o.handleOtlpPost(body, req.headers['content-type'] ?? ''),
+        { status: 503, body: { error: 'Span ingest is unavailable.' } },
+      );
+      res.writeHead(answer.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(answer.body));
+    } catch (error) {
+      log(`error receiving spans: ${error.message}`);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error.message }));
     }
@@ -3892,6 +4127,30 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           id: { type: 'string', description: 'Flow ID from list_flows. Omit for the most recent recording.' },
           limit: { type: 'number', description: 'Failures to diagnose. Defaults to 5.' },
         },
+      },
+    },
+    {
+      name: 'get_backend_trace',
+      description:
+        'What happened on the server for the requests in one recording \u2014 the span tree the ' +
+        'user\u2019s own backend exported under the trace id DevFlow put on the request. This is the ' +
+        'far side of a call the browser watched leave: which service answered, what it called, how ' +
+        'long each step took and which one failed. Read what it needs before you read what it says. ' +
+        'It is empty unless three things are true: trace headers were switched on while recording, ' +
+        'the backend is exporting OTLP to this server, and this server was started with ' +
+        'DEVFLOW_OTEL=1. The reply tells those apart \u2014 a call that was never traced, a traced ' +
+        'call whose spans have not arrived, and a joined trace are three different situations with ' +
+        'three different fixes, and it never reports the second as the first.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Flow ID from list_flows' },
+          step: {
+            type: 'number',
+            description: 'Only the calls in this step. Omit for every traced call in the recording.',
+          },
+        },
+        required: ['id'],
       },
     },
     {
@@ -6024,6 +6283,81 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       return text(renderDiagnosis(flow.json, diagnoses, limit));
     }
 
+    case 'get_backend_trace': {
+      let flow;
+      try {
+        flow = await readFlow(args.id);
+      } catch (error) {
+        return text(error.message);
+      }
+
+      const all = tracedCalls(flow);
+      const calls =
+        typeof args.step === 'number' ? all.filter((call) => call.step === args.step) : all;
+
+      /*
+       * Three refusals before any span is read, because each sends the reader
+       * somewhere different and only one of them is about spans at all.
+       */
+      if (!otelmod || !otelmod.OTEL_ENABLED) {
+        return text(
+          'Span ingest is off, so this server holds no backend traces.\n\n' +
+            'Start the DevFlow MCP server with `DEVFLOW_OTEL=1` and point your backend\u2019s OTLP ' +
+            'exporter at `POST /v1/traces` on this port, with ' +
+            '`OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/json`.' +
+            (all.length
+              ? `\n\nThis recording does carry ${all.length} traced call(s), so once ingest is on and the backend is exporting, re-send the recording to join them.`
+              : '\n\nThis recording also carries no traced calls \u2014 see below.'),
+        );
+      }
+      if (!all.length) {
+        return text(
+          'No call in this recording carried a trace id, so there is nothing to join spans to.\n\n' +
+            'Trace headers are off by default, are added only while a flow is recording, and are ' +
+            'added to a cross-origin request only for an origin named in the allow-list. Turn them ' +
+            'on in DevFlow\u2019s settings and record again.',
+        );
+      }
+      if (!calls.length) {
+        return text(
+          `No call in step ${args.step} carried a trace id. Traced calls in this recording are in ` +
+            `step(s) ${[...new Set(all.map((call) => call.step))].join(', ')}.`,
+        );
+      }
+
+      const spans =
+        otelTry('read held spans', (o) => o.spansForTraces(calls.map((c) => c.traceId)), []) ?? [];
+      const { joined, awaiting } = joinTrace({ calls, spans });
+
+      const sections = joined.map((join) => {
+        const head =
+          `### Step ${join.call.step} \u2014 ${join.call.method} ${urlPath(join.call.url)}\n` +
+          `trace \`${join.call.traceId}\` \u00b7 ${join.spans.length} span(s) \u00b7 ` +
+          `service(s): ${join.services.join(', ')}`;
+        const lines = flattenSpanLines(join.roots);
+        return `${head}\n\n${lines}`;
+      });
+
+      /*
+       * `awaiting` is printed as its own paragraph and never folded into "no
+       * data". A traced call with no spans means the exporter has not sent
+       * them, is not pointed here, or sampled the trace away \u2014 which is a
+       * different errand from turning the header on, and a reader told the
+       * wrong one goes and changes a setting that was already correct.
+       */
+      const pending = awaiting.length
+        ? `\n\n**${awaiting.length} traced call(s) have no spans yet.** The recording carried the ` +
+          `id, so the header went out; nothing has arrived under it. Either the backend is not ` +
+          `exporting to this server, or it sampled the trace away, or the spans are still in a ` +
+          `batch. Re-send this recording after they arrive and they will join.`
+        : '';
+
+      if (!sections.length) {
+        return text(`No spans have arrived for this recording\u2019s traced calls.${pending}`);
+      }
+      return text(`## Backend trace \u2014 ${flow.name ?? args.id}\n\n${sections.join('\n\n')}${pending}`);
+    }
+
     case 'get_app_architecture': {
       if (!arkg) return failure(NO_GRAPH);
 
@@ -6090,11 +6424,35 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
       }
 
+      /*
+       * The backend, when there is one, and absent entirely when there is not.
+       *
+       * A graph with no services is not an application with no backend — it is
+       * one whose spans DevFlow has never been sent, which is the state every
+       * graph built before Tier 2 is in. So this section does not appear at all
+       * rather than printing a zero, for the reason the state-keys section
+       * above does not: a heading with nothing under it reads as a finding.
+       */
+      const services = arkgTry('services', (graph) => graph.getServices?.() ?? [], []) ?? [];
+      if (services.length) {
+        lines.push(
+          '',
+          'Backend services, from spans your own tracer exported — service, operations, recordings seen in:',
+        );
+        for (const service of services) {
+          lines.push(
+            `  ${service.name}${service.environment ? ` (${service.environment})` : ''}` +
+              `  ${service.operationCount ?? 0} operation(s)  ${service.frequency}x`,
+          );
+        }
+      }
+
       // The drill-down, named: a summary that does not say what to ask next is
       // read as the whole of what is known.
       lines.push(
         '',
         'get_component_history takes a name or an id from above; get_anomalies says what has moved recently.' +
+          (services.length ? ' get_backend_trace shows the server-side span tree for one recording.' : '') +
           (arch.topStateKeys?.length
             ? ' get_state_patch shows what one step did to a store, in the recording it did it in.'
             : ''),

@@ -354,6 +354,102 @@ const DDL = `
     last_observed_at INTEGER NOT NULL
   );
 
+  /*
+   * A service the backend's own tracer named, and another node here that is
+   * deliberately neither timed nor failed.
+   *
+   * service.name is chosen by whoever deployed the thing and is the same
+   * string in next month's recording, which is the whole reason it is a node: a
+   * span id is 64 random bits that happen once, so a node per span would make
+   * this a log rather than an accumulation. See core/otel's header.
+   *
+   * It carries no timing_p50_ms, timing_p95_ms or failure_rate, on the same
+   * argument as arkg_git_commits and arkg_state_keys: nothing *runs* a service.
+   * A percentile here would be over whatever mix of its operations happened to
+   * be recorded — a service whose health check is called a thousand times looks
+   * fast because of the health check — and a failure rate would move when that
+   * mix changed rather than when anything failed. Both numbers are real one hop
+   * away, on arkg_operations, where a row is a thing that actually ran.
+   *
+   * version and environment are last-observed values and not identity. A
+   * service redeployed at 2.4.2 is the same service; keying them in would file
+   * a fresh node per release and reset every count that makes this a graph.
+   */
+  CREATE TABLE IF NOT EXISTS arkg_services (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    version TEXT,
+    environment TEXT,
+    git_sha TEXT,
+    first_observed_at INTEGER NOT NULL,
+    last_observed_at INTEGER NOT NULL,
+    frequency INTEGER NOT NULL DEFAULT 1
+  );
+
+  /*
+   * One operation of one service — checkout-api / GET /api/v1/invoices.
+   *
+   * This one *is* timed and *does* fail, because unlike the service above it a
+   * row here is a unit of work: every span carrying this name measured the same
+   * thing, so a percentile over them answers a question, and a status of ERROR
+   * on one is that unit failing. It is the backend's half of what
+   * arkg_api_endpoints is for the browser's, and it is deliberately shaped the
+   * same so that a reader crossing the two is comparing like with like.
+   *
+   * name is operationName's answer and never the raw span name: an
+   * instrumentation that put an invoice id in the name would otherwise file a
+   * node per invoice, which is the hazard arkg_api_endpoints already solved.
+   *
+   * service_name sits beside service_id for arkg_state_keys' reason — the
+   * name is what a caller asks with and what an answer has to print, and a join
+   * for it on every read buys nothing that the denormalised column does not.
+   */
+  CREATE TABLE IF NOT EXISTS arkg_operations (
+    id TEXT PRIMARY KEY,
+    service_id TEXT NOT NULL,
+    service_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT,
+    source_file TEXT,
+    source_line INTEGER,
+    git_sha TEXT,
+    first_observed_at INTEGER NOT NULL,
+    last_observed_at INTEGER NOT NULL,
+    frequency INTEGER NOT NULL DEFAULT 1,
+    timing_p50_ms REAL,
+    timing_p95_ms REAL,
+    timing_samples TEXT,
+    failure_rate REAL NOT NULL DEFAULT 0
+  );
+
+  /*
+   * Which facts of one recording's trace have already been counted for it.
+   *
+   * frequency counts recordings everywhere in this file, and a trace breaks
+   * the assumption every other ingest gets to make — that a recording arrives
+   * once, whole. Spans arrive leaf-first in as many deliveries as the exporter
+   * felt like sending, and the join re-runs on each one, so a single recording's
+   * trace is projected and handed here several times over with more of the tree
+   * in it each time. ingestFlow's content hash cannot decide that: every
+   * delivery genuinely *is* new evidence, and the spans it repeats genuinely are
+   * not, and one hash over the payload has to call the pair the same thing.
+   *
+   * So the ledger is per fact rather than per payload. A service, an operation
+   * or an edge is counted the first time this recording shows it and never
+   * again, whichever delivery it turned up in — which is also what makes
+   * re-sending a recording free, the same way the content hash makes it free
+   * for everything else.
+   *
+   * It holds no observations of its own and answers no question: it is
+   * bookkeeping, and it is a table rather than a column because the thing being
+   * remembered is a set whose size is the size of the trace.
+   */
+  CREATE TABLE IF NOT EXISTS arkg_trace_observations (
+    id TEXT PRIMARY KEY,
+    flow_id TEXT NOT NULL,
+    observed_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS arkg_edges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT NOT NULL,
@@ -385,6 +481,11 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_arkg_state_keys_last ON arkg_state_keys(last_observed_at);
   CREATE INDEX IF NOT EXISTS idx_arkg_state_stores_last ON arkg_state_stores(last_observed_at);
   CREATE INDEX IF NOT EXISTS idx_arkg_git_commits_last ON arkg_git_commits(last_observed_at);
+  CREATE INDEX IF NOT EXISTS idx_arkg_services_last ON arkg_services(last_observed_at);
+  CREATE INDEX IF NOT EXISTS idx_arkg_operations_service ON arkg_operations(service_id);
+  CREATE INDEX IF NOT EXISTS idx_arkg_operations_name ON arkg_operations(service_name);
+  CREATE INDEX IF NOT EXISTS idx_arkg_operations_last ON arkg_operations(last_observed_at);
+  CREATE INDEX IF NOT EXISTS idx_arkg_trace_observations_flow ON arkg_trace_observations(flow_id);
 `;
 
 // ── Identity ──────────────────────────────────────────────────────────────────
@@ -436,6 +537,30 @@ function stateKeyId(kind, label, key) {
   return crypto
     .createHash('sha256')
     .update(`state-key|${kind}|${label ?? ''}|${key}`)
+    .digest('hex')
+    .slice(0, 16);
+}
+
+/**
+ * Stable ids for the two things a backend trace projects onto.
+ *
+ * Keyed on the names and on nothing else, for `stateStoreId`'s reason said
+ * about a different ephemeral id: a span id is 64 random bits, is never seen
+ * twice, and a node keyed on one would be a row per request that no second
+ * recording could ever accumulate onto. What survives is the name whoever
+ * deployed the service chose, and the operation name their instrumentation
+ * chose — already through `core/otel`'s `operationName` by the time it reaches
+ * here, so the record-shaped segments are collapsed and two requests for two
+ * invoices are one operation observed twice.
+ */
+function serviceId(name) {
+  return crypto.createHash('sha256').update(`service|${name}`).digest('hex').slice(0, 16);
+}
+
+function operationId(service, name) {
+  return crypto
+    .createHash('sha256')
+    .update(`operation|${service}|${name}`)
     .digest('hex')
     .slice(0, 16);
 }
@@ -1808,6 +1933,291 @@ export function ingestCommit(commit, files = [], prefix = '') {
   })();
 }
 
+// ── Backend traces ────────────────────────────────────────────────────────────
+
+/**
+ * Whether this recording has yet been counted for one fact of its trace.
+ *
+ * The insert *is* the question: `INSERT OR IGNORE` under a primary key asks and
+ * answers in one statement, so there is no window between a `SELECT` that found
+ * nothing and the write that acts on it — which matters because two deliveries
+ * of one trace can reach here back to back and the count they are racing over
+ * is the one thing this whole file is for.
+ *
+ * See the DDL comment on `arkg_trace_observations` for why the ledger is per
+ * fact rather than per payload.
+ */
+function firstSightingInFlow(flowId, subject, now) {
+  const id = crypto.createHash('sha256').update(`${flowId}|${subject}`).digest('hex').slice(0, 16);
+  return (
+    sql('INSERT OR IGNORE INTO arkg_trace_observations (id, flow_id, observed_at) VALUES (?, ?, ?)')
+      .run(id, flowId, now).changes > 0
+  );
+}
+
+/** A run of samples folded into one timing window, through the one funnel. */
+function foldSamples(existing, samples) {
+  let result = null;
+  let json = existing.samples;
+  for (const sample of samples) {
+    result = updateTimingStats(json, sample);
+    json = result.samples;
+  }
+  return result ?? existing;
+}
+
+/** One end of a projected trace edge, as a node type and id this file keys. */
+function traceEdgeEnd(end) {
+  if (!end || typeof end !== 'object') return null;
+  switch (end.kind) {
+    /*
+     * The endpoint node `ingestFlow` already made for this call, and it has to
+     * be that one: the join's whole value is that a request the browser watched
+     * leave and the work it caused on the far side meet on one row. A second id
+     * scheme here would draw the edge to an endpoint node nothing else in the
+     * graph points at, and the FE → BE chain would be two disconnected halves
+     * that looked joined. `endpointId` normalises the method and the URL, so
+     * the recording's spelling of them reaches the same node either way.
+     */
+    case 'endpoint':
+      return typeof end.url === 'string'
+        ? { type: 'api_endpoint', id: endpointId(String(end.method ?? 'GET'), end.url) }
+        : null;
+    case 'operation':
+      return typeof end.service === 'string' && typeof end.name === 'string'
+        ? { type: 'operation', id: operationId(end.service, end.name) }
+        : null;
+    case 'service':
+      return typeof end.name === 'string' ? { type: 'service', id: serviceId(end.name) } : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * What one projected trace may write into the graph.
+ *
+ * `projection` is exactly `core/otel`'s `projectTrace` answer, and every
+ * decision about *what* is admissible was made there: both ends of every edge
+ * already land on a node this file keys stably, a trace nobody recorded never
+ * reaches here at all, and the duplicates one trace contains are already
+ * collapsed. Nothing below re-derives any of that or filters what core
+ * admitted — this is the SQL and only the SQL, which is the same division
+ * `ingestCausal` keeps with `buildCausalGraph`.
+ *
+ * **Additive and non-fatal.** A trace is an addition to a recording and the
+ * recording is the thing being kept, so a throw in here is swallowed and
+ * reported as nothing accumulated, exactly as `arkgTry` does for every call the
+ * server makes into this file. The receiver may not be behind that funnel —
+ * spans arrive on their own endpoint — so the guarantee is made here as well as
+ * there rather than assumed of a caller.
+ *
+ * `gitSha` is the *joinable* sha and not a raw HEAD: `joinableSha`'s rule is
+ * that a dirty tree writes nothing, because the column is a join key with no
+ * room beside it to record a caveat. A caller holding the checkout itself may
+ * pass that instead and the rule is applied here, so there is exactly one place
+ * a dirty tree becomes no sha however the caller reached it. Nothing files a
+ * commit node from here: the sha is the recording's, and `ingestFlow` returning
+ * true is what already filed the row it points at.
+ *
+ * Returns how many services, operations and edges this call was new evidence
+ * for, which is what a receiver logging "joined 4 spans, counted 2" needs.
+ */
+export function ingestTrace(projection, flowId, gitSha = null, now = Date.now()) {
+  const nothing = { services: 0, operations: 0, edges: 0 };
+  // A projection with no recording to attribute it to cannot be deduplicated,
+  // and an observation that can be counted twice is worse than one not counted.
+  if (!db || !projection || typeof flowId !== 'string' || !flowId) return nothing;
+
+  const sha = typeof gitSha === 'string' ? gitSha : (core.joinableSha?.(gitSha) ?? null);
+  const services = Array.isArray(projection.services) ? projection.services : [];
+  const operations = Array.isArray(projection.operations) ? projection.operations : [];
+  const edges = Array.isArray(projection.edges) ? projection.edges : [];
+  if (!services.length && !operations.length && !edges.length) return nothing;
+
+  /*
+   * Every span of one operation in this trace, folded into one observation of
+   * it — and the two halves of that fold are counted in different units on
+   * purpose.
+   *
+   * `frequency` counts *recordings*, as it does everywhere here: a handler that
+   * ran forty times inside one request is one thing this recording showed, and
+   * counting it forty times would put a number in the column that no reader can
+   * arrive at from the recordings they have. The failure verdict is per
+   * recording for the same reason — did this operation fail in this recording —
+   * so one ERROR span is a yes and the rolling rate stays a fraction of
+   * recordings, which is what `updateFailureRate` is being handed a frequency
+   * for.
+   *
+   * The timing window is not counted in recordings, because it is not a count:
+   * it is the distribution `getAnomalies` asks whether a number sits outside
+   * of, and every one of those forty spans measured that distribution once. The
+   * alternative is to reduce them to a representative — a mean, a max — and
+   * write that, which is a number the application never produced sitting in a
+   * window of numbers it did.
+   */
+  const sightings = new Map();
+  for (const op of operations) {
+    if (!op || typeof op.service !== 'string' || typeof op.name !== 'string') continue;
+    const id = operationId(op.service, op.name);
+    const seen = sightings.get(id) ?? {
+      id,
+      service: op.service,
+      name: op.name,
+      // 'unspecified' is the reader's answer for a span that carried no kind at
+      // all, so it is not allowed to overwrite a kind another span supplied.
+      kind: null,
+      samples: [],
+      failed: false,
+      file: null,
+      line: null,
+    };
+    if (typeof op.durationMs === 'number' && Number.isFinite(op.durationMs)) {
+      seen.samples.push(op.durationMs);
+    }
+    if (op.failed === true) seen.failed = true;
+    if (seen.kind === null && typeof op.kind === 'string' && op.kind !== 'unspecified') {
+      seen.kind = op.kind;
+    }
+    // The line is taken from whichever span supplied the file, never crossed
+    // from another one: a path from one span and a line from a different one is
+    // a source location nobody observed.
+    if (seen.file === null && typeof op.file === 'string' && op.file) {
+      seen.file = op.file;
+      seen.line = typeof op.line === 'number' ? op.line : null;
+    }
+    sightings.set(id, seen);
+  }
+
+  try {
+    return db.transaction(() => {
+      let newServices = 0;
+      let newOperations = 0;
+      let newEdges = 0;
+
+      for (const service of services) {
+        if (!service || typeof service.name !== 'string') continue;
+        if (!firstSightingInFlow(flowId, `service|${service.name}`, now)) continue;
+        upsertService(service, sha, now);
+        newServices += 1;
+      }
+
+      for (const op of sightings.values()) {
+        if (!firstSightingInFlow(flowId, `operation|${op.id}`, now)) continue;
+        upsertOperation(op, sha, now);
+        newOperations += 1;
+      }
+
+      for (const edge of edges) {
+        if (!edge || typeof edge.type !== 'string') continue;
+        const from = traceEdgeEnd(edge.from);
+        const to = traceEdgeEnd(edge.to);
+        if (!from || !to) continue;
+        const subject = `edge|${edge.type}|${from.type}|${from.id}|${to.type}|${to.id}`;
+        if (!firstSightingInFlow(flowId, subject, now)) continue;
+        /*
+         * No timing on a trace edge, and that is the honest shape rather than a
+         * gap. A `calls` edge from a component carries one because it was built
+         * from one network call with one duration; these are built from a set of
+         * spans, and the operation's latency already lives on its node with
+         * every span of it folded in. The failure verdict does travel, because
+         * the callee either failed in this recording or it did not, and that is
+         * the same single fact whichever edge reached it.
+         */
+        const failed = to.type === 'operation' && (sightings.get(to.id)?.failed ?? false);
+        upsertEdge(edge.type, from.type, from.id, to.type, to.id, flowId, now, null, failed, sha);
+        newEdges += 1;
+      }
+
+      return { services: newServices, operations: newOperations, edges: newEdges };
+    })();
+  } catch {
+    // Swallowed for the reason in the doc comment above: the graph is an
+    // addition to a recording and may never cost one. The transaction rolls
+    // back, so a half-written trace is not left behind either.
+    return nothing;
+  }
+}
+
+/**
+ * One service node, created or observed again.
+ *
+ * `version` and `environment` take the new value in preference to the old, the
+ * way `git_sha` does and unlike the `source_file` beside it: a service that has
+ * been redeployed is at the new version, and the column means what it was last
+ * seen running. A COALESCE the other way would pin a node to the first release
+ * anybody happened to record.
+ */
+function upsertService(service, gitSha, now) {
+  const id = serviceId(service.name);
+  const version = typeof service.version === 'string' ? service.version : null;
+  const environment = typeof service.environment === 'string' ? service.environment : null;
+
+  const existing = sql('SELECT id FROM arkg_services WHERE id = ?').get(id);
+  if (!existing) {
+    sql(`
+      INSERT INTO arkg_services (id, name, version, environment, git_sha, first_observed_at, last_observed_at, frequency)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `).run(id, service.name, version, environment, gitSha, now, now);
+  } else {
+    sql(`
+      UPDATE arkg_services SET
+        last_observed_at = ?,
+        frequency = frequency + 1,
+        version = COALESCE(?, version),
+        environment = COALESCE(?, environment),
+        git_sha = COALESCE(?, git_sha)
+      WHERE id = ?
+    `).run(now, version, environment, gitSha, id);
+  }
+  return id;
+}
+
+/**
+ * One operation node, created or observed again.
+ *
+ * Shaped exactly like the endpoint upsert above it, down to the COALESCE
+ * directions: `source_file` and `source_line` keep what they know, because an
+ * instrumentation that stopped reporting `code.filepath` taught the graph
+ * nothing; `git_sha` takes the newer, because the column means *last* observed
+ * clean.
+ */
+function upsertOperation(op, gitSha, now) {
+  const existing = sql('SELECT * FROM arkg_operations WHERE id = ?').get(op.id);
+
+  if (!existing) {
+    const ts = foldSamples({ samples: null, p50: null, p95: null }, op.samples);
+    sql(`
+      INSERT INTO arkg_operations (id, service_id, service_name, name, kind, source_file, source_line, git_sha, first_observed_at, last_observed_at, frequency, timing_p50_ms, timing_p95_ms, timing_samples, failure_rate)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+    `).run(
+      op.id, serviceId(op.service), op.service, op.name, op.kind, op.file, op.line, gitSha,
+      now, now, ts.p50, ts.p95, ts.samples, op.failed ? 1.0 : 0.0,
+    );
+    return;
+  }
+
+  const ts = foldSamples(
+    { samples: existing.timing_samples, p50: existing.timing_p50_ms, p95: existing.timing_p95_ms },
+    op.samples,
+  );
+  const newRate = updateFailureRate(existing.failure_rate, existing.frequency + 1, op.failed);
+  sql(`
+    UPDATE arkg_operations SET
+      last_observed_at = ?,
+      frequency = frequency + 1,
+      kind = COALESCE(kind, ?),
+      source_file = COALESCE(source_file, ?),
+      source_line = COALESCE(source_line, ?),
+      timing_p50_ms = ?,
+      timing_p95_ms = ?,
+      timing_samples = ?,
+      failure_rate = ?,
+      git_sha = COALESCE(?, git_sha)
+    WHERE id = ?
+  `).run(now, op.kind, op.file, op.line, ts.p50, ts.p95, ts.samples, newRate, gitSha, op.id);
+}
+
 /**
  * Upsert an edge.
  *
@@ -2418,6 +2828,15 @@ function nodeLabel(nodeType, id) {
         return sql(
           "SELECT short_sha || ' ' || subject AS label FROM arkg_git_commits WHERE id = ?",
         ).get(id);
+      case 'service':
+        return sql('SELECT name AS label FROM arkg_services WHERE id = ?').get(id);
+      // Qualified by the service, because an operation name is only unique
+      // inside one: two services both with a `GET /health` are two rows, and an
+      // answer naming them both `GET /health` is unreadable.
+      case 'operation':
+        return sql(
+          "SELECT service_name || ' ' || name AS label FROM arkg_operations WHERE id = ?",
+        ).get(id);
       default:
         return null;
     }
@@ -2484,7 +2903,20 @@ export function getAppArchitecture() {
   const totalFlows = count('arkg_named_flows');
   const totalComponents = count('arkg_components');
   const totalEndpoints = count('arkg_api_endpoints');
-  if (totalFlows === 0 && totalComponents === 0 && totalEndpoints === 0) return null;
+  /*
+   * Services count towards "this graph holds something".
+   *
+   * Without them a database fed only by an exporter — spans arriving for
+   * recordings nobody has sent yet, which is the ordinary order — answers
+   * `null`, and every caller renders that as "no graph". The three counts above
+   * are all things a *person* did; this is the one thing the graph can learn
+   * without anybody doing anything, so leaving it out of the test made the one
+   * state Tier 2 introduced indistinguishable from an empty install.
+   */
+  const totalServices = count('arkg_services');
+  if (totalFlows === 0 && totalComponents === 0 && totalEndpoints === 0 && totalServices === 0) {
+    return null;
+  }
 
   const lastFlow = sql('SELECT MAX(last_observed_at) as t FROM arkg_named_flows').get()?.t;
   const lastComponent = sql('SELECT MAX(last_observed_at) as t FROM arkg_components').get()?.t;
@@ -2562,6 +2994,114 @@ export function getAppArchitecture() {
   };
 }
 
+// ── Backend traces, read back ─────────────────────────────────────────────────
+
+/** One operation row in the shape every answer here hands out. */
+const operationOut = (row) => ({
+  id: row.id,
+  service: row.service_name,
+  name: row.name,
+  kind: row.kind,
+  sourceFile: row.source_file,
+  sourceLine: row.source_line,
+  frequency: row.frequency,
+  failureRate: row.failure_rate,
+  timingP50Ms: row.timing_p50_ms,
+  timingP95Ms: row.timing_p95_ms,
+  gitSha: row.git_sha,
+  firstObservedAt: row.first_observed_at,
+  lastObservedAt: row.last_observed_at,
+});
+
+/**
+ * Every service the graph has seen, busiest first.
+ *
+ * `operationCount` rides along because it is the one number a caller listing
+ * services always wants next and cannot get from the row — a service with one
+ * operation and a service with sixty read identically otherwise — and because
+ * the alternative is a query per row from whoever is rendering the list. It is
+ * not stored: `frequency` is an observation count and this is a `COUNT(*)` over
+ * a table, and a stored copy of a derivable number is a copy that goes stale.
+ */
+export function getServices() {
+  if (!db) return [];
+  return sql(`
+    SELECT s.*, (SELECT COUNT(*) FROM arkg_operations o WHERE o.service_id = s.id) AS operation_count
+      FROM arkg_services s
+     ORDER BY s.frequency DESC, s.name ASC
+  `).all().map((row) => ({
+    id: row.id,
+    name: row.name,
+    version: row.version,
+    environment: row.environment,
+    frequency: row.frequency,
+    operationCount: row.operation_count,
+    gitSha: row.git_sha,
+    firstObservedAt: row.first_observed_at,
+    lastObservedAt: row.last_observed_at,
+  }));
+}
+
+/**
+ * The operations of one service, by `service.name` rather than by node id.
+ *
+ * The name is what a caller has: it came off a span, out of `getServices`, or
+ * out of a question somebody typed, and requiring the hash first would make
+ * every reader do a lookup to ask a question they already had the key for.
+ */
+export function getOperationsForService(name) {
+  if (!db) return [];
+  return sql(`
+    SELECT * FROM arkg_operations WHERE service_name = ?
+    ORDER BY frequency DESC, name ASC
+  `).all(name).map(operationOut);
+}
+
+/**
+ * The backend work one recorded request reaches, nearest first.
+ *
+ * This is the FE → BE → DB chain read back out: `depth` 1 is what answered the
+ * request, and everything deeper was caused by that rather than by the browser
+ * — which is why only the root operations carry an edge from the endpoint at
+ * all, and why the query below has to walk instead of joining once.
+ *
+ * Breadth-first, so a caller taking the first few gets the layer nearest the
+ * request rather than one arbitrary branch followed to its leaf. `seen` and
+ * `limit` bound the walk: an edge table is shared mutable state that anything
+ * reaching the span endpoint can add to, and an unbounded traversal in a server
+ * handling a request is the failure `buildSpanTree` guards the same way.
+ *
+ * An id with no row is walked through and not reported — a pruned operation is
+ * still evidence that the chain continues past it.
+ */
+export function getBackendForEndpoint(method, url, limit = 50) {
+  if (!db) return [];
+  const start = endpointId(String(method ?? 'GET'), String(url ?? ''));
+  const next = sql(`
+    SELECT to_node_id AS id FROM arkg_edges
+     WHERE type = 'calls' AND from_node_type = ? AND from_node_id = ? AND to_node_type = 'operation'
+     ORDER BY frequency DESC, id ASC
+  `);
+  const row = sql('SELECT * FROM arkg_operations WHERE id = ?');
+
+  const cap = Math.max(1, Math.trunc(limit));
+  const seen = new Set();
+  const out = [];
+  const queue = next.all('api_endpoint', start).map((edge) => ({ id: edge.id, depth: 1 }));
+
+  while (queue.length && out.length < cap) {
+    const { id, depth } = queue.shift();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const found = row.get(id);
+    if (found) out.push({ ...operationOut(found), depth });
+    for (const edge of next.all('operation', id)) {
+      if (!seen.has(edge.id)) queue.push({ id: edge.id, depth: depth + 1 });
+    }
+  }
+  return out;
+}
+
 /**
  * SQLite caps a statement at 999 bound parameters, so an `IN (…)` over an
  * unbounded id list is issued in chunks of this size.
@@ -2625,6 +3165,8 @@ export function pruneOldObservations(retentionDays) {
     const storeIds = ids('arkg_state_stores');
     const keyIds = ids('arkg_state_keys');
     const commitIds = ids('arkg_git_commits');
+    const serviceIds = ids('arkg_services');
+    const operationIds = ids('arkg_operations');
 
     deleteEdgesFor('component', compIds);
     deleteEdgesFor('api_endpoint', epIds);
@@ -2634,6 +3176,24 @@ export function pruneOldObservations(retentionDays) {
     // that are pruned on their own schedule, and a changed_in edge left behind
     // by a pruned commit would name a node that is gone.
     deleteEdgesFor('git_commit', commitIds);
+    /*
+     * The backend nodes age out on the same schedule as everything else, and
+     * they are the ones that most need to.
+     *
+     * Every other node here is created by somebody recording, so the graph
+     * grows at the rate a person works. These are created by a span arriving on
+     * an endpoint nothing on this machine controls the cadence of — a busy
+     * backend exporting under trace ids DevFlow minted can add operations
+     * faster than any recording ever will. A retention policy that reached
+     * every node kind except the two fed from off the machine would be pointing
+     * the wrong way round.
+     *
+     * The operation edges go first for `git_commit`'s reason: a `calls` edge
+     * from a pruned endpoint to a live operation names a node that is gone, and
+     * `getBackendForEndpoint` walks exactly those edges.
+     */
+    deleteEdgesFor('operation', operationIds);
+    deleteEdgesFor('service', serviceIds);
 
     // An alias to a node that no longer exists resolves to nothing, which reads
     // as "never observed" — the same answer, one lookup later. Dropped with the
@@ -2651,8 +3211,21 @@ export function pruneOldObservations(retentionDays) {
     deleteNodes('arkg_state_stores', storeIds);
     deleteNodes('arkg_state_keys', keyIds);
     deleteNodes('arkg_git_commits', commitIds);
+    deleteNodes('arkg_operations', operationIds);
+    deleteNodes('arkg_services', serviceIds);
 
     sql('DELETE FROM arkg_named_flows WHERE last_observed_at < ?').run(cutoff);
+
+    /*
+     * The per-fact ledger goes with them.
+     *
+     * It exists so that one recording's trace, arriving across several
+     * deliveries, counts once — so a row is only meaningful while the node it
+     * deduplicates against is still here. Left behind, it grows without bound
+     * and, worse, would suppress the re-counting of an operation that had been
+     * pruned and then observed again.
+     */
+    sql('DELETE FROM arkg_trace_observations WHERE observed_at < ?').run(cutoff);
 
     // The count is components and endpoints, as it has always been: it is
     // reported to a reader as how much of the graph went stale, and adding two

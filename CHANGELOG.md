@@ -30,6 +30,23 @@ and cannot fail this way, so they are traced freely; everything else waits for
 accepts the header, and there is no way to discover that except by sending the
 request that might fail.
 
+**That hazard is now measured against a real browser rather than reasoned from
+the specification.** Chromium was pointed at two local origins whose API allowed
+the origin and the method on both paths and differed only in whether the
+`OPTIONS` response named the header in `Access-Control-Allow-Headers`. With no
+custom header, the request went straight out and resolved with no preflight at
+all. Against the path that named the header, the browser preflighted and then
+sent the real request, which arrived carrying it. Against the path that did not,
+the page's `fetch` rejected with `TypeError: Failed to fetch` and the real
+request was never sent. `traceparent` failed identically: being a W3C standard
+buys no exemption from the mechanism, only a better chance that a backend already
+allows it. Two things follow. A failure like that leaves **no server-side
+evidence** — the API logged the preflight and never the request — so an
+application broken this way shows a failed fetch in the browser and nothing at
+all in the backend's logs. And **DevFlow cannot see the preflight either**:
+Chromium makes it in the network service, where a patch on `fetch` in the page
+never sees it, so the rejection is all a diagnostic could ever work from.
+
 **Three more refusals, each for its own reason.** A request the page has already
 put a `traceparent` on is left exactly as it was — overwriting one would reparent
 somebody's production spans under an id their backend has never seen. A `Request`
@@ -653,6 +670,53 @@ explanation for that was a tooltip on a disabled button, which Chrome does not
 render — so the first run of every install showed a correct source path beside a
 dead button with nothing to say why. It is on the card now.
 
+
+**DevFlow can now ingest the spans your backend exported under that trace id, so
+a recorded request joins to the work it caused on the far side.** Point your
+OTLP exporter at `POST /v1/traces` on the MCP server and `get_backend_trace`
+prints the span tree for a recording's traced calls: which service answered,
+what it called, how long each step took, which one failed, and the SQL your own
+tracer chose to record. This is the FE → BE → DB chain, and it is the other end
+of the header — the id DevFlow put on the request is the id the spans arrive
+under.
+
+**It is off unless you start the server with `DEVFLOW_OTEL=1`, and that is the
+opposite default from the commit stamp on purpose.** The stamp reads a
+repository this machine already owns; this accepts a document written by a
+process DevFlow has never met and turns it into rows in the accumulated graph.
+Every other write the server takes is checked to have come from the extension
+and this one cannot be, because the sender is your backend, which has no
+extension origin.
+
+**OTLP/JSON only.** A protobuf delivery is refused with a `415` naming the one
+line that fixes it, `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/json`. A protobuf
+decoder is a second wire format to get exactly right and a subtly wrong one does
+not throw — it writes a plausible number into your graph.
+
+**Spans arrive before the recording does, so they are held rather than dropped.**
+Your backend exports within seconds of the request and you press Send when you
+are ready; the join therefore runs when a recording arrives, and re-sending a
+recording is how spans that turned up late get joined. Nothing with only one end
+is written to the graph: a span whose trace id matches no recording is real, and
+DevFlow has nothing to attach it to, so it waits and expires and never becomes a
+node. `get_backend_trace` keeps three cases apart that have three different
+fixes — a call that was never traced, a traced call whose spans have not
+arrived, and a joined trace.
+
+**The graph gained two node kinds, and neither of them is a span.** A span has a
+random id, happens once and is never seen again, so a node per span would make
+the graph a log. What accumulates is the **service** and the **operation** — that
+service plus the span's name — with the timing and failure rates every other node
+here carries. Operation names collapse opaque path segments the same way endpoint
+names already did, so a handler is one node rather than one per invoice id.
+
+**Backend nodes age out on the same retention sweep as everything else**, and
+they are the ones that most need to: every other node in the graph is created by
+you recording, while these are created by a span arriving on an endpoint nothing
+on your machine paces. A graph holding only services now also counts as a graph
+that holds something — spans normally arrive before the recording does, so
+"services and no recordings yet" is the ordinary intermediate state and it used
+to read as an empty install.
 ## 3.1.1 — 2026-08-29
 
 **The panel's result view reads in the right order.** `Source preview` is the
