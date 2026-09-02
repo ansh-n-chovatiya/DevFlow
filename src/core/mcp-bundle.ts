@@ -158,3 +158,55 @@ export { DEFAULTS, fieldFor } from '../features/settings/fields.js';
 export { MACHINE_KEYS } from '../features/settings/fields.js';
 export { resolve } from '../features/settings/resolve.js';
 export { flowRendering, renderLimits } from '../features/settings/render.js';
+
+/*
+ * What commit a recording was made at, and what that claim is worth.
+ *
+ * Here rather than in `mcp-server/git.js` because the spawning is the small
+ * half. The decisions are which of four repository states a reading is, whether
+ * a SHA may be written to a join key, what a stamp means when the recorded page
+ * was not served by this machine, and which arguments may reach an argv — none
+ * of which should need a repository built on disk to exercise, and one of which
+ * is the whole security argument for running `git` at all.
+ */
+export type {
+  Checkout,
+  CheckoutState,
+  Commit,
+  CommitChange,
+  FlowCommit,
+  NoCommitReason,
+} from './git/index.js';
+export {
+  COMMIT_FORMAT,
+  commitCaveats,
+  describeCommit,
+  flowCommit,
+  isSha,
+  isShaPrefix,
+  joinableSha,
+  matchSourceFile,
+  normaliseSourcePath,
+  parseCommitRecord,
+  parseLog,
+  parseStatusBranch,
+  projectRelative,
+  readCheckout,
+  recordedLocally,
+  shaMatches,
+  shortSha,
+  unquotePath,
+} from './git/index.js';
+
+/*
+ * The commit join, which is the whole of what Work Stream 3.4 adds.
+ *
+ * `compare_flows` already does the comparison; this decides which two
+ * recordings are the two builds, crosses what shipped against what DevFlow has
+ * seen running, and — the part that most wants to be pure — keeps the four
+ * sections of the answer from being read as one kind of claim. Three of them
+ * are observations and the fourth is a shortlist, and a renderer that blurs
+ * that is a renderer that names a cause.
+ */
+export type { DeployPair, DeployRecording, PairChoice, Suspect } from './deploy/index.js';
+export { choosePair, renderDeployDiff, suspectFiles } from './deploy/index.js';

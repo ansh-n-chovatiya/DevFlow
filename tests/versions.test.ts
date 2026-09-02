@@ -108,6 +108,13 @@ describe('the published MCP server', () => {
      * worse: it is imported dynamically and only once a user has switched
      * replay on, so a publish that omits it works perfectly for everyone who
      * never enables the feature and fails for exactly the person who did.
+     *
+     * `git.js` is the fifth, and it takes `arkg.js`'s road to a worse place. It
+     * is reached through the same guarded dynamic import, so a publish that
+     * omits it throws nothing, fails nothing and stamps nothing: every
+     * recording is saved with no commit and the graph's `git_sha` columns are
+     * NULL again — the exact defect the stamp exists to close, arrived at by
+     * shipping rather than by deciding.
      */
     expect(server.files).toEqual([
       'server.js',
@@ -115,6 +122,7 @@ describe('the published MCP server', () => {
       'core.js',
       'arkg.js',
       'replay.js',
+      'git.js',
       'README.md',
     ]);
   });

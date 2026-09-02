@@ -461,6 +461,19 @@ export interface MarkdownOptions extends Omit<Partial<ExportOptions>, 'images' |
    * says nothing — which is the honest reading and the cheap one.
    */
   settings?: readonly string[];
+  /**
+   * The commit this recording was made at, already worded — and worded by the
+   * caller for `settings`' reason, plus one of its own.
+   *
+   * The MCP server stamps a flow with the commit of the project it runs in, at
+   * the moment the recording arrives; the extension writing its own export has
+   * no repository and no commit, so this is simply absent there and the header
+   * says nothing. What the stamp is worth is not a fact about markdown — it is
+   * narrower than "the build that was running" and needs a caveat when the page
+   * was not served by this machine — so `core/git` does the wording and this
+   * prints it.
+   */
+  commit?: string;
 }
 
 /** Render a flow as Markdown. */
@@ -505,6 +518,15 @@ export function exportToMarkdown(steps: Step[], options: MarkdownOptions = {}): 
    * no screenshots needs it before the first step, not after it. Absent for a
    * recording made at the defaults, which is almost all of them.
    */
+  /*
+   * Above the settings, because it is the more consequential of the two: which
+   * build this recording is about changes what every step below it is evidence
+   * of, while a moved switch changes only how much of them was captured.
+   */
+  if (options.commit) {
+    lines.push('');
+    lines.push(`Recorded at ${options.commit}`);
+  }
   if (options.settings?.length) {
     lines.push('');
     lines.push(`Recorded with non-default settings: ${options.settings.join(' · ')}`);
