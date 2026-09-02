@@ -24,7 +24,17 @@ gate:
   output_tail: 20
   timeout_seconds: 240
 auto_load: []
-redact: []
+# Extra scrub patterns, applied on the write path to the journal and to bundles.
+#
+# `ctx/redact.py` knows about credentials — API keys, JWTs, AWS ids, PEM blocks
+# — and nothing about *identity*. The journal records a path for every file
+# touched, relative while the file is inside the repo and **absolute once it is
+# not**, so a single edit outside the tree writes `/Users/<you>/…` into a file
+# that is committed by design. That is a macOS account name published to
+# whoever clones this repo. The home prefix is scrubbed here until the upstream
+# journal records out-of-tree paths as a marker instead of a path.
+redact:
+  - '/Users/[^/\s]+'
 # The done-gate. One check, because this project already has exactly one
 # definition of done and a second would be a rule that could drift from it:
 # `npm run verify` runs typecheck on both tsconfigs, eslint, the four lint

@@ -162,11 +162,21 @@ directly and read `$?`, which is what the ledger's `cmd` check does.
 default and writes nothing by hand — right for a single-session change. Reach
 for L1 (`/ctx:task`) when the change has acceptance criteria worth fixing before
 you start, so "done" is not decided afterwards by whoever is tired. Reach for L2
-(`/ctx:spec` → `/ctx:plan` → `/ctx:start` → `/ctx:merge`) when the work splits
+(`/ctx:spec`, then the dispatch commands) when the work splits
 into pieces with different owners — which is the parallel-subagent pattern this
 repo already runs on, each agent holding a disjoint file set and forbidden to
 edit anyone else's. That pattern **is** L2; its units are the same thing with
 the ownership and the merge written down instead of held in one head.
+
+**L2's dispatch half is not installed here, so check before relying on it.**
+The `ctx` plugin pinned on this machine is `0.1.0`, whose CLI stops at `spec` —
+`plan`, `start`, `merge` and `handoff` are subcommands it does not have, so
+`.ctx/plans/` cannot be filled and `/ctx:plan` does not exist. The repo has them;
+the installed copy does not, and both call themselves `0.1.0`, so nothing detects
+the gap for you. Until it is updated, L2 in this repo means the spec plus the
+disjoint-ownership subagent pattern run by hand. Confirm with
+`ctx plan --help` rather than trusting this paragraph, which was true when it was
+written.
 
 **An ADR in `.ctx/decisions/` is immutable.** Overturn one by writing a new ADR
 that supersedes it, never by editing the old one. The record of having changed
