@@ -1,15 +1,21 @@
 # DevFlow — Phase 3, continued
 
-Read `CLAUDE.md`, `ROADMAP_AND_PHASES.md` (start at "Status key", then read the
-**Phase 3** preamble and **Work Stream 3.2** in full) and
+Read `CLAUDE.md`, `ROADMAP_AND_PHASES.md` (start at "Status key", then the
+**Phase 3** preamble and **Work Streams 3.1 and 3.2** in full) and
 `graphify-out/GRAPH_REPORT.md` before touching anything. This file is the
 handoff; the roadmap is the truth about what is done.
 
 ## Where the project is
 
-**You are on `main`; `phase-3/git-lineage` is merged into it. `npm run verify`
-is green: 142 test files, 3019 tests.** Nothing is pushed — `main` is well ahead of `origin/main`, and pushing
-has not been asked for. Do not push without being asked.
+**You are on `main`, working tree clean, `npm run verify` green: 142 test files,
+3019 tests.** Two branches are merged into it and neither still exists as work in
+progress: `phase-3/git-lineage` (Work Stream 3.4 and the Phase 0 git items) and
+`phase-3/trace-headers` (Work Stream 3.1 Tier 1).
+
+**`main` is two commits ahead of `origin/main`** — the 3.4 work reached the
+remote, the 3.1 work has not. Pushing has not been asked for since. Do not push
+without being asked, and check `git rev-list --count origin/main..main` rather
+than trusting this sentence, which was true when it was written.
 
 **Phases 0–2 are finished, and now genuinely so.** The three items that were
 blocked on Phase 3 — `git_sha`, `git_commits`, `changed_in` — are closed. What is
@@ -81,9 +87,9 @@ stale `traceparent` in that list made the second request refuse itself as alread
 traced. The `loadend` listener a few lines away already carries a comment about a
 *different* bug of the same shape. **Instance reuse is this file's blind spot.**
 
-### Work Stream 3.4, and the four things it settled
+### Work Stream 3.4 — the commit stamp, and the four things it settled
 
-### The commit stamp, and what it does not claim
+#### The commit stamp, and what it does not claim
 
 `src/core/git/index.ts` is the pure half — the decisions — and
 `mcp-server/git.js` is the spawning. Read the first file's header before
@@ -103,14 +109,14 @@ because its whole budget is answering *did this break*.
 **A dirty tree records the SHA on the flow and writes no `git_sha` anywhere in
 the graph.** `joinableSha()` is that rule, in one expression, deliberately.
 
-### `git` runs without `replay_flow`'s gate, and the argument is on the record
+#### `git` runs without `replay_flow`'s gate, and the argument is on the record
 
 It reads, its argv is fixed, and the only non-literal argument is a commit
 `isShaPrefix()` has vouched for. `DEVFLOW_GIT=0` is the inverse switch. The full
 argument is at the top of `mcp-server/git.js`. **If you add a second command
 there, it takes a fixed argv or a validated hex, and nothing else.**
 
-### 3.4 is a join, not a second comparison
+#### 3.4 is a join, not a second comparison
 
 `compare_flows` already did the hard half. The roadmap's
 `compare_flows_across_deploys(flowId, sha1, sha2)` signature does not survive
@@ -121,7 +127,7 @@ The output has four sections and **three of them are observations and the fourth
 is a shortlist**, which is stated in the answer in those words and asserted in
 `tests/deploy.test.ts`. Do not let a later change blur that line.
 
-### Two bugs the tests found, worth knowing about because of their shape
+#### Two bugs the tests found, worth knowing about because of their shape
 
 Both were found by mutation-testing rather than by reading, and both had passed
 review:
@@ -180,19 +186,42 @@ nothing in `src/core/react/` transfers. Each adapter is a Phase-1-sized body of
 work. Treat 3.5 as out of scope unless told otherwise, and say so rather than
 starting one and leaving two.
 
-### Tier 2 will want a setting, and the settings table is frozen at the edges
+### Adding a setting, now that 3.1 has actually done it
 
 `src/features/settings/fields.ts` is the one table — a setting not in it does not
-exist — but `docs/CONTRACTS.md` §3.6 enumerates the prefixes each concept owns
-and **§3 and §4 are frozen**. `src/features/arkg/ingest.ts` hit exactly this and
-rode the existing `mcpAutoSend` switch rather than inventing a prefix; its header
-explains why that was the conservative reading rather than a way around the rule.
-Do the same, or say the contract is wrong — do not fix it locally.
+exist — and `docs/CONTRACTS.md` §3.6 enumerates the prefixes each concept owns,
+with §3 and §4 **frozen**. What that costs in practice, learned the expensive
+way:
 
-Note that the git work needed no setting at all: `DEVFLOW_GIT`,
-`DEVFLOW_PROJECT_ROOT` and `DEVFLOW_REPLAY` are environment variables on the
-*server's* own environment, deliberately, because `POST /config` is reachable by
-any page the browser visits. A machine-level capability is not a setting.
+- **There is no free-form list type, and do not add one.** `levels` is a
+  multi-select over a *fixed* `options` array and `resolve()` filters out
+  anything not in it, so a user-authored list would be silently discarded.
+  `tests/settings-row-shape.test.ts` asserts the five type names and the shape
+  count specifically so a sixth cannot arrive unnoticed. 3.1's origins allow-list
+  is a pattern-validated `string` parsed by a pure function in `core/trace`, and
+  **the pattern must be no stricter than the parser is forgiving** — a value the
+  pattern rejects resolves back to the default, and the visible symptom is a
+  feature that silently never happens.
+- **Two test files assert counts in prose and in test names**, not only as
+  integers: `tests/settings-advanced.test.ts` (Tier 2 count, and the frozen
+  `recorded` array) and `tests/settings-agent-push.test.ts` (the exact sorted
+  `AgentConfig` key list). Update the sentences, not just the numbers — the file
+  says so about itself, having been wrong before. Several *other* files carried
+  counts that had been stale for many sessions; those are now written durably
+  ("every row", not "seventy-three") rather than renumbered, which is the fix
+  that does not come back.
+- **`recorded: true` is a real decision**, not boilerplate: it freezes the
+  setting at `START_RECORDING` and stamps it on the flow. 3.1's three are
+  recorded because injection only happens while recording and a reader of a
+  recording must be able to tell its requests carried a header.
+- Run `npm run build:settings`; the generated JSON is committed and compared
+  key-for-key.
+
+Note that neither the git work nor the trace work needed a setting for its
+*machine* half: `DEVFLOW_GIT`, `DEVFLOW_PROJECT_ROOT` and `DEVFLOW_REPLAY` are
+environment variables on the server's own environment, deliberately, because
+`POST /config` is reachable by any page the browser visits. **A machine-level
+capability is not a setting.** A per-recording preference is.
 
 ---
 
@@ -280,11 +309,9 @@ not an omission. To overturn one, the argument to beat is in the roadmap.
 - Any change touching `src/` or `public/` needs a `## Unreleased` changelog entry.
 - Strings obey the frozen `docs/CONTRACTS.md` §4. It is frozen — if it is wrong,
   say so; do not fix it locally.
-- A setting that is not in `src/features/settings/fields.ts` does not exist.
-  After touching that table run `npm run build:settings` — and note that
-  `tests/settings-defaults.test.ts` has a `SOURCE` table naming every field, and
-  `tests/settings-advanced.test.ts` asserts **counts with the number written into
-  the test name and the prose**. Update the sentences, not just the integers.
+- A setting that is not in `src/features/settings/fields.ts` does not exist, and
+  after touching that table you run `npm run build:settings`. See **Adding a
+  setting** above for what else that drags with it.
 - Comments say **why**, not what.
 
 ## How to work
@@ -297,15 +324,26 @@ not an omission. To overturn one, the argument to beat is in the roadmap.
 - **Write tests that would fail against the bug.** Break the code the test covers,
   confirm it goes red, revert — *by restoring the text, not with git*. When a
   mutation survives, ask **where the code is** and **what the fixture actually
-  distinguishes** before you ask what the assertion missed. Last session ran
-  twenty-one mutations across four files; one survived, and the honest answer was
-  that the decision lived one function away and *was* covered.
+  distinguishes** before you ask what the assertion missed. The last two sessions
+  ran mutations across nine files and three survivors were worth the exercise on
+  their own: one because the decision lived a function away and genuinely *was*
+  covered, one because a fixture happened to make the right rule and a wrong one
+  agree, and one because a whole transport — `XMLHttpRequest` — had no test at
+  all. **A survivor is a question, not a verdict.**
 - **Measure the internals rather than reasoning about them.** Git is not a
   dependency of this repo. Ten minutes building throwaway repositories in a
   scratch directory settled the four repository states, the merge-commit file
   list and the exact `git status --porcelain --branch` shapes before a line of
   parser was written, and every one of them is now a fixture built from real
-  output.
+  output. The same habit corrected two comments that asserted things about
+  `new URL` and about `Request` that nobody had run.
+- **Know what you did not measure, and say so.** 3.1 rests on a browser
+  behaviour — that a cross-origin request with a custom header preflights, and
+  fails when the backend does not allow it — and the extension was not connected,
+  so it was checked from the specification and the *server* side of a probe and
+  no further. That is written into the commit message and the roadmap rather than
+  glossed. An unmeasured claim you have named is a known gap; one you have not is
+  a belief.
 - **Vitest reads the `@vitest-environment` directive from anywhere in the file,
   comments included.** Writing it inside a doc comment to explain why a file does
   *not* use jsdom silently switches jsdom on. It cost an agent a debugging cycle.
