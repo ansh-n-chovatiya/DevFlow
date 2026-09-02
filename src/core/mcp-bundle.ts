@@ -52,10 +52,24 @@ export {
  * them.
  *
  * Its header is the important part of this export. The mechanism is a search
- * for the same value across four independent observations, not a data-flow
- * trace, and the tool that prints it has to keep saying so.
+ * for the same value across four independent observations of one recording,
+ * not a data-flow trace, and the tool that prints it has to keep saying so.
+ * The fifth layer — the backend spans Tier 2 joins by trace id — is the one
+ * exception and only half an exception: *which call* a span belongs to is
+ * known, and that the value is in one is still a sighting.
  */
 export { traceValue, valueOfStep } from './provenance/index.js';
+export type {
+  BackendHop,
+  BackendInput,
+  BackendPath,
+  BackendReading,
+  ProvenanceHit,
+  ProvenanceLayer,
+  ProvenanceMatch,
+  ProvenanceResult,
+  UnsearchedLayer,
+} from './provenance/index.js';
 
 /*
  * The lexical half of `explain_feature`, on this side for `traceValue`'s reason
@@ -264,4 +278,5 @@ export {
   readOtlpTraces,
   readSpanId,
   readTraceId,
+  tracedCallsOf,
 } from './otel/index.js';

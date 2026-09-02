@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+**`get_value_provenance` now reaches past the response body to the work that
+produced it.** Ask where a value on the screen came from and the answer can now
+carry a fifth layer: the handler that answered the request, the calls it made,
+and the query at the bottom — joined to the recording by the trace id DevFlow
+put on the request and your backend echoed. It is one tool, not a new one. A
+`get_full_lineage` beside the two tools that already answer halves of this
+question would have been a third renderer of one thing, which is a mistake this
+project has made once already.
+
+**The chain is a known attachment; the search over it is a sighting, and the
+reply holds both apart.** Which call a span belongs to is *known* — 128 random
+bits DevFlow minted, echoed back — and that is a stronger link than anything
+else in the tool. But a span carries no response body, so a value found in a
+query's text and the same value found in a response body are still two sightings
+and not a proof that one became the other. The reply says which of the two it is
+showing you, every time.
+
+**Where a value you can see actually appears in a trace was measured, and the
+design was wrong before it.** A live capture — express, knex and better-sqlite3
+under the official auto-instrumentations, continuing a real `traceparent` — says
+a response body appears **nowhere** in a trace, and the value appears in exactly
+three places. DevFlow was reading one of them. It now reads the query string as
+well (`?amount=1284.00` travels in plain sight, and only the path was being
+read), and the stack trace of a failed span. That last one is the surprise: on
+the *same* span, the query attribute said `where id = ?` while the stack trace
+said `where id = '8814'`, because the driver interpolates when it formats its own
+error. The failure path is the richest evidence a trace carries, which is exactly
+backwards from the intuition — and it is the path somebody asking why a value is
+wrong is already on.
+
+**Do not expect the value itself to be in the query, and the tool no longer
+pretends you should.** Real instrumentation parameterises: knex, pg and mysql2
+record `= ?` and `= $1`. The same instrumentation records `where id = 8814` the
+moment the application builds its SQL by concatenation instead. Neither "the
+value is in the query" nor "it never is" is true, so the chain is shown whenever
+the value turned up at *either* end of the call rather than only where the text
+matched. The query is printed exactly as your tracer recorded it and is never
+rewritten.
+
+**"Controller Handler: `invoice_controller.py:45`" is a real answer for a
+hand-instrumented service and almost nobody else, which is now said rather than
+implied.** Of the 41 official Node instrumentations, exactly one records where
+code is written, and it is a Cucumber runner recording a `.feature` path. The
+file and line are printed when your instrumentation supplies them; their absence
+is reported as a fact about the instrumentation rather than as DevFlow failing to
+find something.
+
+**One definition of "which calls in a recording carried a trace id" replaced
+two.** The server kept its own copy that numbered steps by position, while every
+renderer beside it prefers the step's own number — so `get_backend_trace`
+filtered on one number and printed the other. DevFlow's own sender renumbers on
+the way out, which is why nobody had seen it; the endpoint accepts a recording
+from any page the browser visits, which is why that was not a reason to keep two.
+
 **DevFlow can now tag the requests a recorded page makes with a trace id, and
 this is the first thing it has ever done that is not observation.** Everything
 before it watches. With `network.traceHeader` on, an outbound request carries

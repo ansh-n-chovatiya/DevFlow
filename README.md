@@ -103,7 +103,7 @@ status key at the top of [`ROADMAP_AND_PHASES.md`](./ROADMAP_AND_PHASES.md).
 | **Phase 0** | Accumulating Runtime Knowledge Graph (ARKG) — the foundational data layer | In progress: the graph, its ingestion pipeline and its three MCP tools are in. `state_keys` and `git_commits` nodes wait on Phases 1 and 3 |
 | **Phase 1** | Runtime-to-Source Intelligence: source mapping with confidence scoring, causal threading, "Why did this render?" | Partly done: source mapping and the locator are the shipped product. Causal threading, state-store inspection and render blame are not started |
 | **Phase 2** | Autonomous bug reproduction, "Why is this value here?" provenance, Interaction-to-Test compiler, natural language app navigator | Started: the Interaction-to-Test compiler exports Playwright and Cypress. The rest is Months 4–6 |
-| **Phase 3** | Full-stack wire & DB lineage (OTel), Living Architecture Map, Temporal Diff & regression detection, Source → Browser live link | Months 7–9 |
+| **Phase 3** | Full-stack wire & DB lineage (OTel), Living Architecture Map, Temporal Diff & regression detection, Source → Browser live link | Mostly done: trace headers, OTel span ingest, value lineage to the backend, and cross-deploy comparison are in. The Living Architecture Map needs a live connection to an open page, which nothing here does yet, and the Vue/Svelte/RSC adapters are three Phase-1-sized work streams rather than one |
 | **Phase 4** | Production telemetry ingestion, autonomous regression watcher (CI), self-healing CI bot, Accessibility Autopilot | Months 10–12 |
 | **Phase 5** | Team intelligence, counterfactual replay, platform-level ambient intelligence | Year 2+ |
 

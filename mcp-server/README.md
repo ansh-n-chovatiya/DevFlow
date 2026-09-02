@@ -171,6 +171,24 @@ recording watched leave the browser is joined to the work it caused on the far
 side. `get_backend_trace` prints the result as the span tree it is — which
 service answered, what it called, how long each step took and which one failed.
 
+`get_value_provenance` uses the same join for a narrower question: given one
+value you can see on the screen, it now reaches past the response body to the
+work that produced it — the handler that answered, the calls it made, the query
+at the bottom, with the file and line each was written on when your
+instrumentation records them. **That chain is a known attachment and the value
+search over it is not.** Which call a span belongs to is known, because it is
+joined by the 128-bit id DevFlow minted and your backend echoed. That the same
+text appears in a span is a sighting, exactly as weak as the other four layers,
+and the reply keeps the two apart.
+
+**Do not expect the value itself to be in the query.** Real instrumentation
+parameterises: what a tracer records is `SELECT total_amount FROM invoices WHERE
+id = $1`, so a search for `$120.00` finds nothing there and finds it in the
+response body one layer up. That is why the chain is printed whenever the value
+turned up at *either* end of the call, rather than only where the text matched.
+The query is shown exactly as your tracer recorded it and is never rewritten —
+a tidied query your database never saw would be the wrong kind of helpful.
+
 **It is off unless you turn it on.** Start the server with `DEVFLOW_OTEL=1`.
 This is the opposite default from the commit stamp, deliberately: that reads a
 repository this machine already owns, while this accepts a document from off the
