@@ -304,9 +304,13 @@ const COLLIDING_LENGTH = 4;
 /**
  * Every field read out of a flow is untrusted.
  *
- * A `flow.json` arrives over loopback from any page the browser happens to
- * visit, and `POST /flows` validates its id and that `steps` is an array and
- * nothing else. `mcp-server/server.js` already treats a step this way where it
+ * A `flow.json` arrives over loopback from anything on this machine that can
+ * reach the port, and `POST /flows` validates its id and that `steps` is an
+ * array and nothing else. Not from any page the browser visits, which is what
+ * this said and is not true: `extensionOrigin` admits a request with no
+ * `Origin` header or an extension's, and a browser attaches one to every
+ * cross-origin POST. A local process is the reachable writer, which leaves
+ * every field below exactly as untrusted as before. `mcp-server/server.js` already treats a step this way where it
  * *prints* one; this is reached by the same object through a different door,
  * and a `text` that is a number turns an answer into a protocol error rather
  * than into a smaller answer.

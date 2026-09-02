@@ -53,8 +53,9 @@ find something.
 two.** The server kept its own copy that numbered steps by position, while every
 renderer beside it prefers the step's own number — so `get_backend_trace`
 filtered on one number and printed the other. DevFlow's own sender renumbers on
-the way out, which is why nobody had seen it; the endpoint accepts a recording
-from any page the browser visits, which is why that was not a reason to keep two.
+the way out, which is why nobody had seen it; the endpoint accepts a flow from any
+local process that reaches the port without an `Origin` header, which is why that
+was not a reason to keep two.
 
 **DevFlow can now tag the requests a recorded page makes with a trace id, and
 this is the first thing it has ever done that is not observation.** Everything
