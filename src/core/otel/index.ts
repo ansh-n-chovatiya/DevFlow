@@ -675,8 +675,11 @@ export interface TracedCall {
  * renderer beside it prefers the step's own `stepNumber`, so a flow whose
  * numbers do not match its positions filtered on one and printed the other.
  * DevFlow's sender renumbers on the way out, which is why nobody had seen it;
- * `POST /flows` accepts a flow from any page the browser visits, which is why
- * that is not a reason to leave two.
+ * `POST /flows` accepts a flow from anything on this machine that can reach the
+ * port without an `Origin` header, which is why that is not a reason to leave
+ * two. (Not from a *page*: `extensionOrigin` admits a missing origin or an
+ * extension's, and a browser sends one on every cross-origin POST. The input is
+ * still untrusted; the route is a local process, not a visited site.)
  *
  * A call has a `traceId` only when the injection rule allowed one — off by
  * default, only while recording, and only to an origin the user named — so on

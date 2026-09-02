@@ -1,0 +1,47 @@
+# Context Ledger configuration.
+#
+#   level 0  trace    always on, no gates, ~55 tokens per session
+#   level 1  tracked  one task file, done-gate active
+#   level 2  planned  spec + plan + units, both gates active
+#
+# briefing_chars caps what SessionStart may inject per level. Raising it
+# is the fastest way to recreate the context problem this tool solves.
+schema: 1
+profile: code
+level: 0
+briefing_chars:
+  l0: 220
+  l1: 900
+  l2: 2600
+journal:
+  digest_lines: 12
+  max_line_chars: 200
+  enabled: true
+gate:
+  enabled: true
+  max_attempts: 3
+  output_head: 40
+  output_tail: 20
+  timeout_seconds: 240
+auto_load: []
+redact: []
+# The done-gate. One check, because this project already has exactly one
+# definition of done and a second would be a rule that could drift from it:
+# `npm run verify` runs typecheck on both tsconfigs, eslint, the four lint
+# gates (tokens, settings-ui, graphify, brand, vocab, changelog), the whole
+# vitest suite, and all five builds. `npm run package` runs it too, so a
+# release cannot be cut past a red gate.
+#
+# Measured at 19.2s wall (83s user; the work is parallel) on a warm cache, so
+# the 240s timeout above is headroom for a cold one, where `pretest` has to
+# build `mcp-server/core.js` before two suites can load it.
+#
+# It is run directly and its exit code is read. That matters more than it
+# looks: `npm run verify | tail -20` reports *tail's* status, which is always
+# 0, and the zsh in this repo makes `${PIPESTATUS[0]}` expand to the empty
+# string — a green gate that has proved nothing. The `cmd` check execs the
+# command and reads its real status, which is the only reason this gate is
+# worth having.
+verify:
+  - kind: cmd
+    run: npm run verify

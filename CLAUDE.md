@@ -99,7 +99,7 @@ npm run verify     # everything below, in order
 | `npm run lint:brand` | the other products' names and page globals stay gone — `docs/CONTRACTS.md` §4.5 |
 | `npm run lint:vocab` | the frozen glossary — a flow is not a session, a component is not an element |
 | `npm test` | vitest — `pretest` builds `mcp-server/core.js` first, which two suites need on disk |
-| `npm run build` | five builds: pages + worker, content script, page agent, MCP core |
+| `npm run build` | five builds: the generated settings JSON, pages + worker, content script, page agent, MCP core |
 
 `npm run verify` is also what `npm run package` runs before it writes a zip, so
 a release cannot be cut past a red gate.
@@ -134,3 +134,49 @@ Rules:
 - IF graphify-out/wiki/index.md EXISTS, navigate it instead of reading raw files
 - For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Context Ledger
+
+`graphify-out/GRAPH_REPORT.md` is the map of the **code**; `.ctx/` is the map of
+the **work**. Read both before you start, and do not ask either one the other's
+question. The graph knows that `core/otel` feeds `mcp-server/arkg.js`; it does
+not know why span ingest defaults on when git lineage defaults off, what was
+measured to settle that, or what is left in Phase 3. Those live in `.ctx/`,
+because a conversation window is not storage — it compacts, and then it ends,
+and everything a session established that was never written down has to be
+re-derived by the next one, usually wrongly.
+
+`/ctx:resume` is the cheap way back in; the `devflow-state` bundle is the full
+one and `phase-3-remaining` is the shape of what is not built. `/ctx:status`
+says what level the current work is at, `/ctx:doctor` says whether the ledger
+still lines up with the repo.
+
+**The done-gate is `npm run verify`, and its exit code is the gate — never its
+tail.** `npm run verify | tail -20` reports *`tail`'s* status, which is always 0,
+and `${PIPESTATUS[0]}` silently expands to the empty string in this repo's zsh
+(the array is `$pipestatus[1]`). This project has made that mistake, and it does
+not look like a mistake: it looks exactly like a passing gate. Run the command
+directly and read `$?`, which is what the ledger's `cmd` check does.
+
+**Escalate per piece of work, not once for the project.** L0 trace is the
+default and writes nothing by hand — right for a single-session change. Reach
+for L1 (`/ctx:task`) when the change has acceptance criteria worth fixing before
+you start, so "done" is not decided afterwards by whoever is tired. Reach for L2
+(`/ctx:spec` → `/ctx:plan` → `/ctx:start` → `/ctx:merge`) when the work splits
+into pieces with different owners — which is the parallel-subagent pattern this
+repo already runs on, each agent holding a disjoint file set and forbidden to
+edit anyone else's. That pattern **is** L2; its units are the same thing with
+the ownership and the merge written down instead of held in one head.
+
+**An ADR in `.ctx/decisions/` is immutable.** Overturn one by writing a new ADR
+that supersedes it, never by editing the old one. The record of having changed
+your mind is the point: an edited ADR reads as though the current answer was
+always obvious, which loses the evidence and invites the next session to
+re-argue a thing already settled. This repository's refusals are worth more than
+its features precisely because the argument survived.
+
+**`.ctx/runtime/` is gitignored; everything else under `.ctx/` is committed.**
+Runtime is this machine's scratch — gate logs, telemetry, session state — and it
+rebuilds itself. The rest is the state, and state that does not travel with the
+repo cannot survive a clone on another machine, which is the whole reason it is
+on disk rather than in a chat.
