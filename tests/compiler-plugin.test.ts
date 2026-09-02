@@ -157,6 +157,37 @@ describe('what is stamped', () => {
 
     expect(stamps(code)).toEqual(['Cart src/Cart.tsx:1', 'Header src/Cart.tsx:2']);
   });
+
+  /*
+   * Class components, in all three shapes a class can be bound in.
+   *
+   * A class component's fiber `type` is the class itself, and a class is a
+   * function object, so the stamp is read back by exactly the property and
+   * exactly the reader every other shape uses — which is why this is an
+   * addition to `stampsFor` and not a second mechanism. It was left out of the
+   * first cut because it was not on the list, not because it was hard.
+   */
+  it('stamps a class declaration, an exported one and a default-exported one', async () => {
+    const code = await transform(
+      [
+        'class Cart extends React.Component { render() { return null; } }', // 1
+        'export class Header extends Component { render() { return null; } }', // 2
+        'export default class App extends Component { render() { return null; } }', // 3
+      ].join('\n'),
+    );
+
+    expect(stamps(code)).toEqual([
+      'Cart src/Cart.jsx:1',
+      'Header src/Cart.jsx:2',
+      'App src/Cart.jsx:3',
+    ]);
+  });
+
+  it('stamps a class expression held in a capitalised const', async () => {
+    const code = await transform('const Cart = class extends React.Component {};');
+    expect(stamps(code)).toEqual(['Cart src/Cart.jsx:1']);
+  });
+
 });
 
 describe('what is not stamped', () => {
@@ -172,14 +203,13 @@ describe('what is not stamped', () => {
   });
 
   /*
-   * Named gaps, not oversights — `compiler-plugin/README.md` lists all three.
-   * Asserted so that adding any of them is a deliberate act with a test to
-   * update, rather than something that drifts in.
+   * Named gaps, not oversights — `compiler-plugin/README.md` lists both.
+   * Asserted so that adding either is a deliberate act with a test to update,
+   * rather than something that drifts in.
    */
-  it('leaves classes, nested components and anonymous default exports alone', async () => {
+  it('leaves nested components and anonymous default exports alone', async () => {
     const code = await transform(
       [
-        'class Legacy extends React.Component { render() { return null; } }',
         'function useThing() { const Inner = () => null; return Inner; }',
         'export default () => null;',
       ].join('\n'),
@@ -188,9 +218,26 @@ describe('what is not stamped', () => {
     expect(stamps(code)).toEqual([]);
   });
 
+  // Its own module: two `export default`s in one is a syntax error, not a case.
+  it('leaves an anonymous default-exported class alone', async () => {
+    const code = await transform('export default class extends React.Component {}');
+    expect(stamps(code)).toEqual([]);
+  });
+
+  it('leaves a lowercase class alone, as it does a lowercase function', async () => {
+    const code = await transform('class helper {}\nconst thing = class {};');
+    expect(stamps(code)).toEqual([]);
+  });
+
   it('leaves a TypeScript overload signature and a declare alone', async () => {
     const code = await transform(
-      ['declare function Cart(): null;', 'declare const Header: () => null;'].join('\n'),
+      [
+        'declare function Cart(): null;',
+        'declare const Header: () => null;',
+        // A `declare class` binds nothing at runtime, so an assignment naming
+        // it would be a build error rather than a missed stamp.
+        'declare class Panel { render(): null; }',
+      ].join('\n'),
       { file: 'src/Cart.ts' },
     );
 
@@ -373,6 +420,20 @@ function evaluate(code: string, ...names: string[]): Record<string, unknown> {
 describe('the plugin and the reader agree', () => {
   it('produces a stamp readStamp reads back, for a plain component', async () => {
     const code = await transform('function Cart() {\n  return null;\n}');
+    const { Cart } = evaluate(code, 'Cart');
+
+    expect(readStamp(Cart)).toEqual({ source: 'src/Cart.jsx', line: 1 });
+  });
+
+  /*
+   * A class is the one shape where the stamp lands on a constructor rather than
+   * on a plain function, so the seam is worth walking a second time for it: a
+   * source-text match would pass against an assignment that throws at runtime.
+   */
+  it('produces a stamp readStamp reads back off a class component', async () => {
+    const code = await transform(
+      'class Cart {\n  render() {\n    return null;\n  }\n}',
+    );
     const { Cart } = evaluate(code, 'Cart');
 
     expect(readStamp(Cart)).toEqual({ source: 'src/Cart.jsx', line: 1 });

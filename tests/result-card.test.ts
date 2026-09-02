@@ -126,6 +126,42 @@ describe('viaLabel', () => {
     }
   });
 
+  /*
+   * The tooltips obey the glossary, which is the half that drifted.
+   *
+   * `docs/CONTRACTS.md` §4.1 defines **source** as the file and line a
+   * component was written in and puts *location*, *origin* and *definition* in
+   * the Not column. Both of the first two sentences said “location” — the
+   * `dev build` one from the beginning, and `build stamp` only because it was
+   * written to match its neighbour. A word checked nowhere is a word that
+   * spreads to the next string that needs one, so it is checked here, over
+   * every label `viaLabel` can produce rather than over the one that was wrong.
+   */
+  it('spells the frozen noun in every tooltip behind a label', () => {
+    const sources: ComponentSource[] = [
+      component({ via: 'plugin', source: 'src/Cart.tsx', line: pos1(12) }),
+      component({ via: 'debug-source', source: 'src/App.tsx', line: pos1(40) }),
+      resolved(),
+      component({
+        status: 'compiled-only',
+        via: 'bundle-search',
+        compiled: { url: 'https://x.test/a.js', line: pos0(3), column: pos0(1) },
+      }),
+    ];
+
+    for (const source of sources) {
+      const title = resultCard({ source })
+        .querySelector('.result-card__via')
+        ?.getAttribute('title');
+
+      // Whole words. “original source” is the resolver's own vocabulary and is
+      // not the noun §4.1 is refusing; a substring match calls it one.
+      expect(title, `${viaLabel(source)}: ${title}`).not.toMatch(
+        /\b(locations?|origins?|definitions?)\b/i,
+      );
+    }
+  });
+
   it('says "compiled" when the search stopped at the bundle', () => {
     const compiledOnly = component({
       status: 'compiled-only',

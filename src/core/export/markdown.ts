@@ -12,6 +12,7 @@ import { flowHost, urlPath } from '../flow/index.js';
 import {
   formatSource,
   referencedComponentIds,
+  sourceProvenance,
   stepEnclosing,
   stepOwner,
 } from '../react/attribution.js';
@@ -325,6 +326,26 @@ function appendStep(
 }
 
 /**
+ * The Notes cell: the provenance worth naming, then the row's own sentence.
+ *
+ * `sourceProvenance` is silent for DevFlow's own two paths and speaks only for a
+ * build stamp, so this adds a phrase to a row roughly never — and to exactly the
+ * rows where a reader is entitled to know the answer came out of a build step in
+ * the recorded application rather than out of DevFlow. `ROADMAP_AND_PHASES.md`
+ * §1.1 rule 3 is the reason, and this table is where it was failing: a stamped
+ * component has no `detail`, so the cell was empty and `get_flow` — the primary
+ * tool, and the document `flow.md` holds on disk — was the one surface that read
+ * an attribution in full and said nothing about where it came from.
+ *
+ * A stamped entry carries no `detail` today, so the join is for the case where
+ * that stops being true rather than for one that exists.
+ */
+function componentNotes(component: ComponentSource): string {
+  const how = sourceProvenance(component);
+  return [how, component.detail].filter(Boolean).join(' · ');
+}
+
+/**
  * The one place a component's source is written down.
  *
  * Every row states its own confidence, so the document cannot claim a path in
@@ -336,7 +357,7 @@ function appendComponents(lines: string[], react: FlowReact, steps: Step[]): voi
   const rows = referencedComponentIds(steps)
     .map((id) => react.components[id])
     .filter((component): component is ComponentSource => Boolean(component))
-    .map((c) => `| ${c.name} | ${formatSource(c) ?? '—'} | ${c.detail ?? ''} |`);
+    .map((c) => `| ${c.name} | ${formatSource(c) ?? '—'} | ${componentNotes(c)} |`);
 
   /*
    * The cap is a fact about the recording, not about any one row.

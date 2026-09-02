@@ -43,9 +43,12 @@ whole reason this package exists. Saying otherwise would be a tidier sentence
 and a false one.
 
 Attributions that came from the stamp are labelled. `ComponentSource.via` is
-`'plugin'`; the panel shows `build stamp` beside the path, and so does the MCP
-server's `get_step_detail`, so no recording silently depends on this being
-installed — whether a person or a model is reading it.
+`'plugin'`; the panel shows `build stamp` beside the path, and so does every MCP
+surface that reads a component's source — the `## React components` table
+`get_flow` returns and `flow.md` holds on disk, `get_step_detail`, and the
+heading `get_source_snippet` prints above the lines it read. So no recording
+silently depends on this being installed, whether a person or a model is reading
+it.
 
 ## Install
 
@@ -70,7 +73,12 @@ export default defineConfig({
 
 ### Anything else that runs Babel
 
-Add `@devflow/compiler-plugin` to the `plugins` list of your Babel config.
+Add `@devflow/compiler-plugin` to the `plugins` list of your Babel config —
+**but note that this package is ESM-only.** A CommonJS `babel.config.js` cannot
+`require()` it, so use `babel.config.mjs`, or pass the imported plugin inline the
+way the Vite example above does. That is the one thing that stops this
+instruction from working, and it belongs in the instruction rather than two
+sections below it.
 
 ## The gaps, named
 
@@ -79,14 +87,6 @@ with SWC, which takes no Babel plugin. There is no way to use this package with
 either. An SWC port is a separate piece of work and does not exist; this serves
 a real but partial audience, and saying otherwise would send people to a config
 option that is not there.
-
-**This package is ESM-only.** A CommonJS `babel.config.js` cannot `require()` it
-— use `babel.config.mjs`, or pass the imported plugin inline as the Vite example
-above does.
-
-**Class components are not stamped.** `class Cart extends React.Component` is
-skipped along with everything else that is not a function; adding it is a small
-change and has not been made, because nothing in DevFlow has asked for it yet.
 
 **Components defined below module scope are not stamped.** A component declared
 inside a function body would need an assignment that re-runs on every call to
@@ -109,10 +109,13 @@ At module scope, when the name begins with a capital letter:
 | `const Cart = (() => {}) as React.FC` | yes |
 | `const Cart = forwardRef((p, ref) => …)` | yes — written here |
 | `const Cart = memo(() => …)`, `React.memo(…)` | yes — written here |
+| `class Cart extends Component {}` | yes |
+| `export default class Cart … {}` | yes |
+| `const Cart = class extends Component {}` | yes |
 | `const Fast = memo(Cart)` | **no** — see below |
 | `function helper() {}` | no — lowercase |
-| `const CONFIG = {}` | no — not a function |
-| `class Cart extends Component {}` | no — see the gaps |
+| `const CONFIG = {}` | no — not a function or a class |
+| `declare class Cart {}` | no — binds nothing at runtime |
 
 **A wrapper is stamped only when the component is written inside it.**
 `forwardRef((props, ref) => …)` binds no inner name, so the wrapper is the only
@@ -135,7 +138,10 @@ across lines.
 A capitalised `const` holding a plain function is stamped whether or not it is a
 component — nothing at build time can tell `const Multiply = (a, b) => a * b`
 from a component. The cost is a property on a function DevFlow will never look
-at, which is why the rule is the permissive one.
+at, which is why the rule is the permissive one. Capitalised classes are stamped
+under the same rule and for the same reason: a class component's fiber `type` is
+the class itself, and a class is a function object, so the stamp is read back
+through the same property on the same kind of value — no second mechanism.
 
 ## Options
 

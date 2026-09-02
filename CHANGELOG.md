@@ -26,21 +26,42 @@ that to every visitor is a decision to make deliberately.
 
 **Every attribution says which path answered it, to a person and to a model.**
 `ComponentSource.via` gained `plugin` beside `debug-source` and `bundle-search`;
-the panel spells it `build stamp` and so does `get_step_detail`, so no recording
-can depend on the plugin without whoever reads it being able to tell. DevFlow's
+the panel spells it `build stamp`, and so does every place a model reads a
+component's source — the `## React components` table that `get_flow` returns and
+`flow.md` holds on disk, `get_step_detail`, and the heading `get_source_snippet`
+prints above the lines it read. So no recording can depend on the plugin without
+whoever reads it being able to tell. DevFlow's
 own two paths stay unlabelled there — a reader has no decision to make between
 them, and a stamp is the one that means the answer came out of a build step in
 the application itself. A stamp beats React's `_debugSource` where both exist, and for a
 reason that is not about which is newer: `_debugSource` is where a component's
 JSX was *written*, a position in its parent's file, and a stamp is where the
 component was *defined* — which is what the source of a component has always
-meant here.
+meant here. A component first captured without a stamp — a content script
+re-injected after a navigation starts its cache empty — is upgraded from
+`debug-source` to the stamp when it is seen again, and that is the only upgrade
+a component table allows: without it the recording would keep naming the
+parent's file while the panel, over the same component, named the component's
+own.
 
 **Babel only, and said rather than implied.** `@vitejs/plugin-react-swc` and
 Next.js compile with SWC, which takes no Babel plugin, so this serves a real but
-partial audience. Class components, components defined below module scope and
-anonymous default exports are not stamped either. All of it is listed in
+partial audience. Components defined below module scope and anonymous default
+exports are not stamped either. All of it is listed in
 `compiler-plugin/README.md` as gaps rather than left to be discovered.
+
+**Class components are stamped too.** `class Cart extends React.Component` is a
+real shape and was left out of the first cut for no better reason than that it
+was not on the list. A class component's fiber `type` is the class itself, and a
+class is a function object, so it reads back through the same property and the
+same reader — no second mechanism.
+
+**A stamped component under `node_modules` is flagged as one.** The component
+table set `dependency` on an attribution that came from a bundle search and not
+on one that came from a stamp or from `_debugSource`, so a recording could name
+somebody else's component as a step's owner and render no `node_modules` tag for
+it, while the panel — which has always set the flag for all three — tagged the
+same component correctly.
 
 **`replay_flow` runs a recorded journey again and says whether it still works —
 and it is off until you switch it on.** It is the only tool here that executes

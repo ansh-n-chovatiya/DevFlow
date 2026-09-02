@@ -27,11 +27,10 @@
  *
  * ## What it deliberately does not stamp
  *
- * Lowercase names, class components, anonymous default exports, and anything
- * defined below module scope. A stamp on a non-component is a row in DevFlow's
- * component table that names nothing, and a stamp inside a function body is an
- * assignment that runs on every call. The README says which of these are gaps
- * and which are refusals.
+ * Lowercase names, anonymous default exports, and anything defined below module
+ * scope. A stamp on a non-component is a row in DevFlow's component table that
+ * names nothing, and a stamp inside a function body is an assignment that runs
+ * on every call. The README says which of these are gaps and which are refusals.
  *
  * ## Development builds only, by default
  *
@@ -127,6 +126,21 @@ function isFunctionExpression(node) {
   return node?.type === 'ArrowFunctionExpression' || node?.type === 'FunctionExpression';
 }
 
+/**
+ * A class, which for this plugin's purposes is the same kind of thing.
+ *
+ * A class component's fiber `type` is the class itself, and a class is a
+ * function object, so `Cart.__devflow` reads back through exactly the path
+ * `readStamp` already uses — no second mechanism, no second shape. Nothing at
+ * build time can tell `class Cart extends Component` from `class Cart` holding
+ * a colour palette, and the rule here is the same permissive one that stamps a
+ * capitalised `const` holding a plain function: the cost of a wrong guess is a
+ * property on an object DevFlow will never look at.
+ */
+function isClassNode(node) {
+  return node?.type === 'ClassDeclaration' || node?.type === 'ClassExpression';
+}
+
 function calleeName(node) {
   const callee = node.callee;
   if (callee.type === 'Identifier') return callee.name;
@@ -174,7 +188,7 @@ function isInlineWrapperCall(node) {
 function isComponentInit(init) {
   const node = unwrapExpression(init);
   if (!node) return false;
-  if (isFunctionExpression(node)) return true;
+  if (isFunctionExpression(node) || isClassNode(node)) return true;
   return isInlineWrapperCall(node);
 }
 
@@ -199,6 +213,21 @@ function stampsFor(node) {
   if (node.type === 'FunctionDeclaration') {
     // `body` is absent on a TypeScript overload signature and on `declare`.
     if (!node.body || !node.id || !isComponentName(node.id.name)) return [];
+    const line = lineOf(node);
+    return line ? [{ name: node.id.name, line }] : [];
+  }
+
+  if (node.type === 'ClassDeclaration') {
+    // `declare class Cart {}` binds nothing at runtime — the assignment would
+    // name an identifier that does not exist in the emitted module, which is a
+    // build error rather than a missed stamp.
+    //
+    // A decorated class is stamped like any other, and correctly: the
+    // assignment runs after the declaration and names the binding, so if a
+    // decorator replaced the class the stamp lands on the replacement — which
+    // is the object React will hold on the fiber. A decorator that hands back
+    // a frozen class is why the assignment is inside a `try`.
+    if (node.declare || !node.id || !isComponentName(node.id.name)) return [];
     const line = lineOf(node);
     return line ? [{ name: node.id.name, line }] : [];
   }

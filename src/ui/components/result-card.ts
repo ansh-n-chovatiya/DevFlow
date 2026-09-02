@@ -106,10 +106,18 @@ export function viaLabel(source: ComponentSource): string | null {
   return source.source ? 'source map' : 'compiled';
 }
 
-/** The sentence behind each `via`, as a tooltip. */
+/**
+ * The sentence behind each `via`, as a tooltip.
+ *
+ * “location” is in the *Not* column for **source** in the frozen
+ * `docs/CONTRACTS.md` §4.1, and both of the first two rows used it — the
+ * `dev build` one from the beginning, and `build stamp` only because it was
+ * written to match its neighbour. Two strings drifting together is still two
+ * strings off the glossary, so both say **source** now.
+ */
 const VIA_TITLE: Record<string, string> = {
-  'build stamp': 'Read from the location this app’s build wrote onto the component.',
-  'dev build': 'Read directly from the location React recorded on the component.',
+  'build stamp': 'Read from the source this app’s build stamped onto the component.',
+  'dev build': 'Read directly from the source React recorded on the component.',
   'source map': 'The compiled position, mapped back through the bundle’s source map.',
   compiled: 'A position in the served bundle. No original source was available.',
 };

@@ -176,6 +176,149 @@ describe('mergeComponents', () => {
     expect(result.changed).toBe(false);
   });
 
+  /*
+   * `dependency`, on every branch that resolves a path.
+   *
+   * `src/ui/locator/locate.ts` sets `absolutePath` and `dependency` together
+   * from identical input, and everything downstream reads the flag rather than
+   * re-testing the path: `pickOwner` refuses a dependency as a step's owner,
+   * the review view renders the `node_modules` tag from it, and
+   * `classifyComponent` buckets on it. A recording that omits it names somebody
+   * else's component as the owner of a step while the panel, over the same
+   * component, tags it correctly — two surfaces over one recording disagreeing,
+   * which is what the shared precedence exists to prevent.
+   */
+  it.each([
+    [
+      'a stamped path',
+      { id: 'dep1', name: 'Dialog', stamp: { source: 'node_modules/@radix-ui/react-dialog/index.js', line: pos1(4) } },
+    ],
+    [
+      'a JSX position React recorded',
+      { id: 'dep2', name: 'Dialog', debugSource: { source: 'node_modules/@radix-ui/react-dialog/index.js', line: pos1(4), column: pos1(1) } },
+    ],
+  ] as [string, CapturedComponent][])('flags a component under node_modules — %s', (_label, component) => {
+    const { table, needles } = empty();
+    const result = mergeComponents([component], 'https://app.test', table, needles);
+
+    expect(result.table[component.id].dependency).toBe(true);
+  });
+
+  it('leaves the flag off a path inside the application', () => {
+    const { table, needles } = empty();
+    const component: CapturedComponent = {
+      id: 'own1',
+      name: 'Cart',
+      stamp: { source: 'src/Cart.tsx', line: pos1(12) },
+    };
+
+    const result = mergeComponents([component], 'https://app.test', table, needles);
+    expect(result.table.own1).not.toHaveProperty('dependency');
+  });
+
+  /*
+   * The one upgrade, and the three things that are not it.
+   *
+   * A page agent's `componentCache` is per injection, so a content script
+   * re-injected after a navigation captures a component it has already seen
+   * from scratch. If the first capture read no stamp, first-answer-wins freezes
+   * the entry at `via: 'debug-source'` — the *parent's* file — while the panel
+   * resolves the same component to its own. See `isStampUpgrade`.
+   */
+  it('upgrades a debug-source entry when the component is seen again with a stamp', () => {
+    const { table, needles } = empty();
+    mergeComponents(
+      [{ id: 'up1', name: 'Cart', debugSource: { source: 'src/App.tsx', line: pos1(40), column: pos1(6) } }],
+      'https://app.test',
+      table,
+      needles,
+    );
+    expect(table.up1).toMatchObject({ via: 'debug-source', source: 'src/App.tsx' });
+
+    const again = mergeComponents(
+      [{ id: 'up1', name: 'Cart', stamp: { source: 'src/Cart.tsx', line: pos1(12) } }],
+      'https://app.test',
+      table,
+      needles,
+    );
+
+    expect(again.changed).toBe(true);
+    expect(again.table.up1).toMatchObject({ via: 'plugin', source: 'src/Cart.tsx', line: 12 });
+    // `column` belonged to the position it replaced and must not survive it.
+    expect(again.table.up1).not.toHaveProperty('column');
+  });
+
+  it('refuses to let a stamp overwrite an answer resolved against the page’s own map', () => {
+    const table: Record<string, ComponentSource> = {
+      bs1: {
+        name: 'Cart',
+        status: 'resolved',
+        via: 'bundle-search',
+        source: 'src/Cart.tsx',
+        line: pos1(12),
+      },
+    };
+
+    const result = mergeComponents(
+      [{ id: 'bs1', name: 'Cart', stamp: { source: 'src/Wrong.tsx', line: pos1(1) } }],
+      'https://app.test',
+      table,
+      {},
+    );
+
+    expect(result.table.bs1).toMatchObject({ via: 'bundle-search', source: 'src/Cart.tsx' });
+    expect(result.changed).toBe(false);
+  });
+
+  it('refuses to let a JSX position overwrite a stamp', () => {
+    const table: Record<string, ComponentSource> = {
+      pl1: { name: 'Cart', status: 'resolved', via: 'plugin', source: 'src/Cart.tsx', line: pos1(12) },
+    };
+
+    const result = mergeComponents(
+      [{ id: 'pl1', name: 'Cart', debugSource: { source: 'src/App.tsx', line: pos1(40), column: pos1(6) } }],
+      'https://app.test',
+      table,
+      {},
+    );
+
+    expect(result.table.pl1).toMatchObject({ via: 'plugin', source: 'src/Cart.tsx' });
+    expect(result.changed).toBe(false);
+  });
+
+  /*
+   * The cap counts distinct components, and an upgrade adds none.
+   *
+   * Testing the cap before knowing whether the id is new would both refuse the
+   * upgrade and write the cap marker on the strength of a component already
+   * counted in the number that tripped it — a note saying components were
+   * dropped, on a flow that dropped none.
+   */
+  it('upgrades an entry in a table that is already at the cap, and writes no cap notice', () => {
+    const { table, needles } = empty();
+    mergeComponents(
+      [
+        { id: 'c0', name: 'C0', debugSource: { source: 'src/App.tsx', line: pos1(1), column: pos1(1) } },
+        { id: 'c1', name: 'C1', needle: { head: 'function C1(){return null}' } },
+      ],
+      'https://app.test',
+      table,
+      needles,
+      2,
+    );
+
+    const again = mergeComponents(
+      [{ id: 'c0', name: 'C0', stamp: { source: 'src/C0.tsx', line: pos1(3) } }],
+      'https://app.test',
+      table,
+      needles,
+      2,
+    );
+
+    expect(again.table.c0).toMatchObject({ via: 'plugin', source: 'src/C0.tsx' });
+    expect(again.table).not.toHaveProperty(CAPPED_ID);
+  });
+
   it('says why a native function was skipped instead of leaving a blank', () => {
     const { table, needles } = empty();
     const component: CapturedComponent = { id: 'n1', name: 'Bound', needleRejection: 'native' };
