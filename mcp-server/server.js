@@ -49,6 +49,7 @@ import {
   generatePlaywrightTest,
   flowRendering,
   formatSource,
+  sourceProvenance,
   MACHINE_KEYS,
   planActions,
   planReplay,
@@ -2067,7 +2068,14 @@ function stepParts(flow, dir, step, render) {
 
     if (owner) {
       const where = formatSource(owner);
-      lines.push(`${owner.name}${where ? `  ${where}` : ''}${owner.dependency ? '  (node_modules)' : ''}`);
+      // The provenance only when it is the plugin's — see `sourceProvenance`.
+      // A model reading this has to be able to see that an answer came out of a
+      // build step in the application rather than out of DevFlow.
+      const how = sourceProvenance(owner);
+      lines.push(
+        `${owner.name}${where ? `  ${where}` : ''}${how ? `  (${how})` : ''}` +
+          `${owner.dependency ? '  (node_modules)' : ''}`,
+      );
       if (owner.detail) lines.push(`  ${owner.detail}`);
       if (within) {
         const outer = formatSource(within);
@@ -4767,6 +4775,15 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       let file = typeof args.file === 'string' ? args.file.trim() : '';
       let line = Math.trunc(Number(args.line));
       let label = '';
+      /**
+       * The provenance, when a component supplied the file and line — see
+       * `sourceProvenance`. This tool is the only one that turns an attribution
+       * into the *contents* of a file, so a reader who is about to trust these
+       * lines is exactly the reader entitled to know the position came out of a
+       * build step in the recorded application. Empty whenever `file` was passed
+       * directly: there is no attribution to have provenance about.
+       */
+      let how = '';
       /** The component's own absolute path, tried when the repo-relative one does not resolve. */
       let alternate = '';
 
@@ -4838,6 +4855,7 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (typeof component.absolutePath === 'string') alternate = component.absolutePath;
         if (!Number.isFinite(line) || line < 1) line = Number(component.line) || 1;
         label = label ? `${component.name}, ${label}` : component.name;
+        how = sourceProvenance(component) ?? '';
       }
 
       if (!Number.isFinite(line) || line < 1) line = 1;
@@ -4915,7 +4933,7 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       const window = snippet(contents, line, radius);
-      const heading = `${named}:${line}${label ? ` — ${label}` : ''}`;
+      const heading = `${named}:${line}${label ? ` — ${label}` : ''}${how ? ` (${how})` : ''}`;
       const stale = window.beyondEnd
         ? `\n\nLine ${line} is past the end of this file (${window.range}). The recording was made ` +
           'against a different build of this application than the one at this project root, so the ' +

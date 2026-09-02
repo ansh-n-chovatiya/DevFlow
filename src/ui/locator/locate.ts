@@ -16,11 +16,15 @@
  * Three things this path does that the resolver deliberately does not, and each
  * of them is why it exists rather than being a call into the other:
  *
- *   - **It prefers `_debugSource`.** A picked component carries whatever React
- *     recorded on the fiber, and on a development build that is the exact
- *     original position — free, with no bundle to search. The resolver never
- *     sees one: the agent has already turned it into a `ComponentSource` by the
- *     time a step is written, so it has no such branch at all.
+ *   - **It prefers a build stamp, then `_debugSource`.** A picked component
+ *     carries whatever `@devflow/compiler-plugin` stamped on it and whatever
+ *     React recorded on the fiber; either is an exact original position, free,
+ *     with no bundle to search. The order is the one `core/react/table.ts`
+ *     uses, and it has to be: the panel and a recorded flow naming different
+ *     files for one component is a contradiction its reader cannot resolve.
+ *     The resolver never sees either — the agent has already turned them into a
+ *     `ComponentSource` by the time a step is written, so it has no such branch
+ *     at all.
  *   - **It keeps `sourcesContent` (D3).** The panel renders a preview of the
  *     original file, and the text to render is the text the map inlined.
  *     `parseSourceMap` defaults to dropping it, and must: a flow is handed to an
@@ -120,8 +124,40 @@ export async function locateComponent(
   const { provider, onStage } = deps;
   const name = component.name;
   const debugSource = component.debugSource ?? null;
+  const stamp = component.stamp ?? null;
 
   onStage?.('match', 'active');
+
+  /*
+   * The build already answered, and answered the question `ComponentSource`
+   * actually asks.
+   *
+   * Ahead of `_debugSource` here for the same reason as in `table.ts`, and it
+   * has to be the same order in both: a component picked in the panel and the
+   * same component recorded in a flow reporting different files is a
+   * contradiction nobody reading either could resolve. See
+   * `ROADMAP_AND_PHASES.md` §1.1.
+   *
+   * Ahead of `deps.readSource()` too — there is nothing to search for, so the
+   * page is not asked and no bundle is fetched.
+   */
+  if (stamp) {
+    onStage?.('match', 'done');
+    onStage?.('source', 'done');
+    return {
+      source: {
+        name,
+        status: 'resolved',
+        via: 'plugin',
+        source: stamp.source,
+        line: stamp.line,
+        ...(isAbsolutePath(stamp.source) ? { absolutePath: stamp.source } : {}),
+        ...(isDependencyPath(stamp.source) ? { dependency: true } : {}),
+      },
+      resourcesSearched: 0,
+      preview: null,
+    };
+  }
 
   // Both at once: the page's answer and the script list are independent, and one
   // waiting on the other is half the latency of a pick spent doing nothing.

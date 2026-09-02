@@ -73,6 +73,31 @@ describe('collectChain, over a tree with host elements in it', () => {
     expect(entries.some((e) => e.debugSource?.fileName === 'src/App.tsx')).toBe(false);
   });
 
+  /*
+   * `ChainEntry.type` is the raw `fiber.type`, and it exists for exactly one
+   * reason: `@devflow/compiler-plugin` stamps the value a module bound, and for
+   * `forwardRef(fn)` and `memo(fn)` that is the wrapper object rather than the
+   * function `getComponentFn` unwraps to. Dropping it here would leave every
+   * wrapped component in an app unstamped with nothing going red — the entry
+   * still has a name, an id and a needle, and the answer merely falls back to a
+   * bundle search.
+   */
+  it('carries the raw fiber type beside the unwrapped function', () => {
+    const el = host();
+    const inner = () => null;
+    const wrapper = { render: inner };
+    const app = fiber(function App() {});
+    attach(el, fiber(wrapper, app));
+
+    const { entries } = collectChain(el);
+    const wrapped = entries.find((e) => e.fn === inner);
+
+    // `fn` is what React renders; `type` is what the module bound.
+    expect(wrapped?.fn).toBe(inner);
+    expect(wrapped?.type).toBe(wrapper);
+    expect(entries.find((e) => e.name === 'App')?.type).toBeTypeOf('function');
+  });
+
   it('spends the chain budget on components rather than on markup', () => {
     // Host fibers took a slot each, so a chain capped at twelve described six
     // components and truncated the rest — the outer half of the tree, which is

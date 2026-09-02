@@ -23,7 +23,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { PAGE_GLOBALS } from '../src/shared/constants.js';
 import type { Fiber } from '../src/core/react/fiber.js';
-import { getAllDOMNodes, getComponentFn, pickedEntry } from '../src/injected/picker.js';
+import {
+  describePicked,
+  getAllDOMNodes,
+  getComponentFn,
+  pickedEntry,
+} from '../src/injected/picker.js';
 
 /*
  * Assembled rather than written out, so that the grep Wave 3 runs over the tree
@@ -221,5 +226,73 @@ describe('the picker costs an idle page nothing', () => {
     // `blockTrailingGesture` adds and removes its own in one loop each, and
     // `arm`/`disarm` mirror one another line for line.
     expect(added.length).toBe(removed.length);
+  });
+});
+
+// ── What crosses to the extension ────────────────────────────────────────────
+
+/*
+ * `describePicked` is the picker's half of the build stamp, and it has to read
+ * it the way `describeEntry` in `agent.ts` does. The two produce the two shapes
+ * a person compares — a component in the panel and the same component in a
+ * recorded flow — and picking and recording disagreeing about one component is
+ * worse than either of them being wrong.
+ */
+describe('describePicked', () => {
+  const nodes: Element[] = [];
+
+  it('carries no stamp when the app was not built with the plugin', () => {
+    const fn = () => null;
+    const entry = { name: 'Cart', fn, fiber: fiber({ type: fn }), nodes };
+
+    expect(describePicked(entry).stamp).toBeNull();
+  });
+
+  it('reads the stamp off the component function', () => {
+    const fn = Object.assign(() => null, { __devflow: { f: 'src/Cart.tsx', l: 12 } });
+    const entry = { name: 'Cart', fn, fiber: fiber({ type: fn }), nodes };
+
+    expect(describePicked(entry).stamp).toEqual({ source: 'src/Cart.tsx', line: 12 });
+  });
+
+  /*
+   * `forwardRef((props, ref) => …)` binds a wrapper object, so the wrapper is
+   * the only place the stamp can go — the arrow inside it has no binding of its
+   * own. `getComponentFn` unwraps to that arrow, so reading only `fn` would
+   * silently skip every `forwardRef` component in the app.
+   */
+  it('falls back to the wrapper when the function inside it carries nothing', () => {
+    const inner = () => null;
+    const wrapper = { render: inner, __devflow: { f: 'src/Row.tsx', l: 4 } };
+    const entry = { name: 'Row', fn: inner, fiber: fiber({ type: wrapper }), nodes };
+
+    expect(describePicked(entry).stamp).toEqual({ source: 'src/Row.tsx', line: 4 });
+  });
+
+  /*
+   * The other way round, and the reason the function is read first.
+   * `const Fast = memo(Cart)` stamps the wrapper with the line it was *memoised*
+   * on and `Cart` with the line it was *written* on. The second is the answer.
+   */
+  it('prefers the function’s own stamp over the wrapper’s', () => {
+    const inner = Object.assign(() => null, { __devflow: { f: 'src/Cart.tsx', l: 12 } });
+    const wrapper = { type: inner, __devflow: { f: 'src/memo.ts', l: 99 } };
+    const entry = { name: 'Cart', fn: inner, fiber: fiber({ type: wrapper }), nodes };
+
+    expect(describePicked(entry).stamp).toEqual({ source: 'src/Cart.tsx', line: 12 });
+  });
+
+  it('still reports the JSX position beside it, because they are different facts', () => {
+    const fn = Object.assign(() => null, { __devflow: { f: 'src/Cart.tsx', l: 12 } });
+    const entry = {
+      name: 'Cart',
+      fn,
+      fiber: fiber({ type: fn, _debugSource: { fileName: 'src/App.tsx', lineNumber: 40, columnNumber: 6 } }),
+      nodes,
+    };
+
+    const picked = describePicked(entry);
+    expect(picked.stamp).toEqual({ source: 'src/Cart.tsx', line: 12 });
+    expect(picked.debugSource).toEqual({ source: 'src/App.tsx', line: 40, column: 6 });
   });
 });

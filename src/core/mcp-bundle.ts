@@ -21,7 +21,7 @@
 export { exportToMarkdown, renderComponents, renderStep, flowHost, urlPath } from './export/markdown.js';
 export { compactBody } from './schema/index.js';
 export { callFailed, statusClass, stepFailed, worstLevel } from './flow/index.js';
-export { stepEnclosing, stepOwner, formatSource } from './react/attribution.js';
+export { stepEnclosing, stepOwner, formatSource, sourceProvenance } from './react/attribution.js';
 export { snippet } from './source/snippet.js';
 
 /*

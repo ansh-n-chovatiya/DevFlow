@@ -722,6 +722,7 @@ import {
 } from '../core/react/fiber.js';
 import { componentId, nameOnlyId } from '../core/react/id.js';
 import { buildNeedle } from '../core/react/needle.js';
+import { readStamp } from '../core/react/stamp.js';
 import {
   forgetStores,
   sampleStores,
@@ -788,34 +789,83 @@ function describeDebugSource(
   };
 }
 
+/**
+ * The build stamp, from the component function or from the wrapper around it.
+ *
+ * The function first, deliberately. `@devflow/compiler-plugin` stamps the value
+ * a module binds, so `const Fast = memo(Cart)` puts a stamp on the memo object
+ * naming the line `Cart` was *memoised* on, while `Cart` itself carries one
+ * naming the line it was *written* on. Reading the inner function first takes
+ * the better of the two; the wrapper is the fallback for
+ * `forwardRef((props, ref) => …)`, where there is no inner binding to stamp.
+ */
+function describeStamp(entry: ChainEntry): CapturedComponent['stamp'] {
+  return readStamp(entry.fn) ?? readStamp(entry.type);
+}
+
 function describeEntry(entry: ChainEntry): CapturedComponent {
   const debugSource = describeDebugSource(entry.debugSource);
+  const stamp = describeStamp(entry);
 
   if (!entry.fn) {
     // An unsettled lazy component. Its name is all there is, and forcing it to
     // resolve would mean recording the page changed what the page loaded.
-    return { id: nameOnlyId(entry.name), name: entry.name, debugSource };
+    return { id: nameOnlyId(entry.name), name: entry.name, debugSource, stamp };
   }
 
   const cached = componentCache.get(entry.fn);
-  // The cache is keyed by function, but `_debugSource` is per JSX call site, so
-  // it is filled in from whichever usage first carried one rather than cached.
-  if (cached) return debugSource && !cached.debugSource ? { ...cached, debugSource } : cached;
+  // The cache is keyed by function, and both of these are facts a *later*
+  // sighting of that function can know when an earlier one did not, so both are
+  // filled in rather than taken from the cache.
+  //
+  // `_debugSource` because it is per JSX call site. The stamp because it can sit
+  // on the wrapper rather than on the function: `identifyComponent` builds an
+  // entry whose `type` *is* the function, so a `forwardRef` component seen first
+  // as a context subscriber caches an empty one, and the wrapper's would then be
+  // lost for the rest of the recording — a component's file present or absent
+  // depending on which of two samples happened to run first.
+  if (cached) {
+    const fillDebug = debugSource && !cached.debugSource;
+    const fillStamp = stamp && !cached.stamp;
+    if (!fillDebug && !fillStamp) return cached;
+    return {
+      ...cached,
+      ...(fillDebug ? { debugSource } : {}),
+      ...(fillStamp ? { stamp } : {}),
+    };
+  }
 
   let source = '';
   try {
     source = entry.fn.toString();
   } catch {
     // Exotic proxies can throw here; the name still tells the reader something.
-    const nameOnly: CapturedComponent = { id: nameOnlyId(entry.name), name: entry.name, debugSource };
+    const nameOnly: CapturedComponent = {
+      id: nameOnlyId(entry.name),
+      name: entry.name,
+      debugSource,
+      stamp,
+    };
     componentCache.set(entry.fn, nameOnly);
     return nameOnly;
   }
 
   const built = buildNeedle(source);
   const captured: CapturedComponent = built.ok
-    ? { id: componentId(entry.name, source), name: entry.name, needle: built.needle, debugSource }
-    : { id: nameOnlyId(entry.name), name: entry.name, needleRejection: built.reason, debugSource };
+    ? {
+        id: componentId(entry.name, source),
+        name: entry.name,
+        needle: built.needle,
+        debugSource,
+        stamp,
+      }
+    : {
+        id: nameOnlyId(entry.name),
+        name: entry.name,
+        needleRejection: built.reason,
+        debugSource,
+        stamp,
+      };
 
   componentCache.set(entry.fn, captured);
   return captured;
@@ -1001,7 +1051,7 @@ function renderSnapshotBudget(): SnapshotBudget {
  * ends up joining to nothing.
  */
 function identifyComponent(fn: ComponentFn, name: string): string {
-  return describeEntry({ name, fn, debugSource: null, development: false }).id;
+  return describeEntry({ name, fn, type: fn, debugSource: null, development: false }).id;
 }
 
 /** Pairs two samples by store id, keeping only the stores that actually moved. */

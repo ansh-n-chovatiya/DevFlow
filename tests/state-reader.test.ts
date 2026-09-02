@@ -48,6 +48,8 @@ interface FakeFiber {
   type?: unknown;
   stateNode?: unknown;
   memoizedProps?: Record<string, unknown> | null;
+  /** The hook chain. Present only on `externalStoreConsumer` — see the refusal. */
+  memoizedState?: unknown;
   dependencies?: { firstContext?: unknown } | null;
   child?: FakeFiber | null;
   sibling?: FakeFiber | null;
@@ -125,6 +127,38 @@ function link(fiber: FakeFiber): void {
     node.return = fiber;
     link(node);
   }
+}
+
+/**
+ * A component that consumes a **module-level** Zustand store, in the hook shape
+ * React 19 actually leaves behind — measured, not guessed, against React 19.2.8
+ * with Zustand 4.5.7 and 5.0.15:
+ *
+ *   hook   { memoizedState: <the selection>, queue: { value, getSnapshot } }
+ *   hook   { memoizedState: { tag, create, deps: [api.subscribe], inst } }
+ *
+ * `getSnapshot` is Zustand's per-consumer closure and returns that component's
+ * selection; `deps[0]` is the store's own `subscribe` and is shared by every
+ * consumer of it. Both are here so the fixture is the real thing and not the
+ * half of it that makes the refusal look obvious.
+ */
+function externalStoreConsumer(
+  name: string,
+  selection: unknown,
+  subscribe: () => () => void,
+): FakeFiber {
+  const fn = Object.defineProperty(() => name, 'name', { value: name });
+  const effectHook = {
+    memoizedState: { tag: 9, create: () => undefined, deps: [subscribe], inst: {}, next: null },
+    next: null,
+  };
+  const storeHook = {
+    memoizedState: selection,
+    queue: { value: selection, getSnapshot: () => selection },
+    next: effectHook,
+  };
+
+  return { tag: FUNCTION_COMPONENT, type: fn, memoizedState: storeHook, child: null };
 }
 
 function reduxStore(state: unknown): Record<string, unknown> {
@@ -409,6 +443,75 @@ describe('bounding what it reads', () => {
     // stores and the diff would read as a store that vanished.
     expect(sample?.value).toBeNull();
     expect(sample?.kind).toBe('redux');
+  });
+});
+
+/*
+ * The refusal, pinned so that reversing it is a deliberate act.
+ *
+ * `ROADMAP_AND_PHASES.md` §1.2 refuses the module-level `create()` store on the
+ * evidence: what a consumer's fiber offers is that component's *selection*, and
+ * the union of the selections of whichever components were mounted is a fact
+ * about the route the recording visited rather than about the store. A key
+ * leaves that union when its component unmounts, so a diff over it reports a
+ * change the store never made; and the shape it presents — what `labelFor` keys
+ * a cross-recording name on — differs between two recordings of one store.
+ *
+ * Nothing in `state.ts` reads a hook list today, so these pass trivially, and
+ * that is the point: they are here to go red the moment somebody starts reading
+ * one, rather than to describe behaviour that exists.
+ */
+describe('a module-level store is refused, not missed', () => {
+  it('yields no store from a tree whose only state is a module-level one', () => {
+    const subscribe = () => () => undefined;
+    mount(externalStoreConsumer('CartBadge', 3, subscribe));
+
+    expect(sampleStores(BUDGET, () => 'id', true, 1000)).toEqual([]);
+  });
+
+  it('says the gap exists rather than reading the page as stateless', () => {
+    const subscribe = () => () => undefined;
+    mount(externalStoreConsumer('CartBadge', 3, subscribe));
+    sampleStores(BUDGET, () => 'id', true, 1000);
+
+    expect(stateNote()).toMatch(/created outside a provider/);
+  });
+
+  /*
+   * Two consumers of one store, selecting different slices — the case that
+   * decides it. Grouping them is possible (`deps[0]` is one reference for
+   * both); what cannot be had from them is the store, and a union of `3` and
+   * `{ total: 9 }` is not one.
+   */
+  it('reads nothing from two consumers of one store selecting different slices', () => {
+    const subscribe = () => () => undefined;
+    const badge = externalStoreConsumer('CartBadge', 3, subscribe);
+    badge.sibling = externalStoreConsumer('CartTotal', { total: 9 }, subscribe);
+    mount({ tag: FUNCTION_COMPONENT, type: () => null, child: badge });
+
+    expect(sampleStores(BUDGET, () => 'id', true, 1000)).toEqual([]);
+  });
+
+  /*
+   * And the half that is not refused, side by side with it: the same store
+   * handed through a provider is read in full. The refusal is about the
+   * *module-level* form and about nothing else, which a reader of either
+   * document should be able to see without taking it on trust.
+   */
+  it('still reads the same store when the app provides it through a context', () => {
+    const subscribe = () => () => undefined;
+    const consumerFiber = externalStoreConsumer('CartBadge', 3, subscribe);
+    mount(
+      provider(
+        context('CartStore'),
+        { getState: () => ({ items: [], total: 9 }), subscribe },
+        consumerFiber,
+      ),
+    );
+
+    const [sample] = sampleStores(BUDGET, () => 'id', true, 1000);
+    expect(sample?.kind).toBe('zustand');
+    expect(sample?.value).toEqual({ items: [], total: 9 });
   });
 });
 

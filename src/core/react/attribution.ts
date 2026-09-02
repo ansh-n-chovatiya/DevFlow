@@ -197,6 +197,25 @@ export function formatSource(component: ComponentSource): string | null {
   return null;
 }
 
+/**
+ * The provenance worth spending words on, or nothing.
+ *
+ * Only the plugin's. `debug-source` and `bundle-search` are DevFlow's own two
+ * paths and a reader has no decision to make between them — both are the
+ * standalone product answering for itself. `plugin` is different in kind: it
+ * means this answer came out of a build step somebody added to *their*
+ * application, and a recording that quietly depends on that is precisely what
+ * `ROADMAP_AND_PHASES.md` §1.1 rule 3 exists to prevent. So a stamped
+ * attribution says so wherever a component is described in full, and the other
+ * two stay silent rather than each costing two words on every step.
+ *
+ * Null for anything with no path at all: a `pending` or `not-found` record has
+ * no provenance, and naming one would claim an answer that does not exist.
+ */
+export function sourceProvenance(component: ComponentSource): string | null {
+  return component.via === 'plugin' ? 'build stamp' : null;
+}
+
 /** How a flow's components came out, for a one-line summary in a header. */
 export interface ComponentCounts {
   total: number;

@@ -48,11 +48,12 @@
     "release": "node scripts/cut-release.mjs",
     "render": "node scripts/render.mjs",
     "sync-version": "node scripts/sync-version.mjs",
-    "version": "npm run sync-version && git add public/manifest.json mcp-server/package.json mcp-server/package-lock.json",
+    "version": "npm run sync-version && git add public/manifest.json mcp-server/package.json mcp-server/package-lock.json compiler-plugin/package.json",
     "package": "npm run verify && node scripts/package.mjs",
     "verify": "npm run typecheck && npm run lint && npm run lint:tokens && npm run lint:settings-ui && npm run lint:graphify && npm run lint:brand && npm run lint:vocab && npm run test && npm run build"
   },
   "devDependencies": {
+    "@babel/core": "^8.0.1",
     "@eslint/js": "^9.17.0",
     "@types/chrome": "^0.0.287",
     "@types/node": "^26.2.0",

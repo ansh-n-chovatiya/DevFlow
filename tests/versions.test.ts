@@ -15,6 +15,8 @@ interface PackageFile {
   private?: boolean;
   bin?: Record<string, string>;
   files?: string[];
+  dependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
   /** A lockfile states its own package's version here as well as at the top. */
   packages?: Record<string, { version?: string }>;
 }
@@ -27,11 +29,25 @@ const pkg = read('package.json');
 const manifest = read('public/manifest.json');
 const server = read('mcp-server/package.json');
 const serverLock = read('mcp-server/package-lock.json');
+const plugin = read('compiler-plugin/package.json');
 
 describe('versions', () => {
   it('agree across package.json, the manifest and the MCP server', () => {
     expect(manifest.version).toBe(pkg.version);
     expect(server.version).toBe(pkg.version);
+  });
+
+  /*
+   * The third package, and the reason it is watched while it is still private.
+   *
+   * `compiler-plugin/` is not published yet — it has never been run against a
+   * real application's build. The day that changes is not the day to discover
+   * its version has been 3.1.1 through four releases, so `sync-version.mjs`
+   * writes it now and this notices if it stops. It has no lockfile of its own:
+   * it has no dependencies, only a `@babel/core` peer.
+   */
+  it('agree in the compiler plugin, which is versioned before it is published', () => {
+    expect(plugin.version).toBe(pkg.version);
   });
 
   /**
@@ -106,5 +122,38 @@ describe('the published MCP server', () => {
   it('is not private, unlike the extension package', () => {
     expect(server.private).toBeUndefined();
     expect(pkg.private).toBe(true);
+  });
+});
+
+describe('the compiler plugin', () => {
+  /*
+   * `private: true` is a decision, recorded in `ROADMAP_AND_PHASES.md` §1.1 and
+   * asserted here so that publishing it is a deliberate edit to a test rather
+   * than a side effect of running `npm publish` in the wrong directory. It has
+   * never been run against a real application's build, and an npm package is a
+   * thing people install and cannot un-install.
+   */
+  it('is private until it has been used on a real application', () => {
+    expect(plugin.private).toBe(true);
+  });
+
+  /*
+   * The `files` list matters before the package is published, not after.
+   * Without it npm packs the whole directory; with the wrong contents it packs
+   * a plugin that cannot be loaded. Both are found the first time somebody
+   * installs it, which is the worst time to find either.
+   */
+  it('would publish the plugin, its types and its README, and nothing else', () => {
+    expect(plugin.files).toEqual(['index.js', 'index.d.ts', 'README.md']);
+  });
+
+  /*
+   * A Babel plugin has no runtime dependencies — it receives `types` from the
+   * `api` argument Babel hands it. A real dependency here would be installed
+   * into every consumer's tree for nothing.
+   */
+  it('depends on nothing, and names @babel/core as the peer it is handed', () => {
+    expect(plugin.dependencies).toBeUndefined();
+    expect(Object.keys(plugin.peerDependencies ?? {})).toEqual(['@babel/core']);
   });
 });

@@ -2,6 +2,80 @@
 
 ## Unreleased
 
+**`@devflow/compiler-plugin` writes each React component's own file and line
+onto the component function at build time, and DevFlow reads it back.** It is a
+Babel plugin, it is optional, and nothing needs it: DevFlow finds a component's
+source by searching the page's own bundles, and that is still the path it is
+built and tested around. What the plugin is for is the builds that path cannot
+answer for — a bundle shipping no source map, a map the browser will not fetch,
+a compiled body that genuinely appears in more than one place. It is not the fix
+for poor attribution generally, and its README says so: the common failure is a
+lazy chunk that never loaded, and a chunk that did not load carries no stamp
+either.
+
+**It stamps the component function, never the JSX.** A `data-` attribute would
+reach the DOM and change your application — your snapshot tests, your attribute
+selectors, your accessibility tree — so what is emitted is
+`Cart.__devflow = { f, l }`, one property assignment at module scope, invisible
+to React and to the page — and wrapped in a `try`, because a module is strict
+code and a wrapper of yours that hands back a frozen object would otherwise take
+your development build down at import with a stack pointing at code you did not
+write. Development builds only unless you ask otherwise:
+stamping ships your repository's directory layout in the bundle, and shipping
+that to every visitor is a decision to make deliberately.
+
+**Every attribution says which path answered it, to a person and to a model.**
+`ComponentSource.via` gained `plugin` beside `debug-source` and `bundle-search`;
+the panel spells it `build stamp`, and so does every place a model reads a
+component's source — the `## React components` table that `get_flow` returns and
+`flow.md` holds on disk, `get_step_detail`, and the heading `get_source_snippet`
+prints above the lines it read. So no recording can depend on the plugin without
+whoever reads it being able to tell. DevFlow's
+own two paths stay unlabelled there — a reader has no decision to make between
+them, and a stamp is the one that means the answer came out of a build step in
+the application itself. A stamp beats React's `_debugSource` where both exist, and for a
+reason that is not about which is newer: `_debugSource` is where a component's
+JSX was *written*, a position in its parent's file, and a stamp is where the
+component was *defined* — which is what the source of a component has always
+meant here. A component first captured without a stamp — a content script
+re-injected after a navigation starts its cache empty — is upgraded from
+`debug-source` to the stamp when it is seen again, and that is the only upgrade
+a component table allows: without it the recording would keep naming the
+parent's file while the panel, over the same component, named the component's
+own.
+
+**Babel only, and said rather than implied.** `@vitejs/plugin-react-swc` and
+Next.js compile with SWC, which takes no Babel plugin, so this serves a real but
+partial audience. Components defined below module scope and anonymous default
+exports are not stamped either. All of it is listed in
+`compiler-plugin/README.md` as gaps rather than left to be discovered.
+
+**A Zustand store created outside a provider is still not read, and that is now
+a decision rather than a deferral.** It was carried as waiting for "a mechanism
+with a stable identity"; the mechanism has been looked for, against React 19 and
+Zustand 4 and 5, and reading fibers does not produce one. A consumer's
+`useSyncExternalStore` hook yields that component's *selection*, not the store —
+so the union of what can be read is a fact about which components happened to be
+mounted, a key leaves it when its component unmounts (a state change the store
+never made), and the shape it presents differs between two recordings of one
+store. The recording continues to say the gap exists rather than reading the
+page as stateless, the same store provided through a context is read in full as
+before, and the argument is written out in `ROADMAP_AND_PHASES.md` §1.2 with a
+test pinning it.
+
+**Class components are stamped too.** `class Cart extends React.Component` is a
+real shape and was left out of the first cut for no better reason than that it
+was not on the list. A class component's fiber `type` is the class itself, and a
+class is a function object, so it reads back through the same property and the
+same reader — no second mechanism.
+
+**A stamped component under `node_modules` is flagged as one.** The component
+table set `dependency` on an attribution that came from a bundle search and not
+on one that came from a stamp or from `_debugSource`, so a recording could name
+somebody else's component as a step's owner and render no `node_modules` tag for
+it, while the panel — which has always set the flag for all three — tagged the
+same component correctly.
+
 **`replay_flow` runs a recorded journey again and says whether it still works —
 and it is off until you switch it on.** It is the only tool here that executes
 code on the machine it runs on: your own Playwright, your own application,

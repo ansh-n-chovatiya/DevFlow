@@ -280,5 +280,9 @@ export function countByCategory(items: PickedComponent[]): Record<HideableCatego
  * two of them end up reading a different field.
  */
 export function classifyPicked(component: PickedComponent): ComponentCategory {
-  return classifyComponent(component.name, component.debugSource?.source);
+  // The build stamp first, matching the precedence in `table.ts` and
+  // `locate.ts`. Both paths are a path into the component's own file, and
+  // reading only one of them would classify a stamped `node_modules` component
+  // as the user's own.
+  return classifyComponent(component.name, component.stamp?.source ?? component.debugSource?.source);
 }

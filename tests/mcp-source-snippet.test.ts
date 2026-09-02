@@ -145,9 +145,21 @@ function writeShopFlow(): void {
     react: {
       detected: true,
       components: {
+        // `via` is set deliberately, and it is the negative half of the
+        // provenance pair below. A fixture with no `via` at all reads
+        // identically under the correct rule and under one that labels every
+        // path, so it proves nothing about either.
         pay: {
           name: 'PayButton',
           status: 'resolved',
+          via: 'bundle-search',
+          source: 'src/checkout/PayButton.tsx',
+          line: 34,
+        },
+        stamped: {
+          name: 'StampedButton',
+          status: 'resolved',
+          via: 'plugin',
           source: 'src/checkout/PayButton.tsx',
           line: 34,
         },
@@ -192,6 +204,7 @@ function writeShopFlow(): void {
       step(5, 'moved'),
       step(6, 'stale'),
       step(7, 'leaky'),
+      step(8, 'stamped'),
     ],
   });
 }
@@ -355,6 +368,30 @@ describe('a recording names the source to read', () => {
     expect(answer).toMatch(/^>10 \| line 10 of PayButton\.tsx$/m);
   });
 
+  /*
+   * The heading names the build stamp, and only for the build stamp.
+   *
+   * This tool is the one that turns an attribution into the *contents* of a
+   * file, so a reader about to trust these lines is the reader entitled to know
+   * the line number came out of a build step in the recorded application rather
+   * than out of DevFlow. `ROADMAP_AND_PHASES.md` §1.1 rule 3.
+   */
+  it('names the build stamp in the heading when the stamp is what answered', async () => {
+    const answer = await call({ id: 'flow-shop', step: 8, radius: 1 });
+
+    expect(answer).toContain('src/checkout/PayButton.tsx:34 — StampedButton, step 8 (build stamp)');
+  });
+
+  it("says nothing about provenance for DevFlow's own paths", async () => {
+    const answer = await call({ id: 'flow-shop', step: 1, radius: 1 });
+
+    // Same file, same line, resolved by a bundle search: the heading is bare.
+    expect(answer).toContain('src/checkout/PayButton.tsx:34 — PayButton, step 1\n');
+    expect(answer).not.toContain('build stamp');
+    expect(answer).not.toContain('bundle search');
+    expect(answer).not.toContain('source map');
+  });
+
   it('finds a component by name, for a reader who has one and not a step', async () => {
     const answer = await call({ id: 'flow-shop', component: 'PayButton', radius: 1 });
 
@@ -429,7 +466,7 @@ describe('a recording names the source to read', () => {
     const answer = await call({ id: 'flow-shop', step: 99 });
 
     expect(answer).toContain('"Checkout" has no step 99');
-    expect(answer).toContain('It has 7 steps, numbered 1 to 7');
+    expect(answer).toContain('It has 8 steps, numbered 1 to 8');
   });
 
   it('says a flow is not there when the id names nothing', async () => {

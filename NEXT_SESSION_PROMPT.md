@@ -6,19 +6,31 @@ handoff; the roadmap is the truth about what is done.
 
 ## Where the project actually is
 
-`main` @ the merge of `phase-2/repair-loop`, clean. `npm run verify` is green:
-**132 test files, 2665 tests** (was 121 / 2406 at the start of the campaign).
+**You are on branch `phase-1/compiler-plugin`, ten commits ahead of `main`,
+working tree clean, `npm run verify` green: 135 test files, 2732 tests** (was
+132 / 2665 at the start of the session).
+
+**The branch is not merged.** That is the first decision of the next session —
+see "Stop here and decide" below.
+
+> **The standing instruction for this session: finish everything that can be
+> finished in Phases 0–2 before starting Phase 3.** The full inventory of what
+> that means — 7 items open and unblocked, 3 genuinely blocked on Phase 3, 4
+> refused on the record — is under "The rule for the next session" below. Read
+> that section before planning anything.
 
 > **Run `npm run verify` and read its exit code, not its tail.**
 > `npm run verify 2>&1 | tail -20` reports *`tail`'s* exit code, which is always
 > 0. Use `npm run verify > /tmp/v.log 2>&1; echo "EXIT=$?"` and believe the
 > number.
 >
-> One new trap, seen this session: a stray file dropped into the repo root — an
-> exported `*.spec.ts` a browser download had left there — makes `eslint .` fail
-> with `parserOptions.project` and nothing else, on a tree `git status` calls
-> clean. If lint fails for a file you do not recognise, look for it before you
-> look at your own diff.
+> **And never `git checkout -- <file>` to undo a mutation you made for a
+> red-check.** A checkout restores `HEAD`, not the tree, so it silently reverts
+> any *uncommitted* work in that file. This session did that to itself twice —
+> once losing a real fix and once making two red-checks meaningless, because the
+> "broken" code they were testing was also missing the fix. Snapshot the file's
+> text and write it back; there is a working harness in the history of this
+> session's approach, and the shape is four lines of Python.
 
 A previous AI ("Antygravity") built Phase 0–2 badly and it shipped as v3.2.0. An
 audit found the MCP server would not boot, typecheck was red, 29 tests failed,
@@ -29,56 +41,201 @@ source of *ideas*, never of code to copy.
 
 ---
 
-## What shipped last session
+## What shipped this session: Work Stream 1.1, `@devflow/compiler-plugin`
 
-Four work streams, each of which v3.2.0 had ticked and none of which survived
-its audit. Read `ROADMAP_AND_PHASES.md` §2.1, §2.2, §2.3 and §2.5 in full before
-touching anything nearby — the reasoning is there, not here.
+Phase 1's last open bullet. **Read `ROADMAP_AND_PHASES.md` §1.1 in full before
+touching anything nearby** — the rule, the five clauses, the precedence argument
+and every refusal are there, not here.
 
-**2.1 — the recorder.** A `MutationObserver` over the whole document for the
-length of each step, folded into a handful of facts and bounded by **two**
-numbers because there are two costs: `recording.domMutationCap` bounds the work
-and disconnects the observer, `recording.domMaxChanges` bounds the recording
-after folding. Ranking is structural → text → attribute → `style`, never by
-count. It sits beside `StepBase.domDelta` rather than replacing it and neither
-is derivable from the other. **Periodic layout snapshots are refused**, with the
-reason in the roadmap. `causedBy` stamping is refused, with the reason in the
-roadmap. State changes now reach the exported Playwright/Cypress specs as
-comments; a generated store reader is refused, and the generated file says why.
+The short version:
 
-**2.2 — `get_value_provenance`.** A search for one value across four
-independent observations of a recording, reported in the direction data flows
-and repeatedly described as a search rather than a trace. The roadmap's
-`domNodeId` argument does not exist and could not: a recording describes an
-element and addresses none.
+- **`compiler-plugin/`** — a third package at the repo root, mirroring
+  `mcp-server/`. A Babel plugin that emits
+  `try { Cart.__devflow = { f: "src/Cart.tsx", l: 12 }; } catch {}` after each
+  component at module scope. Development builds only by default.
+- **`src/core/react/stamp.ts`** — `readStamp`, pure, validates hard, never
+  throws.
+- **Precedence is stamp → `debugSource` → needle**, in `table.ts` (recorder) and
+  `locate.ts` (picker), plus `classifyPicked`, `rowBadge` and `observationFor`.
+- **`ComponentSource.via` gained `'plugin'`**; the panel spells it `build stamp`
+  and so does `get_step_detail`, through the new pure `sourceProvenance()`.
+- **`private: true`, not published.** It has never been run against a real
+  application's build. `sync-version.mjs` and `tests/versions.test.ts` keep it in
+  step so publishing later is one field, not a rediscovery.
 
-**2.3 — `suggest_actions`.** What people have actually done on a page, folded
-across recordings. It takes **no** graph argument, because the graph holds no
-selectors. **The headless replay harness is refused**, and the reason matters
-for your planning: the artifact it would run already exists, what is missing is
-a runner, and where that runner lives is a decision that belongs with 2.4.
+### Step 0 was the point, and it did its job
 
-**2.5 — `explain_feature`.** Lexical matching that says it is lexical matching,
-expanded one hop through the graph — which is the half that reaches an endpoint
-whose name carries none of your words.
+The rule was written before the first line of plugin code and shipped in the
+same commit. Writing it honestly immediately cost something: **the proposed
+first clause is false.** *"It may not produce an answer the standalone path
+cannot"* — a bundle with no source map is `no-map` forever and the stamp
+resolves it. What can be held is that it may not produce a *kind* of answer the
+standalone path cannot. That correction is recorded in §1.1 rather than quietly
+dropped, and it is the reason the rule is worth having.
 
-**And an adversarial review of all of it found five defects, all fixed.** That
-review was worth more than any of the four streams. Read the pattern rather than
-the list: every one of the five was a *claim* the code did not support, not a
-crash. Describing four hundred groups to print twelve was the reverted v3.2.0
-cost profile relocated one function along. A `<style>` written through was
-reported as content. A withheld send option was reported as a recording that
-never sampled. **Run one.**
+### What the review found, and what it says about the work
+
+**An adversarial review of the whole branch found eleven things. Three were
+serious, and all three were claims the code did not support** — the same pattern
+the last session recorded. Read them, because two of them are about *tests*:
+
+1. **`readStamp` threw on a throwing `f`/`l` getter** while its header said
+   nothing there could throw. The `try` covered the `__devflow` read but not the
+   payload destructure. A throw escapes `describeEntry` into the agent's
+   interaction listener, so the step records **no component chain at all**,
+   silently, for the life of the page. The covering test only trapped
+   `__devflow` itself — it passed against the exact bug it read as preventing.
+2. **The plugin stamped a wrapper around a *name*.** `memo(SomeLibraryIcon)`
+   put a stamp naming the consumer's file on an object React names after the
+   library's function, so DevFlow would report a library component as living in
+   your `src/` — resolved, `via: 'plugin'`, ahead of `_debugSource` and instead
+   of a bundle search. It would also have refuted the argument for putting the
+   stamp first: it is a position in the parent's file after all. Only a wrapper
+   whose component is written *inside* it is stamped now.
+3. **Rule 3 held for a person and not for a model.** `via` had never been
+   rendered by any MCP tool, for any path. Fixed for `get_step_detail`; **still
+   open for `get_flow`** — see below.
+
+Two more, found by reading my own comments rather than by the review:
+
+- **The `describeEntry` cache dropped a wrapper-borne stamp.** The comment said
+  "it is a property of the function, so one reading of it is every reading of
+  it", which is false where the stamp sits on a `forwardRef`/`memo` wrapper:
+  `identifyComponent` builds an entry whose `type` *is* the function. A
+  component seen first as a context subscriber cached an empty stamp.
+- **A frozen target would have thrown at import.** A module is strict code, so a
+  wrapper handing back a frozen object would have taken somebody's development
+  build down with a stack pointing at code they did not write. The assignment is
+  in a `try` now — and **the first version of that test passed with the guard
+  removed**, because `runInNewContext` evaluates a *script* and a sloppy script
+  fails silently exactly where a module throws. It evaluates in strict mode now.
+
+**Roughly forty mutations were run against this branch. Two survived**, and
+neither was a curiosity: one was the POSIX-separator conversion, which no test
+on a POSIX machine can reach (replaced with an exact-expression source
+assertion that says why it is one); the other was a `sourceProvenance` that
+labels every path, which survived because the negative fixture had **no `via` at
+all** and so read identically under the correct rule and the broken one.
 
 ---
 
-## Where Phase 2 stands
+## Stop here and decide: merge, or finish the review first
 
-**Closed, but for one bullet and four halves — and every one of those is a
-written refusal rather than an omission.** Eleven `[x]`, four `[~]`, one `[ ]`.
-Read `ROADMAP_AND_PHASES.md` §2.1 to §2.5 in full; the reasoning is there.
+`npm run verify` is green and the branch is coherent as it stands. **Six review
+findings are deliberately not fixed yet.** None of them breaks anything; each is
+a claim that overreaches or a small gap. They are listed most-worth-doing first.
 
-The refusals, so you do not re-open them by accident:
+Finish them on this branch and merge, or merge now and take them as their own
+branch — either is fine, but **all six are closed before Phase 3 starts**, and
+three of them are sentences in shipped documents that are untrue until they are.
+Merging and forgetting is the one option that is not open.
+
+1. **(HIGH) Rule 3 still fails in `get_flow`.** `sourceProvenance` has exactly
+   one call site (`mcp-server/server.js`, in `stepParts`). It is **not** used in
+   `appendComponents` (`src/core/export/markdown.ts:339`) — the `## React
+   components` table, whose own comment calls it *"the one place a component's
+   source is written down"*, and which is what `get_flow` returns by default,
+   what `flow.md` on disk holds, and what the extension's own Markdown/ZIP
+   export writes — nor in `get_component_source` (`mcp-server/server.js` ~4789).
+   So a model calling `get_flow`, the primary tool, reads
+   `| Cart | src/Cart.tsx:12 | |` and cannot tell. **Three documents overclaim
+   until this is done**: `ROADMAP_AND_PHASES.md` §1.1 rule 3, the `## Unreleased`
+   changelog entry, and `compiler-plugin/README.md`. Fix the code or narrow all
+   three sentences; do not leave them as they are.
+2. **(MEDIUM) `mergeComponents` never upgrades `debug-source` → `plugin`.**
+   `src/core/react/table.ts:81` — `if (table[component.id]) continue;`, first
+   answer wins, justified by *"a later click on the same component learns
+   nothing about where it lives."* That is no longer strictly true: a component
+   first captured without a stamp (a re-injected content script after
+   navigation resets `componentCache`) is frozen at `via: 'debug-source'` with
+   the parent's file, while the panel shows the component's own file — the exact
+   panel-versus-flow contradiction the shared precedence exists to prevent. The
+   narrow fix is to allow **one** upgrade, `debug-source` → `plugin`, and
+   nothing else; do not let a stamp overwrite a resolved bundle-search answer.
+   Or leave the behaviour and make the header honest. Either, not neither.
+3. **(LOW) The stamp branch in `table.ts` omits `dependency`.**
+   `src/ui/locator/locate.ts` sets both `absolutePath` and `dependency` for
+   identical input; `table.ts` sets only the first. So a stamped `node_modules`
+   path in a recording is never flagged, `pickOwner` can name it as a step's
+   owner, and the review view renders no `node_modules` tag. §1.1 rule 1 says
+   "same shape". Note the `debug-source` branch beside it has the same gap and
+   has always had it — decide whether to fix one or both, and say which.
+4. **(LOW) `compiler-plugin/README.md` "Anything else that runs Babel"** tells
+   people to add the package to a `plugins` list, two sections above the note
+   that it is ESM-only and a CommonJS `babel.config.js` cannot `require()` it.
+   Those two should be one paragraph.
+5. **(LOW) The `build stamp` tooltip in `src/ui/components/result-card.ts` uses
+   "location"**, which `docs/CONTRACTS.md` §4.1 lists in the *Not* column for
+   **source**. The pre-existing `dev build` tooltip has the same wording, so this
+   is drift rather than a regression — but the new string did not have to
+   inherit it. §4 is frozen; if it is wrong, say so, do not fix it locally.
+6. **(LOW) Class components are not stamped.** Named as a gap in the README on
+   purpose. `class Cart extends React.Component` is a real shape and adding it
+   is a small change to `stampsFor`. It was left out because the handoff's list
+   did not include it, not because it is hard.
+
+The review also confirmed, independently, that the stamp survives the wire —
+`buildPayload`, `pruneComponents` and `saveFlow` copy `ComponentSource` by
+reference, so nothing drops `stamp` or `via` — and that `Pos0`/`Pos1` is clean
+throughout the branch, with `pos1(l)` in `stamp.ts` a genuine edge assertion
+guarded by an integer check.
+
+---
+
+## The rule for the next session: finish Phases 0–2 before starting Phase 3
+
+**Everything that *can* be completed between Phase 0 and Phase 2 is completed
+before Phase 3 begins.** Not "mostly", and not "except the small ones". The
+inventory below is exhaustive — every unticked box in all three phases, sorted
+by whether anything can be done about it — so the decision is which of these to
+close, not which to go looking for.
+
+Phase 3 starts when the "open and unblocked" list is empty and the branch is
+merged. Nothing else gates it.
+
+### Open, unblocked, and therefore yours — 7 items
+
+**Six are the review findings on this branch**, listed with their reasoning
+under "Stop here and decide" above. They are the bulk of the remaining work and
+three of them are sentences in shipped documents that are currently untrue.
+
+**The seventh is the only unticked roadmap bullet in Phases 0–2 that is neither
+blocked nor refused:**
+
+- **1.2 — module-level Zustand stores.** `[~]` today. Redux, TanStack Query and
+  React Context are read in full; Zustand only when the store arrives through a
+  context. A module-level `create()` store is reachable in principle — a
+  consumer has a `useSyncExternalStore` hook holding a `getSnapshot` — but what
+  comes back is that component's *selection*, not the store, and its only
+  identity is a function reference that does not survive a reload. A
+  `state_keys` node keyed on that accumulates one row per recording and answers
+  nothing, which is the exact shape the `v3.2.0` audit deleted.
+
+  It is deferred **on a condition** — "it waits for a mechanism with a stable
+  identity" — not refused. So this one needs a real attempt: either find that
+  mechanism and ship it, or write the refusal properly, with the argument, the
+  way the four in Phase 2 are written. A `[~]` that nobody has re-examined is
+  not the same thing as a decision. **Do not leave it as it is.**
+
+### Blocked on Phase 3 — 3 items, Phase 0
+
+These genuinely cannot be done first; they need the git integration Phase 3
+builds. They stay `[ ]`, and they are the one legitimate reason to touch Phase 3
+work at all before the list above is empty.
+
+- `git_commits` nodes
+- the `changed_in` edge
+- `git_sha` — the columns exist and are always NULL
+
+Pick them up **inside** the Phase 3 git pass rather than as a separate errand
+afterwards.
+
+### Refused, with the argument on the record — 4 items, Phase 2
+
+**These are done.** Each is a decision written out in `ROADMAP_AND_PHASES.md`
+§2.1 to §2.5, not an omission, and "complete everything completable" does not
+mean re-opening them. If you want to overturn one, the argument to beat is in
+the roadmap — but read it first.
 
 - **Periodic layout snapshots** (2.1) — a timer reading layout forces a reflow
   on every recorded page, and a snapshot taken between steps belongs to no step.
@@ -92,139 +249,21 @@ The refusals, so you do not re-open them by accident:
   to write the patch is now in place; a generator here could only be the
   template the reverted version was.
 
-If a future session wants any of these, the argument to beat is in the roadmap,
-not here.
+### The tally
 
-## Your task: Work Stream 1.1 — `@devflow/compiler-plugin`
+| | Phase 0 | Phase 1 | Phase 2 |
+| --- | --- | --- | --- |
+| Open and unblocked | — | 1 (`1.2` Zustand) | — |
+| Blocked on Phase 3 | 3 | — | — |
+| Refused, on the record | — | — | 4 |
 
-Phase 0's three remaining items — `git_commits` nodes, the `changed_in` edge,
-the `git_sha` columns — **cannot be done in this campaign at all.** They need
-Phase 3's git integration. They stay `[ ]`.
+Plus the six review findings, which belong to 1.1 and are not roadmap bullets.
 
-**This is a decision that has already been made, and the argument against it has
-already been heard.** The previous session recommended *not* building this, on
-the grounds below; the user considered that and chose to build it. So build it,
-and build it properly — do not re-open the question, and do not build a
-half-hearted version to honour an objection that has been overruled.
+Everything else across all three phases is `[x]` and proved by `npm run verify`.
 
-The argument, recorded so you build against it rather than into it: a build-time
-stamp fixes **every** failure mode `src/features/react/resolver.ts` reports — no
-bundles seen, bundles unreadable, not found in the loaded chunks, no source map,
-a map with no mapping, and *"matched in N places; this is the first — the path
-may be the wrong one"*. It does not complement the standalone path, it replaces
-it. And `src/core/react/fiber.ts:181` records that **React 19 dropped
-`_debugSource`**, so bundle search is already the primary path rather than the
-fallback. The risk is therefore not that the plugin fails; it is that it works so
-well that the zero-app-dependency path becomes the degraded one people are told
-to upgrade from, and Invariant 1 quietly becomes a sentence in a README.
+---
 
-Everything in step 0 exists to make that outcome structurally hard rather than a
-matter of anyone's discipline.
-
-### Step 0 · Write the rule before you write any code
-
-Into `ROADMAP_AND_PHASES.md` §1.1, as part of the same commit as the first line
-of plugin code. **If you cannot write this rule honestly, stop and say so** —
-that is a real outcome and it is the signal the objection was right.
-
-Proposed rule, to sharpen rather than to accept unread:
-
-1. **The plugin may make an existing answer exact. It may not produce an answer
-   the standalone path cannot.** Same `ComponentSource` shape, same statuses, no
-   new field only it can fill. The moment it carries something extra, the
-   standalone path is missing something rather than merely approximating.
-2. **No feature may require it.** Everything must work with it absent, and the
-   existing suite — which runs without it — is the standing proof. Add one test
-   that says so on purpose, so a later refactor cannot make the stamp
-   load-bearing without going red.
-3. **Every attribution says which path answered it.** `ComponentSource.via`
-   gains `'plugin'` beside `'debug-source'` and `'bundle-search'`, so no
-   recording silently depends on the plugin and any reader can tell.
-4. **The standalone path stays the tested default.** The plugin gets its own
-   tests; it does not get to become the fixture of an existing one.
-5. **The documentation may not present it as the fix for poor attribution.** It
-   is for builds the standalone path cannot answer for, and the README says
-   which those are.
-
-### Step 1 · The package — `compiler-plugin/`
-
-At the repo root, mirroring `mcp-server/`, which is the precedent for a second
-published package in this tree.
-
-- **A Babel plugin**, and Vite first: `@vitejs/plugin-react` takes
-  `babel.plugins`. **Name the gap in the README rather than discovering it
-  later** — `@vitejs/plugin-react-swc` and Next.js use SWC and take no Babel
-  plugin, so a Babel-only build serves a real but partial audience. An SWC port
-  is a second piece of work; say so rather than implying coverage.
-- **Stamp the component function, not the JSX.** For `function Cart() {}`, emit
-  `Cart.__devflow = { f: "src/Cart.tsx", l: 12 }`. Reasons, in order: a JSX prop
-  would reach the DOM and change the user's app, which Invariant 1 forbids
-  outright; a static property on the user's own function is inert; and DevFlow
-  already holds component functions off the fibers (`componentFn` in
-  `src/injected/render.ts`, `describeEntry` in `src/injected/agent.ts`), so
-  reading it needs **no React internals at all** — which is the one part of this
-  feature that cannot rot when React moves something.
-- Cover function declarations, function expressions and arrow consts with a
-  capitalised name, plus `forwardRef(...)` and `memo(...)` wrappers. Skip
-  everything else; a stamp on a non-component is a row in the table that names
-  nothing.
-- `f` is repo-relative with POSIX separators; `l` is 1-based, which is `Pos1`.
-- **Default to development builds only.** Stamping ships source paths in the
-  bundle, and shipping a customer's directory layout to every visitor is a
-  decision they should make deliberately. An `includeInProduction` option, off.
-
-### Step 2 · The reader — `src/core/react/stamp.ts`, pure
-
-`readStamp(fn: unknown): { source: string; line: Pos1 } | null`.
-
-Validate hard and return `null` rather than throwing: the stamp is a property on
-an object out of a page DevFlow does not control, so `f` must be a non-empty
-string and `l` a positive integer or there is no stamp. This is the one edge
-where `pos1()` is asserted — see the positions invariant in `CLAUDE.md`.
-
-### Step 3 · The wiring
-
-- `CapturedComponent` (`src/shared/messages.ts`) gains `stamp?: { source, line } | null`,
-  beside `debugSource` and for the same documented reason — they are different
-  facts. `debugSource` is where the JSX was *written* (a position in the
-  parent's file); a stamp is where the component was *defined*, which is what
-  `ComponentSource` has always claimed to be. **The stamp is the better match
-  for the contract, and `debug-source` is the compromise** — say so where the
-  precedence is decided.
-- `describeEntry` (`src/injected/agent.ts:791`) reads it, cached per function
-  exactly as the needle already is.
-- `src/core/react/table.ts:104` is where precedence lives: **stamp, then
-  `debugSource`, then needle.** Keep the `isPlaceholderId` guard for the stamp
-  too — the hazard it names (one row winning under an id every unnamed component
-  shares) is unchanged by where the location came from.
-- `ComponentSource.via` in `src/shared/types.ts` gains `'plugin'`.
-- `src/ui/locator/locate.ts` has its own `via` assignments for the picker path;
-  it needs the same precedence, or picking and recording will disagree about one
-  component.
-
-### Step 4 · Tests
-
-- `compiler-plugin/` own suite: source in, transformed source out. Include a
-  file with a component, a non-component, a `forwardRef`, and a lowercase
-  function that must **not** be stamped.
-- `tests/react-stamp.test.ts`: the reader, including every malformed stamp
-  shape returning `null`.
-- Extend the existing table test with the precedence, all three ways round.
-- **The invariant test from rule 2**: a captured component with no stamp still
-  resolves by the existing path, asserted on purpose rather than by accident.
-
-### Step 5 · Version and publishing
-
-- `scripts/sync-version.mjs` keeps `public/manifest.json` and
-  `mcp-server/package.json` (and its lockfile) at the root version. A third
-  package has to be added there **and** to `tests/versions.test.ts`, which
-  asserts the sync and the `files` list of anything published.
-- Decide and record whether it publishes now or stays `private: true` until it
-  has been used on a real app. Either is defensible; leaving it undecided is not.
-
-### Step 6 · Roadmap and changelog, in the same commits
-
-## Two things this session learned the hard way
+## Two things earlier sessions learned the hard way
 
 - **`replay_flow` is the first tool that executes code.** It is off behind
   `DEVFLOW_REPLAY=1` and refuses to install anything. If you add a second such
@@ -236,8 +275,9 @@ where `pos1()` is asserted — see the positions invariant in `CLAUDE.md`.
   The rule for reading a runner's output first sat in `mcp-server/server.js`,
   behind a real Playwright install and a real spawn; a mutation deleting it left
   every suite green. Moving it into `core/replay` made it three inputs and an
-  answer. When a mutation survives, ask where the code is before you ask what
-  the test missed.
+  answer. This session hit the same thing and did the same thing:
+  `sourceProvenance` is a pure function in `src/core/react/attribution.ts`
+  rather than a condition inside `server.js`, which nothing typechecks.
 
 ## Non-negotiables
 
@@ -247,7 +287,9 @@ where `pos1()` is asserted — see the positions invariant in `CLAUDE.md`.
   in `mcp-bundle.ts`; that is the line.)
 - Every `chrome.*` call goes through `src/chrome/`.
 - The ARKG stays additive, via the guarded `arkgTry` funnel.
-- Anything published must be in `mcp-server/package.json` `files`.
+- Anything published must be in its package's `files` list — and there are
+  **three** packages now. `scripts/sync-version.mjs`, `scripts/cut-release.mjs`
+  and `tests/versions.test.ts` all know about `compiler-plugin/`.
 - Any change touching `src/` or `public/` needs a `## Unreleased` changelog entry.
 - Strings obey the frozen `docs/CONTRACTS.md` §4. It is frozen — if it is wrong,
   say so; do not fix it locally.
@@ -255,51 +297,45 @@ where `pos1()` is asserted — see the positions invariant in `CLAUDE.md`.
   After touching that table run `npm run build:settings` — and note that
   `tests/settings-defaults.test.ts` has a `SOURCE` table naming every field, and
   `tests/settings-advanced.test.ts` asserts **counts with the number written
-  into the test name and the prose**. Both numbers were stale when this session
-  found them; they are correct now (39 Tier 2, 23 frozen). Update the sentences,
-  not just the integers.
+  into the test name and the prose** (39 Tier 2, 23 frozen). Update the
+  sentences, not just the integers.
 - Comments say **why**, not what.
 
 ## How to work
 
 - **Do not tick a checkbox unless `npm run verify` proves it** — and unless you
   have read the thing it claims. `[~]` is always available and is never a
-  failure. Four of the sixteen bullets touched this session are refusals with
-  reasons; that is the mechanism working.
-- **Do not build a module with no caller.**
+  failure.
+- **Do not build a module with no caller.** (`componentTable` in
+  `mcp-server/server.js` has none — it is dead. Noticed while working nearby,
+  not removed, because deleting it was not this session's job. Somebody should.)
 - **Write tests that would fail against the bug.** Break the code the test
-  covers, confirm it goes red, revert. This session ran roughly ninety such
-  checks across its own work and its subagents'; **five survived**, and every
-  one of the five was a weak *test*, not a curiosity. Two examples worth
-  carrying: a "the tool is reachable" test that called the tool but never
-  checked `tools/list` was green against a tool that was never declared — the
-  exact v3.2.0 bug it was written to prevent; and a tie-break test whose
-  fixtures happened to sort the same way under both the correct rule and the
-  broken one.
+  covers, confirm it goes red, revert — *by restoring the text, not with git*.
+  Three separate tests on this branch passed against the exact bug they were
+  written to prevent, and each was found by mutation rather than by reading.
+  When a mutation survives, ask **where the code is** and **what the fixture
+  actually distinguishes** before you ask what the assertion missed.
 - **A source-text test (`expect(source).toContain(...)`) is the weakest kind
-  and sometimes the only kind** — a content script and a service worker both
-  register listeners at import and cannot be loaded. When you write one, assert
-  the **exact expression**, not a nearby phrase. A grep for a comment passes
-  against the deletion of the line under it.
+  and sometimes the only kind** — `src/injected/agent.ts` registers listeners at
+  import and cannot be loaded. When you write one, assert the **exact
+  expression**, not a nearby phrase, and say in the comment why it is one. And
+  **strip comments before counting occurrences**: a count on this branch caught
+  its own prose as an instance of the thing it was counting.
 - **Test at the layer that can lose the data, not below it.** Two by-name
   flow-level copies still silently drop new fields — `buildPayload` in
   `src/features/mcp/send.ts` and `saveFlow` in `mcp-server/server.js`. Step
-  fields are spread and survive; flow-level fields are listed by name. Start in
-  storage, or at the POST.
+  fields are spread and survive; flow-level fields are listed by name.
 - **The write and the renderer are one deliverable.** A field no tool prints
-  does not exist from outside.
+  does not exist from outside. That is finding 1 above, and it was missed on the
+  first pass despite being written down here.
 - **Use subagents in parallel with explicit file ownership.** Freeze the shared
-  contract yourself first — types, settings, signatures — or they will each
-  guess at it. Tell them not to run `verify` or `build*`.
-  - **And do not authorise a subagent to mutate-and-restore a file you are
-    editing.** This session lost a wired MCP tool that way: a reviewer snapshotted
-    `mcp-server/server.js`, and its restore wrote the file back to `HEAD` over an
-    edit made in between. It was found only because a test that had passed
-    started failing. Give reviewers read-only access, or give them a worktree.
-- **Verify their results independently.** Re-run the red-checks on the claims
-  that matter. Every subagent this session reported accurately — including two
-  that reported their own tests as inadequate and fixed them — and the spot
-  checks are what makes that knowable rather than hoped for.
+  contract yourself first. Tell them not to run `verify` or `build*`.
+  - **Give reviewers read-only access, or a worktree.** And if you edit while a
+    reviewer is running, tell it what you changed before it reports — this
+    session's reviewer re-verified its whole report against the moved tree when
+    asked, and excluded two findings that had been fixed underneath it.
+- **Verify their results independently.** Every one of the eleven findings this
+  session's reviewer reported was real and reproducible.
 - Run `graphify update .` after modifying code.
 - Commit on a branch and merge; never commit straight to `main`.
 

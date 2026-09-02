@@ -17,7 +17,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { DEFAULTS } from '../src/features/settings/index.js';
 import { pos0, pos1 } from '../src/core/react/positions.js';
-import type { HiddenCategories } from '../src/core/react/classify.js';
+import { classifyPicked, type HiddenCategories } from '../src/core/react/classify.js';
 import type { ComponentSource, PickedComponent } from '../src/shared/types.js';
 import {
   categoryChip,
@@ -222,6 +222,42 @@ describe('rowBadge', () => {
 
   it('says nothing about an ordinary component', () => {
     expect(rowBadge(named('CartSummary'), NOTHING_HIDDEN)).toBeNull();
+  });
+
+  /*
+   * The mark means "this row's answer needs no bundle search", and a build
+   * stamp means that as much as `_debugSource` does. What it does not mean is
+   * that React recorded anything, so the sentence behind the mark is a
+   * different one.
+   */
+  it('marks a component the build stamped, and does not credit React for it', () => {
+    const stamped: PickedComponent = {
+      name: 'CartSummary',
+      stamp: { source: 'src/CartSummary.tsx', line: pos1(12) },
+    };
+
+    const badge = rowBadge(stamped, NOTHING_HIDDEN);
+    expect(badge?.text).toBe('◆');
+    expect(badge?.title).toBe('The build recorded where this component was defined.');
+  });
+});
+
+describe('classifyPicked, through the filters the tree draws', () => {
+  /*
+   * A stamped path is the only path a `node_modules` component has on a build
+   * with no `_debugSource`. Reading only `debugSource` would classify it as the
+   * user's own code and leave it in the tree with the `dependencies` chip on.
+   */
+  it('classifies a stamped node_modules component as a dependency', () => {
+    const stamped: PickedComponent = {
+      name: 'Box',
+      stamp: { source: 'node_modules/@ui/kit/Box.tsx', line: pos1(3) },
+    };
+
+    expect(classifyPicked(stamped)).toBe('dependency');
+    expect(classifyPicked({ name: 'Box', stamp: { source: 'src/Box.tsx', line: pos1(3) } })).toBe(
+      'unknown',
+    );
   });
 });
 

@@ -136,6 +136,7 @@ if (!noGit) {
     'public/manifest.json',
     'mcp-server/package.json',
     'mcp-server/package-lock.json',
+    'compiler-plugin/package.json',
   ];
   git('add', ...filesToStage);
   git('commit', '-m', `v${newVersion}`);

@@ -71,6 +71,25 @@ When the compiled position is known but the original is not, the card still
 offers **Open in Sources** in the DevTools panel — the minified line is a worse
 answer than the original, and a much better one than nothing.
 
+### The optional plugin, and what it is not for
+
+None of the above needs anything installed in your application. DevFlow reads
+the page's own bundles, and that is the path it is built and tested around.
+
+There are builds that path cannot answer for — a bundle shipping no source map,
+a map hosted somewhere the browser will not fetch from, a compiled body that
+genuinely appears in more than one place. For those there is
+[`@devflow/compiler-plugin`](./compiler-plugin/README.md), a Babel plugin that
+writes each component's own file and line onto the component function at build
+time. It is not the fix for poor attribution generally: the common failure is a
+lazy chunk that never loaded, and a chunk that did not load carries no stamp
+either.
+
+Nothing in DevFlow requires it, every attribution says which path answered it
+(the card reads `build stamp`), and the plugin covers Babel builds only — SWC,
+which is what `@vitejs/plugin-react-swc` and Next.js use, takes no Babel plugin
+at all.
+
 ---
 
 ## Where DevFlow is going

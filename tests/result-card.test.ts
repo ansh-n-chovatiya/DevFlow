@@ -83,12 +83,83 @@ beforeEach(() => {
 });
 
 describe('viaLabel', () => {
+  /*
+   * §1.1 rule 3: every attribution says which path answered it, so no recording
+   * can depend on `@devflow/compiler-plugin` without a reader being able to
+   * tell. A stamped answer that read as `dev build` would be exactly that
+   * silent dependency.
+   */
+  it('names the build stamp as its own path, not as a development build', () => {
+    expect(viaLabel(component({ via: 'plugin', source: 'src/Cart.tsx' }))).toBe('build stamp');
+  });
+
   it('reads a development build off the fiber', () => {
     expect(viaLabel(component({ via: 'debug-source', source: 'src/App.tsx' }))).toBe('dev build');
   });
 
   it('says "source map" only when the search reached an original file', () => {
     expect(viaLabel(resolved())).toBe('source map');
+  });
+
+  /*
+   * `VIA_TITLE` is keyed by the label rather than by `via`, and the lookup falls
+   * back to an empty string — so a fourth label with no sentence behind it fails
+   * nothing and simply renders a mark nobody can hover to understand. Every
+   * label this function can return is checked, from the function itself.
+   */
+  it('has a sentence behind every label it can produce', () => {
+    const sources: ComponentSource[] = [
+      component({ via: 'plugin', source: 'src/Cart.tsx', line: pos1(12) }),
+      component({ via: 'debug-source', source: 'src/App.tsx', line: pos1(40) }),
+      resolved(),
+      component({
+        status: 'compiled-only',
+        via: 'bundle-search',
+        compiled: { url: 'https://x.test/a.js', line: pos0(3), column: pos0(1) },
+      }),
+    ];
+
+    for (const source of sources) {
+      const via = resultCard({ source }).querySelector('.result-card__via');
+      expect(via?.textContent, JSON.stringify(source.via)).toBe(viaLabel(source));
+      expect(via?.getAttribute('title'), JSON.stringify(source.via)).not.toBe('');
+    }
+  });
+
+  /*
+   * The tooltips obey the glossary, which is the half that drifted.
+   *
+   * `docs/CONTRACTS.md` §4.1 defines **source** as the file and line a
+   * component was written in and puts *location*, *origin* and *definition* in
+   * the Not column. Both of the first two sentences said “location” — the
+   * `dev build` one from the beginning, and `build stamp` only because it was
+   * written to match its neighbour. A word checked nowhere is a word that
+   * spreads to the next string that needs one, so it is checked here, over
+   * every label `viaLabel` can produce rather than over the one that was wrong.
+   */
+  it('spells the frozen noun in every tooltip behind a label', () => {
+    const sources: ComponentSource[] = [
+      component({ via: 'plugin', source: 'src/Cart.tsx', line: pos1(12) }),
+      component({ via: 'debug-source', source: 'src/App.tsx', line: pos1(40) }),
+      resolved(),
+      component({
+        status: 'compiled-only',
+        via: 'bundle-search',
+        compiled: { url: 'https://x.test/a.js', line: pos0(3), column: pos0(1) },
+      }),
+    ];
+
+    for (const source of sources) {
+      const title = resultCard({ source })
+        .querySelector('.result-card__via')
+        ?.getAttribute('title');
+
+      // Whole words. “original source” is the resolver's own vocabulary and is
+      // not the noun §4.1 is refusing; a substring match calls it one.
+      expect(title, `${viaLabel(source)}: ${title}`).not.toMatch(
+        /\b(locations?|origins?|definitions?)\b/i,
+      );
+    }
   });
 
   it('says "compiled" when the search stopped at the bundle', () => {

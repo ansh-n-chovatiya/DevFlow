@@ -219,6 +219,62 @@ describe('exportToMarkdown · React components', () => {
     expect(md).not.toContain('· in');
   });
 
+  /*
+   * The Notes cell names the build stamp, and nothing else.
+   *
+   * `get_flow` is the primary tool and this table is what it returns; it is
+   * also what `flow.md` holds on disk and what the extension's Markdown and ZIP
+   * exports write. A stamped component has no `detail`, so before this the cell
+   * was empty and a model reading `| Cart | src/Cart.tsx:12 | |` could not tell
+   * that the answer came out of a build step in the recorded application.
+   * `ROADMAP_AND_PHASES.md` §1.1 rule 3.
+   *
+   * The negative row carries `via: 'bundle-search'` on purpose. A row with no
+   * `via` at all reads identically under this rule and under one that labels
+   * every path, and would prove nothing about either.
+   */
+  it('names the build stamp in the table, and only for the build stamp', () => {
+    const md = exportToMarkdown([chained(['stamped', 'searched'])], {
+      react: react({
+        stamped: {
+          name: 'Cart',
+          status: 'resolved',
+          via: 'plugin',
+          source: 'src/Cart.tsx',
+          line: pos1(12),
+        },
+        searched: {
+          name: 'App',
+          status: 'resolved',
+          via: 'bundle-search',
+          source: 'src/App.tsx',
+          line: pos1(1),
+        },
+      }),
+    });
+
+    expect(md).toContain('| Cart | src/Cart.tsx:12 | build stamp |');
+    expect(md).toContain('| App | src/App.tsx:1 |  |');
+    expect(md).not.toContain('bundle search');
+  });
+
+  it('keeps the row’s own sentence beside the provenance', () => {
+    const md = exportToMarkdown([chained(['stamped'])], {
+      react: react({
+        stamped: {
+          name: 'Cart',
+          status: 'resolved',
+          via: 'plugin',
+          source: 'src/Cart.tsx',
+          line: pos1(12),
+          detail: 'Something worth saying.',
+        },
+      }),
+    });
+
+    expect(md).toContain('| Cart | src/Cart.tsx:12 | build stamp · Something worth saying. |');
+  });
+
   it('gives a component with nowhere to point a row and a reason', () => {
     const md = exportToMarkdown([chained(['lazy'])], {
       react: react({

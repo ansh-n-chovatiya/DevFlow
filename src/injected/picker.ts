@@ -44,6 +44,7 @@ import {
   PICK_TIMEOUT_MS,
 } from '../shared/constants.js';
 import { pos1 } from '../core/react/positions.js';
+import { readStamp } from '../core/react/stamp.js';
 import type { PickResult, PickedComponent, TreeGroup } from '../shared/types.js';
 import {
   type ComponentFn,
@@ -458,7 +459,11 @@ class Picker {
     const state: PickedState = { ancestry, sibling };
     pageWindow[PAGE_GLOBALS.picked] = state;
 
-    return { kind: 'picked', ancestry: ancestry.map(describe), siblings: sibling.map(describe) };
+    return {
+      kind: 'picked',
+      ancestry: ancestry.map(describePicked),
+      siblings: sibling.map(describePicked),
+    };
   }
 }
 
@@ -516,7 +521,7 @@ function collectSiblings(picked: Fiber): PickedEntry[] {
  * have opened every file one line above the component, silently and forever.
  * That is D1, and the reason the base is a type.
  */
-function describe(entry: PickedEntry): PickedComponent {
+export function describePicked(entry: PickedEntry): PickedComponent {
   const src = getDebugSource(entry.fiber);
   return {
     name: entry.name,
@@ -527,5 +532,12 @@ function describe(entry: PickedEntry): PickedComponent {
           column: pos1(src.columnNumber ?? 1),
         }
       : null,
+    // The component function first and the raw `fiber.type` second, exactly as
+    // the recorder reads it in `agent.ts`: the plugin stamps the value a module
+    // bound, so `memo(Cart)` has a stamp on the wrapper naming where it was
+    // memoised and one on `Cart` naming where it was written. Picking and
+    // recording answering differently about one component is the failure this
+    // ordering exists to prevent.
+    stamp: readStamp(entry.fn) ?? readStamp(entry.fiber.type),
   };
 }

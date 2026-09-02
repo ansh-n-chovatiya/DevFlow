@@ -36,17 +36,27 @@
  * contexts.
  *
  * A module-level Zustand store — `const useStore = create(…)` with no provider —
- * is **not** read, and the flow says so rather than leaving the gap to be
- * mistaken for "nothing changed". It is reachable in principle: a component
- * using one has a `useSyncExternalStore` hook whose node holds a `getSnapshot`.
- * What comes back through it is that component's *selection*, not the store, and
- * its only stable identity is a function reference that lasts as long as the
- * page. A graph node keyed on an identity that cannot survive a reload is worse
- * than no node — it accumulates one row per recording and answers no question —
- * so this waits for a mechanism that has one. `subscribes_to` and `state_keys`
- * are complete without it, because every store a subscriber can be *observed*
- * reading is a context store anyway: a context dependency is recorded on the
- * consuming fiber, and a closure is not.
+ * is **not** read, and the flow says so (`stateNote`) rather than leaving the
+ * gap to be mistaken for "nothing changed". This is a refusal, measured against
+ * React 19 and Zustand 4 and 5 rather than reasoned from the shape of the
+ * problem; the argument in full is in `ROADMAP_AND_PHASES.md` §1.2. The short
+ * version is that the two things a consumer's fiber offers are the wrong two:
+ *
+ *   - The `useSyncExternalStore` hook's `queue.getSnapshot` is Zustand's
+ *     per-consumer closure, not `api.getState`, so what it returns is that
+ *     component's **selection**.
+ *   - The effect hook after it carries `deps: [api.subscribe]`, which *is* the
+ *     store's own function and *is* shared by every consumer of it — so
+ *     consumers can be grouped. That is more than this comment used to claim,
+ *     and it changes nothing, because grouping selections still only yields the
+ *     union of whatever components were mounted. A key leaves that union when
+ *     its component unmounts, so a diff over it would report a change the store
+ *     never made; and the shape it presents — which is what `labelFor` keys a
+ *     cross-recording name on — differs between two recordings of one store.
+ *
+ * `subscribes_to` and `state_keys` are complete without it, because every store
+ * a subscriber can be *observed* reading is a context store anyway: a context
+ * dependency is recorded on the consuming fiber, and a closure is not.
  *
  * ## Why discovery is not on the interaction path
  *
