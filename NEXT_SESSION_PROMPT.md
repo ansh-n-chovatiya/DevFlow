@@ -1,14 +1,14 @@
 # DevFlow — Phase 3, continued
 
 Read `CLAUDE.md`, `ROADMAP_AND_PHASES.md` (start at "Status key", then read the
-**Phase 3** preamble and **Work Stream 3.1** in full) and
+**Phase 3** preamble and **Work Stream 3.2** in full) and
 `graphify-out/GRAPH_REPORT.md` before touching anything. This file is the
 handoff; the roadmap is the truth about what is done.
 
 ## Where the project is
 
 **You are on `main`; `phase-3/git-lineage` is merged into it. `npm run verify`
-is green: 139 test files, 2922 tests.** Nothing is pushed — `main` is well ahead of `origin/main`, and pushing
+is green: 142 test files, 3019 tests.** Nothing is pushed — `main` is well ahead of `origin/main`, and pushing
 has not been asked for. Do not push without being asked.
 
 **Phases 0–2 are finished, and now genuinely so.** The three items that were
@@ -16,8 +16,12 @@ blocked on Phase 3 — `git_sha`, `git_commits`, `changed_in` — are closed. Wh
 left in those phases is five refusals with the argument on the record, listed at
 the foot of this file.
 
-**Phase 3 is one-fifth done.** Work Stream 3.4 is shipped. 3.1, 3.2, 3.3 and 3.5
-are not started, and nothing among them is blocked by anything else.
+**Phase 3: 3.4 is shipped, 3.1's Tier 1 is shipped, and 3.2, 3.3 and 3.5 are not
+started.** 3.1's Tier 2 — ingesting OpenTelemetry spans — is the one piece of a
+started work stream left undone, and it was left deliberately: it is an endpoint,
+a wire format this repo has never parsed and a set of graph edges, and it is
+worth costing on its own rather than being finished in the tail of the work
+stream that unblocked it. Nothing among the rest is blocked by anything else.
 
 > **Run `npm run verify` and read its exit code, not its tail.**
 > `npm run verify 2>&1 | tail -20` reports *`tail`'s* exit code, which is always
@@ -43,7 +47,41 @@ source of *ideas*, never of code to copy.
 
 ---
 
-## What last session built, and the four things it settled
+## What the last two sessions built
+
+### Work Stream 3.1 — the trace header, and the six refusals that make it safe
+
+**This is the first thing DevFlow does that is not observation**, so read
+`src/core/trace/index.ts`'s header before touching any of it. The rule was
+written before the first line of injector code and it is a pure module three
+inputs can be handed, for exactly the reason `core/replay` is.
+
+The short version: off by default; only while a flow is recording; same-origin
+freely; cross-origin only for an origin the user named; never over a
+`traceparent` the page already set; never by rebuilding a `Request` that carries
+a body; and a fresh id per request. `traceparent` and `X-DevFlow-Trace-Id` are
+two switches because they carry different risk in both directions.
+
+**The one thing that was not measured, and should be.** The claim the whole work
+stream rests on — that adding a non-safelisted header to a cross-origin request
+makes the browser preflight it, and that a backend which does not allow the
+header fails the request — was verified only as far as `curl` reaches, because
+the Chrome extension was not connected. The design does not depend on it (the
+rule is safe whether or not the preflight fails), but **nobody has watched Chrome
+do it**. If you have a browser to hand, it is a ten-minute experiment: two local
+origins, a page on one fetching the other with and without the header, and the
+API allowing the header on one path and not the other. That is worth doing before
+Tier 2 is built on top of it.
+
+**A pre-existing bug this work surfaced, and its shape is the lesson.** A reused
+`XMLHttpRequest` never cleared its recorded request headers on `open()`, so the
+second request through one instance — which is how every long-poll and retry loop
+is written — was recorded carrying the first one's. It was found only because a
+stale `traceparent` in that list made the second request refuse itself as already
+traced. The `loadend` listener a few lines away already carries a comment about a
+*different* bug of the same shape. **Instance reuse is this file's blind spot.**
+
+### Work Stream 3.4, and the four things it settled
 
 ### The commit stamp, and what it does not claim
 
@@ -103,36 +141,26 @@ Phase 3 touches more foreign formats than any phase so far. Print the real shape
 
 ## Phase 3, and what to do next
 
-### Do 3.1 next, and settle the argument before writing code
+### Do 3.1's Tier 2, or 3.2 — and 3.2 is the cheaper of the two
 
-**Work Stream 3.1's header injection is the first time DevFlow would change what
-the recorded app sends to its own backend.** Everything shipped so far observes.
+**Tier 2 is ingesting OpenTelemetry spans**, which is what turns the header
+already going out into the FE → BE → DB chain the roadmap promises. It is a
+receiver endpoint, a parser for the OTLP wire format, and `calls` edges in the
+ARKG. Two things to settle before writing any of it: whether spans arrive by
+push (a collector exporter pointed at this server) or by pull, and what happens
+to a span whose trace id matches no recording — the `caused_by` rule says both
+ends must project onto a node the graph already keys, and a span from a request
+DevFlow never saw has only one end.
 
-It is *not* a new patch: `src/injected/agent.ts` already replaces `window.fetch`
-and `window.XMLHttpRequest`, unconditionally, at `document_start`, on every page
-the user opens — see `install()` near the foot of that file, and `patchedFetch`.
-The machinery to add a header is already in the function that records one.
+Note the header is only useful to Tier 2 if the backend records the trace, which
+is why `traceparent`'s sampled flag is `01` — and why turning it on costs the
+user money on their own observability bill. That is on the record in
+`core/trace`'s header; do not quietly re-decide it.
 
-The hazard is CORS and it is concrete. Adding a custom request header to a
-**cross-origin** request makes it a non-simple request, so the browser sends an
-`OPTIONS` preflight where it previously sent none; if the backend does not name
-the header in `Access-Control-Allow-Headers`, the request **fails**. That is a
-working page broken by DevFlow being installed — Invariant 1, which is exactly
-what got v3.2.0 reverted in a different subsystem.
-
-Decide first, and write the decision where a test can reach it. The shape that
-survives is probably *off by default, opted into, same-origin by default, and
-never silently converting a simple request into a preflighted one* — but that is
-a recommendation, not a finding. `X-DevFlow-Trace-Id` on `fetch` is four lines
-and the reasoning around it is the whole work stream.
-
-`traceparent` (W3C Trace Context) is a *standard* header a backend may already
-accept and `X-DevFlow-Trace-Id` is bespoke. They do not carry the same risk and
-must not be decided as one switch.
-
-Note also §4.5 of the frozen `docs/CONTRACTS.md` bans `DevFlow` **in
-user-facing strings**. A request header name is not one — but check rather than
-assume, and `lint:brand` is the thing that will tell you.
+**3.2's frontend half is cheaper and is mostly honesty work** — see the table
+below. `get_value_provenance` already finds one value across four layers; what
+it cannot do is say anything about the backend, and saying *that* clearly is most
+of the remaining work until Tier 2 exists.
 
 ### 3.2 and 3.3 overlap tools that already ship
 
@@ -194,12 +222,17 @@ not an omission. To overturn one, the argument to beat is in the roadmap.
 
 ## Loose ends worth an hour, none of them blocking
 
-- **`componentTable` in `mcp-server/server.js` is dead** — no caller. Noticed four
-  sessions ago while working nearby, still not removed. Somebody should.
-- **`mcp-server/arkg.js.bak` is a stale 2,000-line copy** left behind by an
-  earlier session's mutation testing. It is gitignored, so it is invisible to
-  every gate and to `git status`, and it is the kind of file somebody eventually
-  reads by mistake. Delete it.
+- **`componentTable` in `mcp-server/server.js` is dead** — no caller. Noticed five
+  sessions ago while working nearby, still not removed. Somebody should. (The
+  stale `mcp-server/arkg.js.bak` that sat beside it is gone.)
+- **Every call in the flow review draws four `.call__panel` elements, two of them
+  permanently empty.** `src/viewer.html`'s `<template id="tpl-call">` already
+  ships `data-panel="request"` and `data-panel="response"` placeholders, and
+  `buildCall` appends its own two into `.call__panels` rather than filling those.
+  Harmless on screen, because the CSS keys off `data-active` — but it is a trap
+  for a test: a naive `querySelector('.call__panel[data-panel="request"]')`
+  silently matches the empty one and passes against a renderer printing nothing.
+  `tests/trace-render.test.ts` selects `[data-active]` and says why.
 - **`compiler-plugin` is `private: true` and unpublished.** It has never been run
   against a real application's build. `sync-version.mjs` and
   `tests/versions.test.ts` keep it in step, so publishing is one field rather than
@@ -273,11 +306,20 @@ not an omission. To overturn one, the argument to beat is in the roadmap.
   list and the exact `git status --porcelain --branch` shapes before a line of
   parser was written, and every one of them is now a fixture built from real
   output.
-- **A source-text test (`expect(source).toContain(...)`) is the weakest kind and
-  sometimes the only kind** — `src/injected/agent.ts` registers listeners at
-  import and cannot be loaded, which **will matter for 3.1**. When you write one,
-  assert the **exact expression**, not a nearby phrase, say in the comment why it
-  is one, and **strip comments before counting occurrences**.
+- **Vitest reads the `@vitest-environment` directive from anywhere in the file,
+  comments included.** Writing it inside a doc comment to explain why a file does
+  *not* use jsdom silently switches jsdom on. It cost an agent a debugging cycle.
+- **`src/injected/agent.ts` *can* be loaded, and a source-text test over it is
+  almost never the right answer.** Earlier handoffs said it could not, and that
+  was wrong: `tests/agent-network.test.ts` and `tests/agent-trace.test.ts` both
+  import it under jsdom, having installed their stubs for `fetch` and
+  `XMLHttpRequest` **before** the import, because the agent binds whatever is
+  there at load. Drive it with a `MessageEvent` carrying `source: window` and
+  `origin: window.location.origin` — a bare `postMessage` supplies neither and
+  the agent's control guard silently drops it, which reads exactly like a
+  feature that does not work. A behavioural test over what the stub received is
+  worth many source-text tests: two of this work stream's bugs were invisible to
+  reading and obvious to a stub.
 - **Test at the layer that can lose the data, not below it.** Two by-name
   flow-level copies still silently drop new fields — `buildPayload` in
   `src/features/mcp/send.ts` and `saveFlow` in `mcp-server/server.js`. Step fields
@@ -287,12 +329,15 @@ not an omission. To overturn one, the argument to beat is in the roadmap.
 - **Use subagents in parallel with explicit file ownership.** Freeze the shared
   contract yourself first, tell them not to run `verify` or `build*`, and give
   each one a **private** scratch directory.
-  - **Verify their results independently.** Last session two agents reported four
-    source bugs between them; all four were real, and one of them was a
-    regression the parent had just introduced.
+  - **Verify their results independently.** Across the last two sessions six
+    agents reported nine source findings; every one was real, one was a
+    regression the parent had just introduced, and one was a wrong claim in a
+    comment that read as a safety guarantee. Two agents also flagged that they
+    had *loosened* a check — both were right to, and both said so unprompted,
+    which is the behaviour to keep asking for.
 - Run `graphify update .` after modifying code.
 - Commit on a branch and merge; never commit straight to `main`. Suggested:
-  `phase-3/trace-headers` for 3.1.
+  `phase-3/otel-ingest` for 3.1's Tier 2, or `phase-3/lineage` for 3.2.
 
 ## When you finish a work stream
 

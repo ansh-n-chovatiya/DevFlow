@@ -410,7 +410,9 @@ window.addEventListener('message', (event: MessageEvent<AgentMessage | AgentQuer
       durationMs: data.durationMs,
       timestamp: data.timestamp,
       // Built field by field, so anything not named here is dropped — which is
-      // what happened to the truncation flags until they were listed.
+      // what happened to the truncation flags until they were listed, and is
+      // why the trace id is listed here in the same commit that emits it.
+      ...(data.traceId ? { traceId: data.traceId } : {}),
       ...(data.requestBodyTruncated
         ? { requestBodyTruncated: true, requestBodyBytes: data.requestBodyBytes }
         : {}),

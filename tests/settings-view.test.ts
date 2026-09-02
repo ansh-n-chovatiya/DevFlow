@@ -5,7 +5,7 @@
  * survive, what the rail counts, whether the body is a list or an empty state,
  * and which rows are inert and why. All of it is testable without a DOM, which
  * is the point of the split: a state that only exists inside a render function
- * can only be checked by reading pixels, and nobody re-reads sixty rows.
+ * can only be checked by reading pixels, and nobody re-reads a table this long.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -113,7 +113,7 @@ describe('what the screen carries', () => {
 
   it('gives Advanced a chevron rather than a count, and puts it below the hairline', () => {
     /*
-     * Phase 6 wired the twenty-eight Tier 2 settings, so Advanced is in the rail
+     * Phase 6 wired the Tier 2 settings, so Advanced is in the rail
      * of the shipped screen rather than only of the whole table. A chevron and
      * not a count, always: the count of a section you have not opened is a
      * number about things you cannot see.

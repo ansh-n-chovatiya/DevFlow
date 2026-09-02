@@ -71,6 +71,12 @@ import type {
   PickQuery,
 } from '../shared/messages.js';
 import { isSecretStateKey, redactUrl } from '../core/redact/index.js';
+/*
+ * The rule for whether a request may carry a trace header, from the pure module
+ * that holds it. Nothing about that decision is made in this file — see
+ * `core/trace`'s header for why it is somewhere a test can reach without a page.
+ */
+import { decideTrace, originOf } from '../core/trace/index.js';
 import type { SnapshotBudget } from '../core/state/snapshot.js';
 
 /**
@@ -90,6 +96,9 @@ import type { SnapshotBudget } from '../core/state/snapshot.js';
  * precisely the failure this arrangement exists to avoid.
  */
 const config: AgentConfig = {
+  // Off, and off is the shipped default for the one setting in here that
+  // changes what the page sends. See `core/trace`.
+  trace: { devflow: false, traceparent: false, allowedOrigins: [] },
   captureBodies: CAPTURE_BODIES,
   bodyCap: BODY_CAP,
   consoleLevels: CONSOLE_LEVELS,
@@ -121,6 +130,33 @@ const config: AgentConfig = {
  */
 function applyConfig(next: Partial<AgentConfig> | undefined): void {
   if (!next || typeof next !== 'object') return;
+
+  /*
+   * Validated harder than anything else here, because it is the only field that
+   * changes what leaves the page. Each field is checked for its own type and the
+   * origins list is filtered to strings rather than taken as given, so a
+   * malformed message leaves the policy off rather than half-set.
+   *
+   * What this does **not** claim is that a page cannot switch tracing on for
+   * itself. `onControlMessage` requires `event.source === window` and a matching
+   * origin, which stops another frame — and not the page, which trivially
+   * satisfies both. That is fine, and is worth writing down so nobody 'fixes'
+   * it: the only thing a page gains is a header on requests it is making
+   * itself, which it could add directly and without our help. There is no
+   * escalation here, and the guard that matters is the origin rule in
+   * `core/trace`, which no config can talk its way past — an origin still has
+   * to be named before a cross-origin request is touched.
+   */
+  if (next.trace && typeof next.trace === 'object') {
+    const wanted = next.trace;
+    config.trace = {
+      devflow: wanted.devflow === true,
+      traceparent: wanted.traceparent === true,
+      allowedOrigins: Array.isArray(wanted.allowedOrigins)
+        ? wanted.allowedOrigins.filter((origin): origin is string => typeof origin === 'string')
+        : [],
+    };
+  }
 
   if (typeof next.captureBodies === 'boolean') config.captureBodies = next.captureBodies;
   if (typeof next.bodyCap === 'number' && Number.isFinite(next.bodyCap)) {
@@ -417,6 +453,23 @@ function watchUncaught(): void {
 const originalFetch = window.fetch.bind(window);
 
 /**
+ * Random hex, for a trace id and a span id.
+ *
+ * The randomness is why minting lives here and not in `core/trace`: that module
+ * is pure and is handed the ids it is asked to decide about. `crypto` is bound
+ * once at module scope for the reason `originalFetch` is — a page that replaces
+ * `crypto.getRandomValues` after we load would otherwise be choosing DevFlow's
+ * trace ids, and a page that can choose them can collide them with somebody
+ * else's on purpose.
+ */
+const getRandomValues = crypto.getRandomValues.bind(crypto);
+
+const randomHex = (bytes: number): string =>
+  Array.from(getRandomValues(new Uint8Array(bytes)), (byte) =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('');
+
+/**
  * The page's `fetch`, with the call written down.
  *
  * A function declaration rather than the expression it used to be assigned from,
@@ -429,9 +482,13 @@ const originalFetch = window.fetch.bind(window);
  */
 async function patchedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
-  const url = redactUrl(
-    typeof input === 'string' ? input : input instanceof Request ? input.url : String(input),
-  );
+  // The raw one is never recorded — `redactUrl` is what goes into the flow. It
+  // is kept only long enough to ask which origin this request is going to,
+  // because a redacted URL is not a URL and `new URL` on one would answer about
+  // the wrong host.
+  const rawUrl =
+    typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+  const url = redactUrl(rawUrl);
 
   // Normalised through `Headers` rather than read as a plain object. The array
   // form — `[['Authorization', 'Bearer …']]`, which generated API clients emit —
@@ -441,13 +498,26 @@ async function patchedFetch(input: RequestInfo | URL, init?: RequestInit): Promi
   // way.
   const source = init?.headers ?? (input instanceof Request ? input.headers : undefined);
   let headers: Record<string, string> = {};
+  /*
+   * Kept unredacted and only as *names*, for the one question redaction makes
+   * unanswerable: whether the page already set `traceparent`. Redaction rewrites
+   * values and not names, so this is the same list either way — but it also
+   * records whether the read succeeded at all, because "no `traceparent` here"
+   * and "could not tell" must not be the same answer to something that decides
+   * whether to overwrite somebody's tracing.
+   */
+  let headerNames: string[] = [];
+  let headersReadable = true;
   if (source) {
     try {
-      headers = redactHeaders(Object.fromEntries(new Headers(source).entries()));
+      const parsed = Object.fromEntries(new Headers(source).entries());
+      headerNames = Object.keys(parsed);
+      headers = redactHeaders(parsed);
     } catch {
       // An exotic shape `Headers` will not take. Recording no headers is the
       // safe failure: recording them unredacted is not.
       headers = {};
+      headersReadable = false;
     }
   }
 
@@ -500,11 +570,88 @@ async function patchedFetch(input: RequestInfo | URL, init?: RequestInit): Promi
     else send(requestBody);
   };
 
+  /*
+   * The one place in DevFlow that changes what the page sends.
+   *
+   * Everything else in this file writes down what went past. `core/trace` holds
+   * the whole argument for when this is allowed; three things are decided
+   * *here* because only this scope can answer them:
+   *
+   *   - **`recordingNow`.** Outside a recording nothing is touched, whatever the
+   *     switches say. The patch is installed on every page at `document_start`;
+   *     the modification is scoped to a window the user opened deliberately.
+   *   - **Whether the request can be reissued without disturbing it.** Adding a
+   *     header to a plain `fetch(url, init)` is editing an object we were handed
+   *     to pass on. Adding one to `fetch(new Request(url, { body }))` means
+   *     rebuilding the Request — and `new Request(req, { headers })` marks the
+   *     *original* as `bodyUsed`, which was measured rather than assumed. So a
+   *     Request that carries a body is left exactly as the page built it, and
+   *     the recording simply has no trace id for that call.
+   *   - **Where the header has to go.** When `init.headers` exists it is what
+   *     `fetch` reads, so putting ours on a rebuilt Request would be writing it
+   *     somewhere the platform never looks.
+   *
+   * It runs after the body clone above and before the request goes out, and
+   * that order is load-bearing for the same `bodyUsed` reason.
+   */
+  let traceId: string | undefined;
+  let sendInput: RequestInfo | URL = input;
+  let sendInit = init;
+
+  if (recordingNow && headersReadable) {
+    const initCarriesHeaders = init?.headers !== undefined;
+    const decision = decideTrace({
+      pageOrigin: originOf(location.href),
+      requestUrl: rawUrl,
+      existingHeaders: headerNames,
+      policy: config.trace,
+      canRebuild: initCarriesHeaders || !(input instanceof Request) || input.body === null,
+      traceId: randomHex(16),
+      spanId: randomHex(8),
+    });
+
+    if (decision.inject) {
+      try {
+        const merged = new Headers(source ?? undefined);
+        for (const [name, value] of Object.entries<string>(decision.headers)) merged.set(name, value);
+
+        if (initCarriesHeaders || !(input instanceof Request)) {
+          sendInit = { ...init, headers: merged };
+        } else {
+          sendInput = new Request(input, { headers: merged });
+        }
+        traceId = decision.traceId;
+        /*
+         * Into the recorded headers as well, so the recording agrees with the
+         * wire. The XHR path gets this for free — it adds the header through
+         * the patched `setRequestHeader`, which is also what records one — and
+         * a reader comparing two recordings should not have to know which
+         * transport made them to know what the request carried.
+         *
+         * Not redacted, and it does not need to be: a trace id is an opaque
+         * random number this process minted seconds ago, and `SENSITIVE_HEADERS`
+         * would not match either name in any case.
+         */
+        for (const [name, value] of Object.entries<string>(decision.headers)) {
+          headers[name] = value;
+        }
+      } catch {
+        // Anything at all here means the page keeps the request it built. A
+        // recording missing one trace id is a smaller failure than a request
+        // that never went out, and this branch is the last place that choice
+        // can still be made.
+        sendInput = input;
+        sendInit = init;
+        traceId = undefined;
+      }
+    }
+  }
+
   const startedAt = Date.now();
 
   let response: Response;
   try {
-    response = await originalFetch(input, init);
+    response = await originalFetch(sendInput, sendInit);
   } catch (err) {
     // Emitted from the body read's continuation rather than awaited here — the
     // page's `fetch` rejection must not queue behind our bookkeeping.
@@ -513,6 +660,7 @@ async function patchedFetch(input: RequestInfo | URL, init?: RequestInit): Promi
         kind: 'network',
         method,
         url,
+        ...(traceId ? { traceId } : {}),
         requestHeaders: headers,
         requestBody: body.body,
         ...truncation('request', body),
@@ -537,6 +685,7 @@ async function patchedFetch(input: RequestInfo | URL, init?: RequestInit): Promi
         kind: 'network',
         method,
         url,
+        ...(traceId ? { traceId } : {}),
         requestHeaders: headers,
         requestBody: body.body,
         ...truncation('request', body),
@@ -598,14 +747,36 @@ function PatchedXHR(this: unknown): XMLHttpRequest {
 
   let method = 'GET';
   let url = '';
+  // The unredacted URL, kept only to ask which origin this is going to — see
+  // `patchedFetch`, where the same pair exists for the same reason. An instance
+  // may be reopened, so it is reset on every `open` along with everything else.
+  let rawUrl = '';
   let requestBody: CappedBody = stated(null);
   let startedAt = 0;
+  let traceId: string | undefined;
   const requestHeaders: Record<string, string> = {};
 
   const originalOpen = xhr.open.bind(xhr);
   xhr.open = function open(m: string, u: string | URL, ...rest: unknown[]) {
     method = m || 'GET';
-    url = redactUrl(String(u ?? ''));
+    rawUrl = String(u ?? '');
+    url = redactUrl(rawUrl);
+    /*
+     * A reopened instance is a *new request*, and everything the last one
+     * accumulated has to go with it.
+     *
+     * The id, because a trace id shared by two requests tells the backend they
+     * were one operation. And the header list — which was already wrong before
+     * any of this: `requestHeaders` was never cleared here, so the second
+     * request through a reused instance was recorded carrying the first one's
+     * headers. Long-poll and retry loops are written exactly this way, which is
+     * why the `loadend` listener a few lines down already carries a comment
+     * about a different bug of the same shape. It surfaced here because a stale
+     * `traceparent` in that list made `decideTrace` refuse the second request as
+     * already traced.
+     */
+    traceId = undefined;
+    for (const name of Object.keys(requestHeaders)) delete requestHeaders[name];
     return (originalOpen as (...args: unknown[]) => void)(m, u, ...rest);
   };
 
@@ -655,6 +826,7 @@ function PatchedXHR(this: unknown): XMLHttpRequest {
         kind: 'network',
         method,
         url,
+        ...(traceId ? { traceId } : {}),
         requestHeaders,
         requestBody: requestBody.body,
         ...truncation('request', requestBody),
@@ -671,12 +843,59 @@ function PatchedXHR(this: unknown): XMLHttpRequest {
   });
 
   const originalSend = xhr.send.bind(xhr);
+  /*
+   * The trace header, added between `open` and the real `send`.
+   *
+   * Strictly easier than the `fetch` side and worth saying why: `XMLHttpRequest`
+   * has `setRequestHeader`, so there is no request object to rebuild and no body
+   * to disturb — which is why there is no `canRebuild` here and why it is `true`
+   * below. Everything else is the same decision, from the same pure function.
+   *
+   * It runs before the page's own headers are recorded into the emit, so a
+   * request DevFlow traced shows the header in the recording, which is what
+   * makes the id greppable at both ends.
+   */
+  const injectTrace = (): void => {
+    if (!recordingNow) return;
+
+    const decision = decideTrace({
+      pageOrigin: originOf(location.href),
+      requestUrl: rawUrl,
+      existingHeaders: Object.keys(requestHeaders),
+      policy: config.trace,
+      canRebuild: true,
+      traceId: randomHex(16),
+      spanId: randomHex(8),
+    });
+    if (!decision.inject) return;
+
+    try {
+      for (const [name, value] of Object.entries<string>(decision.headers)) {
+        // Through the patched setter on purpose, so the header DevFlow added is
+        // recorded exactly like one the page added. A recording that shows a
+        // request without the header it actually carried is a recording that
+        // disagrees with the wire.
+        xhr.setRequestHeader(name, value);
+      }
+      traceId = decision.traceId;
+    } catch {
+      // `setRequestHeader` throws if the request is not open, or if the header
+      // name is one the browser forbids. Either way the page keeps the request
+      // it built, and the recording simply has no id for this call.
+      traceId = undefined;
+    }
+  };
+
   xhr.send = function send(body?: Document | XMLHttpRequestBodyInit | null) {
     startedAt = Date.now();
     requestBody =
       body != null
         ? capBody(typeof body === 'string' ? body : '[non-string body]')
         : stated(null);
+
+    // Last thing before the request leaves, so a header the page set in its own
+    // `send` path is already on the list `decideTrace` is shown.
+    injectTrace();
 
     return originalSend(body);
   };
@@ -738,6 +957,18 @@ import {
 } from './render.js';
 import { cancelPick, pickedEntry, startPick } from './picker.js';
 import { hide as hideHighlight, highlight } from './highlight.js';
+
+/**
+ * Whether a flow is being recorded right now.
+ *
+ * Separate from `reactActive`, which is the React listeners' own state and is
+ * false on a page with no React. This gates trace-header injection, and the
+ * scoping is most of what makes that feature safe: the patches are installed at
+ * `document_start` on every page the user opens, but a request is only ever
+ * *modified* inside a recording — a state the user chose seconds ago, rather
+ * than a consequence of having DevFlow installed at all.
+ */
+let recordingNow = false;
 
 /** Watching only while something is recording — see ControlMessage. */
 let reactActive = false;
@@ -1228,6 +1459,16 @@ function detachReactListeners(): void {
 }
 
 function applyRecording(wanted: boolean): void {
+  /*
+   * Set before every early return below, and deliberately not `reactActive`.
+   *
+   * The returns under this line are about the React listeners — a page that is
+   * not React gives up on them entirely — and whether a request may carry a
+   * trace header has nothing to do with React. Reading `reactActive` for this
+   * would mean a plain page recorded a flow and silently traced nothing.
+   */
+  recordingNow = wanted;
+
   // The recorder's half, and only the recorder's half. Once the probes have run
   // out there is nothing to attach or detach for this document ever again.
   if (reactGaveUp) return;

@@ -145,11 +145,11 @@ describe('the eight settings that already existed', () => {
     );
   });
 
-  it('draws all seventy-three once Advanced is opened, and not before', async () => {
+  it('draws every row once Advanced is opened, and not before', async () => {
     /*
      * Phase 6's done-condition, on the real page.
      *
-     * Every setting in the table is now wired, and the twenty-eight Tier 2 ones
+     * Every setting in the table is now wired, and the Tier 2 ones
      * are behind a disclosure that is shut until it is opened — the states
      * table. Opening it adds rows and nothing else: no second header, no second
      * kind of control, which is what `settings-row-shape.test.ts` asserts about
@@ -555,7 +555,7 @@ describe('the rest of the screen', () => {
     expect(rows).toContainEqual({ key: 'editor', from: 'webstorm', to: DEFAULTS.editor });
   });
 
-  it('empties the override object rather than writing seventy-three defaults into it', async () => {
+  it('empties the override object rather than writing every default into it', async () => {
     /*
      * The mistake the sparse store exists to prevent, and the one place it
      * would be invisible: a reset that *wrote* every default would look

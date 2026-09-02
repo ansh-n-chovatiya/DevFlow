@@ -211,6 +211,22 @@ The ones worth setting on day one:
 Settings sync across your Chrome profile, sparsely: only what you have actually
 changed is stored, so a later release's better default still reaches you.
 
+**Trace headers, and the one thing DevFlow will not do without being asked.**
+Everything above only decides what DevFlow *writes down*. Under Advanced there
+are two switches that decide what your application *sends*: while a flow is
+recording, an outbound request can carry `X-DevFlow-Trace-Id`, or W3C
+`traceparent`, holding the same id the recording shows — so the request in front
+of you can be found in your own backend's logs by searching for that id.
+
+Both are off by default and neither does anything outside a recording. And
+neither touches a **cross-origin** request until you name that origin, because a
+request that gains a custom header stops being a *simple* request: the browser
+sends a preflight it did not send before, and a backend that does not allow the
+header fails the request outright. Same-origin requests are exempt from CORS and
+cannot fail that way, so those are traced freely. Naming an origin is you saying
+that backend accepts the header — there is no way for DevFlow to find that out
+except by sending the request that might fail.
+
 **Managed policy.** `editor` and `projectRoot` can be pushed org-wide through
 `chrome.storage.managed`. A managed value wins over a user's own and the field is
 shown disabled rather than silently overridden.

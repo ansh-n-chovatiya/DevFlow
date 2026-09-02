@@ -497,6 +497,15 @@ export interface AgentNetworkMessage {
   kind: 'network';
   method: string;
   url: string;
+  /**
+   * The trace id DevFlow put on this request, when it put one on.
+   *
+   * Absent on every call that was not given a header — which is all of them by
+   * default, every cross-origin call to an origin the user has not named, and
+   * every call made outside a recording. Absent rather than null, so "was not
+   * traced" and "was traced with nothing" cannot be confused.
+   */
+  traceId?: string;
   requestHeaders: Record<string, string>;
   requestBody: string | null;
   status: number | null;
@@ -767,6 +776,29 @@ export interface ControlMessage {
  * script injected into someone else's page.
  */
 export interface AgentConfig {
+  /**
+   * `network.trace*` — the one thing in here that changes what the page sends.
+   *
+   * Every other member of this object narrows what DevFlow *writes down*. This
+   * one decides whether an outbound request carries a header it would not
+   * otherwise have carried, which is a different kind of act and is why it
+   * arrives as a policy object rather than three loose booleans: the rule that
+   * reads it is a single pure function (`decideTrace` in `core/trace`), and a
+   * shape that matches that function's input is a shape nobody can half-apply.
+   *
+   * Structurally identical to `TracePolicy`, and deliberately restated rather
+   * than imported: this file is named by the agent bundle, which may not pull
+   * in `core/` types it does not otherwise need. `tests/trace-config.test.ts`
+   * asserts the two shapes agree.
+   */
+  trace: {
+    /** `network.traceHeader` — the bespoke `X-DevFlow-Trace-Id`. */
+    devflow: boolean;
+    /** `network.traceparent` — W3C Trace Context. A separate decision; see `core/trace`. */
+    traceparent: boolean;
+    /** `network.traceOrigins`, parsed. Cross-origin destinations the user named. */
+    allowedOrigins: readonly string[];
+  };
   /** `network.captureBodies` — off means method, URL and status but no payload. */
   captureBodies: boolean;
   /** `network.bodyCap` — characters kept from a request or response body. */

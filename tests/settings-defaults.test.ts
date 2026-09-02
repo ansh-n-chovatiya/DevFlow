@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import * as constants from '../src/shared/constants.js';
-import { DEFAULTS, FIELDS, type SettingKey } from '../src/features/settings/fields.js';
+import { DEFAULTS, FIELDS, RECORDED, type SettingKey } from '../src/features/settings/fields.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -68,6 +68,14 @@ const SOURCE: Record<SettingKey, unknown> = {
   'network.bodyCap': constants.BODY_CAP,
   'network.summariseBodies': constants.SUMMARISE_BODIES,
   'network.schemaThreshold': constants.SCHEMA_THRESHOLD,
+  // The three that change what the recorded page *sends*. Off and empty, and
+  // that is the assertion worth having here more than anywhere else in this
+  // table: a `true` reaching either switch by way of a typo would change
+  // somebody's outbound traffic on upgrade, and nothing else in the suite
+  // would notice.
+  'network.traceHeader': constants.TRACE_HEADER_ENABLED,
+  'network.traceparent': constants.TRACEPARENT_ENABLED,
+  'network.traceOrigins': constants.TRACE_ORIGINS,
 
   'console.levels': constants.CONSOLE_LEVELS,
   'console.captureUncaught': constants.CAPTURE_UNCAUGHT,
@@ -145,6 +153,48 @@ describe('every default equals today’s constant', () => {
 
   it('names every field, so a new setting cannot be added without one', () => {
     expect(Object.keys(SOURCE).sort()).toEqual(FIELDS.map((field) => field.key).sort());
+  });
+});
+
+/**
+ * The three defaults whose value is the whole safety argument.
+ *
+ * Written as literals, and that is the point of having them here at all. Every
+ * other case in this file asserts that the table and `constants.ts` agree,
+ * which is exactly the check that stays green when the *constant* is what
+ * moves. For a setting that only narrows what is written down that is the right
+ * trade; for these three it is not, because turning either switch on by default
+ * changes what somebody's application sends to their own backend the moment
+ * they upgrade — and past same-origin, a request that gains a header the
+ * backend does not allow is a request the browser fails outright.
+ *
+ * So: no upgrade may switch these on, and no default may name an origin on the
+ * user's behalf. See `src/core/trace/index.ts` for why "try it and fall back"
+ * is not available as an alternative.
+ */
+describe('the trace headers ship off, whichever file is edited', () => {
+  it('adds no header until somebody asks for one', () => {
+    expect(DEFAULTS['network.traceHeader']).toBe(false);
+    expect(DEFAULTS['network.traceparent']).toBe(false);
+  });
+
+  it('names no cross-origin destination on the user’s behalf', () => {
+    // Empty is not merely the shipped value: it is the only value DevFlow could
+    // honestly pick, since whether a backend accepts the header is a fact about
+    // that backend and cannot be discovered without sending a request that
+    // might fail.
+    expect(DEFAULTS['network.traceOrigins']).toBe('');
+  });
+
+  it('freezes all three with the recording, so a flow can say it carried one', () => {
+    // Injection happens only while recording, and the switch is snapshotted at
+    // START_RECORDING. Without the freeze a flow whose first half was traced
+    // and whose second half was not would have nothing at all saying so — and a
+    // reader who cannot tell has to assume the traffic was modified throughout.
+    const recorded = RECORDED.map((field) => field.key);
+    for (const key of ['network.traceHeader', 'network.traceparent', 'network.traceOrigins']) {
+      expect(recorded, key).toContain(key);
+    }
   });
 });
 

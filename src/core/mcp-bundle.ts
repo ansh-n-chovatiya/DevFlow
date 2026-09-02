@@ -210,3 +210,18 @@ export {
  */
 export type { DeployPair, DeployRecording, PairChoice, Suspect } from './deploy/index.js';
 export { choosePair, renderDeployDiff, suspectFiles } from './deploy/index.js';
+
+/*
+ * What a trace id is *for*, in one sentence, on the side of the wire that most
+ * needs it.
+ *
+ * The id itself is printed per call, and a sentence per call would be the same
+ * forty tokens repeated down the response. But a model reading a failed call
+ * and seeing an opaque hex string has been handed the whole Tier 1 payoff and
+ * not told what to do with it — the id DevFlow put on the request is the id in
+ * the user's own backend logs, and "go and search for it there" is the entire
+ * point of having changed anybody's traffic. So the sentence is exported and
+ * said once per response, and the wording lives in `core/trace` beside the rule
+ * rather than being written a second time here.
+ */
+export { describeTrace } from './trace/index.js';
