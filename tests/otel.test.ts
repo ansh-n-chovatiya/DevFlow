@@ -736,9 +736,56 @@ describe('reading the deliveries a real exporter sent', () => {
       ],
     });
 
-    expect(only(withEvents).exception).toEqual({ type: 'CardError', message: 'declined' });
+    expect(only(withEvents).exception).toEqual({
+      type: 'CardError',
+      message: 'declined',
+      stacktrace: null,
+    });
     expect(only(patchSpan(CHARGE_DELIVERY, { events: [] })).exception).toBeNull();
     expect(only(patchSpan(CHARGE_DELIVERY, { events: undefined })).exception).toBeNull();
+  });
+
+  /*
+   * The stack trace, and the measurement that made it worth keeping.
+   *
+   * On one span of a real capture, `db.query.text` said `where id = ?` while
+   * the `exception.stacktrace` on that same span said `where id = '8814'` — the
+   * driver interpolates when it formats its own error message. So a failed
+   * query's stack trace holds the literal SQL its own attribute does not, which
+   * makes the *failure* path the richest evidence a trace carries. That is
+   * backwards from the intuition and it is the path somebody asking why a value
+   * is wrong is already on. The string below is that capture's, verbatim.
+   */
+  it('keeps the stack trace, which carries what the query attribute does not', () => {
+    const trace =
+      'SqliteError: select * from `no_such_table` where `id` = \'8814\' limit 1 - no such table: no_such_table\n' +
+      '    at Database.prepare (/x/node_modules/better-sqlite3/lib/methods/wrappers.js:5:21)';
+    const span = only(
+      patchSpan(CHARGE_DELIVERY, {
+        events: [
+          {
+            name: 'exception',
+            attributes: [
+              text('exception.type', 'SqliteError'),
+              text('exception.message', 'no such table: no_such_table'),
+              text('exception.stacktrace', trace),
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(span.exception?.stacktrace).toBe(trace);
+    expect(span.exception?.stacktrace).toContain("= '8814'");
+  });
+
+  it('reports a stack trace that is absent as null rather than as an empty string', () => {
+    const span = only(
+      patchSpan(CHARGE_DELIVERY, {
+        events: [{ name: 'exception', attributes: [text('exception.type', 'Error')] }],
+      }),
+    );
+    expect(span.exception).toEqual({ type: 'Error', message: null, stacktrace: null });
   });
 });
 
@@ -756,7 +803,7 @@ describe('the semantic-convention rename, read from both sides of it', () => {
         text('http.target', '/legacy/path'),
         int('http.status_code', 404),
       ]),
-    ).toEqual({ method: 'PUT', path: '/legacy/path', status: 404 });
+    ).toEqual({ method: 'PUT', path: '/legacy/path', status: 404, query: null });
   });
 
   it('prefers the current http spelling when a payload carries both', () => {
@@ -769,13 +816,99 @@ describe('the semantic-convention rename, read from both sides of it', () => {
         int('http.status_code', 404),
         int('http.response.status_code', 204),
       ]),
-    ).toEqual({ method: 'PATCH', path: '/new', status: 204 });
+    ).toEqual({ method: 'PATCH', path: '/new', status: 204, query: null });
   });
 
   it('prefers the route over the target, because the target carries the query', () => {
     expect(httpOf([text('http.route', '/invoices/{id}'), text('http.target', '/invoices/7?x=1')])).toEqual(
-      { method: null, path: '/invoices/{id}', status: null },
+      // The route wins the path, and the query the route does not have is read
+      // back off the target rather than lost — which is the whole reason this
+      // preference needed a test in the first place.
+      { method: null, path: '/invoices/{id}', status: null, query: 'x=1' },
     );
+  });
+
+  /*
+   * The query string, and why it is read at all.
+   *
+   * A second live capture — express + knex + better-sqlite3 under
+   * `@opentelemetry/auto-instrumentations-node`, OTLP/JSON — was made to answer
+   * where a value a user can *see* actually appears in a trace. The answer was
+   * that a response body appears nowhere, and that the value appears in exactly
+   * three places: `url.query` on a server span, the query inside `url.full` on
+   * a client span, and `exception.stacktrace`. Two of the three were being
+   * dropped. The strings below are that capture's, verbatim.
+   */
+  it('reads the query string a server span carries, which is where a value travels in plain sight', () => {
+    expect(httpOf([text('url.path', '/fx'), text('url.query', 'ref=1284.00&customer=Aurora')])).toEqual({
+      method: null,
+      path: '/fx',
+      status: null,
+      query: 'ref=1284.00&customer=Aurora',
+    });
+  });
+
+  it('cuts the query out of a client span’s url.full, which is the only place it has one', () => {
+    expect(
+      httpOf([text('url.full', 'http://localhost:4500/fx?amount=1284.00&invoice=8814')]),
+    ).toEqual({
+      method: null,
+      path: null,
+      status: null,
+      query: 'amount=1284.00&invoice=8814',
+    });
+  });
+
+  it('stops the query at a fragment, and reports none when there is no question mark', () => {
+    expect(httpOf([text('url.full', 'https://shop.test/a?x=1#frag')])?.query).toBe('x=1');
+    /*
+     * A trailing `?` is not a query, and an empty string must not read as one.
+     *
+     * The second assertion is the one that decides it, and the first cannot:
+     * with no other http fact present, an empty query and a null query both
+     * make the whole object null, so the two are indistinguishable there.
+     * Mutation-testing found exactly that — dropping the `|| null` survived a
+     * fixture that had only the empty case. The decision lives where some
+     * *other* fact keeps the object alive and the query has to say which of
+     * "there was none" and "there was an empty one" it means.
+     */
+    expect(httpOf([text('url.full', 'https://shop.test/a?')])).toBeNull();
+    expect(httpOf([text('url.path', '/a'), text('url.full', 'https://shop.test/a?')])).toEqual({
+      method: null,
+      path: '/a',
+      status: null,
+      query: null,
+    });
+    expect(httpOf([text('url.query', '?x=1')])?.query).toBe('x=1');
+  });
+
+  /*
+   * A named gap, asserted so that closing it is a decision rather than a
+   * surprise: **the path of a client span is not read.**
+   *
+   * `url.full` is the only URL attribute a client span was measured to carry —
+   * no `url.path`, no `http.route` — and `readHttp` takes the path from those
+   * three and not from `url.full`. So a `url.full` with no query contributes
+   * nothing at all and the whole object is null. That is not what a reader
+   * would guess, and it is why the assertion below is `toBeNull()` rather than
+   * a path. Closing it means deciding what the path of `http://h:4500/fx` is
+   * without `new URL`, which is a wire-format decision of its own; the query is
+   * what Work Stream 3.2 needed and the query is what was taken.
+   */
+  it('takes no path out of url.full, so a client span with no query has no http facts', () => {
+    expect(httpOf([text('url.full', 'https://shop.test/a')])).toBeNull();
+    expect(httpOf([text('url.full', 'https://shop.test/a?x=1')])).toEqual({
+      method: null,
+      path: null,
+      status: null,
+      query: 'x=1',
+    });
+  });
+
+  it('prefers the span’s own url.query over the one inside url.full', () => {
+    expect(
+      httpOf([text('url.query', 'own=1'), text('url.full', 'https://shop.test/a?inside=2')])?.query,
+    ).toBe('own=1');
   });
 
   it('reports no http facts rather than an object of nulls', () => {
@@ -786,6 +919,7 @@ describe('the semantic-convention rename, read from both sides of it', () => {
       method: null,
       path: null,
       status: 0,
+      query: null,
     });
   });
 
@@ -883,7 +1017,7 @@ describe('the shapes an attribute value arrives in', () => {
       ]),
     );
 
-    expect(span.http).toEqual({ method: 'GET', path: null, status: null });
+    expect(span.http).toEqual({ method: 'GET', path: null, status: null, query: null });
   });
 
   it('reads doubleValue, boolValue and stringValue, and drops composite values', () => {
@@ -898,7 +1032,7 @@ describe('the shapes an attribute value arrives in', () => {
 
     // A boolean route and an array path are not strings, so neither reaches the
     // graph as `[object Object]` or as `"true"`.
-    expect(span.http).toEqual({ method: 'GET', path: null, status: 204 });
+    expect(span.http).toEqual({ method: 'GET', path: null, status: 204, query: null });
   });
 
   it('ignores entries with no key and values that are not objects', () => {

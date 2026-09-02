@@ -268,7 +268,7 @@ Nothing below is ticked on the strength of that branch.
 ## Phase 3: Full-Stack Wire & Database Lineage (Months 7–9)
 **Objective:** Connect frontend user interactions to backend endpoints, microservices, and database queries. Introduce the Living Architecture Map and Temporal Diff.
 
-> **Where this phase stands: 3.4 is shipped, 3.1's Tier 1 is shipped, and 3.2,
+> **Where this phase stands: 3.4, 3.1 (through Tier 2) and 3.2 are shipped, and
 > 3.3 and 3.5 are not started.**
 >
 > 3.4 went first because it needed only the commit stamp and `compare_flows`,
@@ -416,14 +416,16 @@ Nothing below is ticked on the strength of that branch.
   - [~] Tier 3 (enterprise): automatic SQL query capture (never prioritized over Tiers 1 & 2) — **not built, and what ships is not it.** A span carrying `db.query.text` is rendered and stored, so the SQL a user's *own* tracer chose to record does reach the answer. That is Tier 2 data that happens to describe a query. Tier 3 is DevFlow instrumenting the database itself, which nothing here does and nothing here is a step towards. The distinction matters because the query text is the user's, parameterised or not as their instrumentation left it, and it is never rewritten — showing somebody a tidied query their database never saw would be the wrong kind of helpful.
 
 ### Work Stream 3.2: End-to-End Data Lineage Engine
-- [ ] **Wire-to-Database Inspector:**
-  - When inspecting a UI value (e.g., table cell displaying `$120.00`), DevFlow reveals:
-    - Frontend Component: `InvoiceRow.tsx:18`
-    - API Endpoint: `GET /api/v1/invoices`
-    - Controller Handler: `invoice_controller.py:45`
-    - Database Query: `SELECT total_amount FROM invoices WHERE id = ?`
-- [ ] **MCP Tool:**
-  - `get_full_lineage(domNodeId)` → full FE → BE → DB lineage chain for any visible value
+- [x] **Wire-to-Database Inspector:** — **shipped as a fifth layer on `get_value_provenance`, and the decision not to build a third tool is the work stream.** `get_value_provenance` already answered where a value came from across four observations of one recording; `get_backend_trace` already answered what the server did under a recorded request. The gap was the join, and a third tool over the same question is the mistake this repository has made once already with its two markdown renderers — `src/core/mcp-bundle.ts` exists because of it, and 3.4 was written to avoid it. So the backend became `traceValue`'s fifth layer, ordered *first*, because a controller and a query are upstream of the response body and the module's ordering has always been the direction a value travels.
+
+  **The chain is a known attachment; the value search over it is not, and the reply has to hold both.** Which call a span belongs to is *known* — the two are joined by the 128 random bits DevFlow minted and the backend echoed, not by a string comparison. That is a stronger link than anything else in the module. But a span carries no response body: what it can carry is a query's text, a path, its own name and an error message, so `£42.00` found in a `db.query.text` and `£42.00` found in a response body remain two sightings and not a lineage. Those two sentences point in opposite directions and both are true, which is why `backend.paths` is a different thing in the result from `hits` — a path says "this is the server-side work behind that call" and a hit says "this text appeared in it".
+
+  **The value is usually not in the query, and that was measured rather than assumed.** Real instrumentation parameterises: the capture this repository already holds from a live `@opentelemetry/sdk-trace-node` records `SELECT total_amount FROM invoices WHERE id = $1`, so a search for the price on the screen finds nothing in the SQL and finds it in the response body one layer up. A design that had made the query text the mechanism would have shipped a feature that answers almost nothing. So the chain is printed whenever the value turned up at *either* end of the call — the response body or a span — and the query is shown exactly as the user's tracer recorded it and never rewritten.
+
+  All four rows the roadmap asks for are reached, and the last two only when the user's own instrumentation recorded them: the component from the render layer, the endpoint from the response layer, the handler from a root span's `code.filepath`/`code.lineno`, and the query from a `db.query.text` at the bottom of the tree.
+- [x] **MCP Tool:** — **`get_value_provenance` gains the layer; `get_full_lineage(domNodeId)` is not built, and the signature does not survive contact the way 3.4's did not.** A recording *describes* an element — tag, text, label, selector — and addresses none, so there is no `domNodeId` to pass. `valueOfStep` and the existing `step` argument are the handle that does exist, and inventing an id scheme nothing else in the product uses would have been a second answer to a question already answered.
+
+  **One definition of "which calls are traced" replaced two on the way.** `tracedCallsOf` moved into `core/otel` because there are now three callers and two of them are on the far side of the bundle. The server's own copy numbered steps by position while every renderer beside it prefers the step's own `stepNumber`, so `get_backend_trace({step})` filtered on one number and printed the other. DevFlow's sender renumbers on the way out, which is why nobody had seen it; `POST /flows` accepts a flow from any page the browser visits, which is why that was not a reason to leave two.
 
 ### Work Stream 3.3: Living Architecture Map
 - [ ] **Real-Time Component Graph:**

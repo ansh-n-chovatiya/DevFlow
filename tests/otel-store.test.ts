@@ -52,10 +52,15 @@ interface OtelSpan {
   durationMs: number;
   failed: boolean;
   statusMessage: string | null;
-  http: { method: string | null; path: string | null; status: number | null } | null;
+  http: {
+    method: string | null;
+    path: string | null;
+    status: number | null;
+    query: string | null;
+  } | null;
   db: { system: string | null; statement: string | null; collection: string | null } | null;
   code: { file: string; line: number | null } | null;
-  exception: { type: string | null; message: string | null } | null;
+  exception: { type: string | null; message: string | null; stacktrace: string | null } | null;
 }
 
 interface Response {
@@ -548,7 +553,12 @@ describe('round trip', () => {
     expect(internal.statusMessage).toBeNull();
 
     const handler = byId.get('7cb4a6ed1dd21e14')!;
-    expect(handler.http).toEqual({ method: 'GET', path: '/api/v1/invoices', status: 200 });
+    expect(handler.http).toEqual({
+      method: 'GET',
+      path: '/api/v1/invoices',
+      status: 200,
+      query: null,
+    });
     expect(handler.code).toEqual({ file: 'app/controllers/invoice_controller.py', line: 45 });
     expect(handler.serviceVersion).toBe('2.4.1');
     expect(handler.environment).toBe('staging');
@@ -556,7 +566,67 @@ describe('round trip', () => {
     const failure = byId.get('875ddf3c4ff485f0')!;
     expect(failure.failed).toBe(true);
     expect(failure.statusMessage).toBe('card declined');
-    expect(failure.exception).toEqual({ type: 'Error', message: 'card declined' });
+    expect(failure.exception).toEqual({
+      type: 'Error',
+      message: 'card declined',
+      stacktrace: expect.stringContaining('at charge (app/services/billing.js:88:11)'),
+    });
+  });
+
+  /*
+   * The two fields added for value lineage, round-tripped **carrying
+   * something**.
+   *
+   * The assertions above prove they survive as `null`, which is the weaker
+   * half: `null` is also what a column that was never written reads as, so a
+   * nullable field that round-trips as null proves nothing about the column.
+   * These two are the ones a value is actually found in — the query string and
+   * the driver's own error text — and losing either in SQLite would make the
+   * backend layer of `get_value_provenance` silently unable to find what it had
+   * already read off the wire.
+   */
+  it('round-trips a query string and a stack trace, which is where a value is found', () => {
+    const trace =
+      "SqliteError: select * from invoices where id = '8814' - no such table\n" +
+      '    at charge (app/services/billing.js:88:11)';
+    open();
+    const spans = core.readOtlpTraces(
+      delivery({
+        traceId: TRACE,
+        spanId: 'aa11bb22cc33dd44',
+        parentSpanId: '00f067aa0ba902b7',
+        name: 'GET /fx',
+        kind: 2,
+        startTimeUnixNano: '1788364167363000000',
+        endTimeUnixNano: '1788364167363163542',
+        attributes: [
+          { key: 'http.request.method', value: { stringValue: 'GET' } },
+          { key: 'url.path', value: { stringValue: '/fx' } },
+          { key: 'url.query', value: { stringValue: 'amount=1284.00&ref=8814' } },
+        ],
+        events: [
+          {
+            name: 'exception',
+            attributes: [
+              { key: 'exception.type', value: { stringValue: 'SqliteError' } },
+              { key: 'exception.message', value: { stringValue: 'no such table' } },
+              { key: 'exception.stacktrace', value: { stringValue: trace } },
+            ],
+          },
+        ],
+        status: { code: 2, message: 'query failed' },
+      }),
+    ).spans;
+
+    otel.storeSpans(spans);
+    const back = otel
+      .spansForTraces([TRACE])
+      .find((span) => span.spanId === 'aa11bb22cc33dd44')!;
+
+    expect(back.http?.query).toBe('amount=1284.00&ref=8814');
+    // The literal the parameterised `db.query.text` on a real span does not
+    // have, surviving the database it is stored in.
+    expect(back.exception?.stacktrace).toContain("id = '8814'");
   });
 });
 

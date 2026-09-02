@@ -49,6 +49,53 @@
  * 4. **Ids are hex in OTLP/JSON and raw bytes in OTLP/protobuf.** That is the
  *    whole of why this reads JSON only; see below.
  *
+ * ## Where a value a user can see actually appears in a trace — measured again
+ *
+ * Work Stream 3.2 searches spans for a value somebody read off the screen, and
+ * that question was put to a second live capture rather than reasoned about:
+ * express + knex + better-sqlite3 under `@opentelemetry/auto-instrumentations-node`,
+ * OTLP/JSON to a capturing endpoint, continuing a `traceparent` of exactly the
+ * shape `core/trace` mints. Four results, and the design was wrong before it:
+ *
+ * 5. **A response body is nowhere in a trace.** No auto-instrumented span
+ *    carried it, on any path. A `POST` whose JSON body held the value produced
+ *    a server span with no body attribute of any kind. Nothing here should ever
+ *    imply otherwise.
+ *
+ * 6. **The value appears in exactly three places, and two of them were being
+ *    dropped.** `url.query` on a server span and the query inside `url.full` on
+ *    a client span — `?amount=1284.00` in plain sight — and
+ *    `exception.stacktrace`, which carries the driver's own message. Both are
+ *    read now. The third is `db.postgresql.values`, which is a named gap below.
+ *
+ * 7. **A failed query's stack trace holds the SQL its own span does not.** On
+ *    the same span, `db.query.text` said `where id = ?` while the
+ *    `exception.stacktrace` said `where id = '8814'` — the driver interpolates
+ *    when it formats the error. So the *failure* path is the richest evidence
+ *    in a trace, which is exactly backwards from the intuition, and it is the
+ *    path somebody asking "why is this value wrong" is on.
+ *
+ * 8. **`db.query.text` carries a literal only when the application built the
+ *    SQL by interpolation.** Real knex/pg/mysql2 emit `= ?` and `= $1`; the
+ *    same instrumentation emits `where id = 8814` the moment the callsite
+ *    concatenates. Neither "the value is in the query" nor "it never is" is
+ *    true, and anything built on either belief is built on a coin flip.
+ *
+ * **`code.filepath` is not a fact about instrumentation, it is a fact about the
+ * application.** Of the 41 official Node instrumentations, exactly one sets it
+ * and that one is a Cucumber runner recording a `.feature` path. `readCode`
+ * below is not wrong and is not wasted — a hand-instrumented service does set
+ * it — but any renderer presenting "the handler is at `file:line`" as the
+ * ordinary case is describing the rare one.
+ *
+ * **`db.postgresql.values` is a named gap.** `pg` with
+ * `enhancedDatabaseReporting` puts the bind values — the literals a
+ * parameterised `db.query.text` is missing — into an OTLP `arrayValue`, and
+ * `readAnyValue` deliberately returns `null` for composite values rather than
+ * writing `[object Object]` into somebody's graph. Closing it means teaching
+ * `readAnyValue` about arrays, which is a wire-format decision worth taking on
+ * its own rather than in the tail of a work stream.
+ *
  * ## OTLP/JSON only, and protobuf named as the gap
  *
  * `application/x-protobuf` is the exporter default and is refused, with the
@@ -107,6 +154,7 @@
  */
 
 import { pos1, type Pos1 } from '../react/positions.js';
+import type { FlowPayload } from '../../shared/types.js';
 
 /* ── The wire, as the exporter actually writes it ─────────────────────────── */
 
@@ -157,12 +205,23 @@ export interface OtelSpan {
   failed: boolean;
   statusMessage: string | null;
   /** HTTP and database attributes, kept flat and only where present. */
-  http: { method: string | null; path: string | null; status: number | null } | null;
+  http: {
+    method: string | null;
+    path: string | null;
+    status: number | null;
+    /** The query string, which is where a value most often travels in plain sight. */
+    query: string | null;
+  } | null;
   db: { system: string | null; statement: string | null; collection: string | null } | null;
   /** `code.filepath` and `code.lineno`, when the instrumentation records them. */
   code: { file: string; line: Pos1 | null } | null;
   /** The first `exception` event, which is where a stack trace and message live. */
-  exception: { type: string | null; message: string | null } | null;
+  exception: {
+    type: string | null;
+    message: string | null;
+    /** The driver's own text, which is measured to carry what the attributes do not. */
+    stacktrace: string | null;
+  } | null;
 }
 
 /**
@@ -419,7 +478,44 @@ function readHttp(attributes: Record<string, string | number | boolean>): OtelSp
     str(attributes['url.path']) ?? str(attributes['http.route']) ?? str(attributes['http.target']);
   const status =
     num(attributes['http.response.status_code']) ?? num(attributes['http.status_code']);
-  return method || path || status !== null ? { method, path, status } : null;
+  const query = readQueryString(attributes);
+  return method || path || query || status !== null ? { method, path, status, query } : null;
+}
+
+/**
+ * The query string, kept because it is where a value travels in plain sight.
+ *
+ * Measured, and it is one of only three places in a trace a value a user can
+ * see was ever observed: a server span carries `url.query` and a client span
+ * carries the whole `url.full`, so `?amount=1284.00` is right there while the
+ * response body it eventually lands in is nowhere in the trace at all. Reading
+ * only `url.path` — which is what this did — made the commonest case of a value
+ * crossing the wire invisible to the layer built to find it.
+ *
+ * Cut out of `url.full` textually rather than with `new URL`. That constructor
+ * has already been the source of one wrong load-bearing comment in this
+ * repository, this string is whatever a foreign exporter wrote, and the
+ * question here — "what is after the first `?` and before any `#`" — does not
+ * need a parser to answer.
+ */
+function readQueryString(attributes: Record<string, string | number | boolean>): string | null {
+  const own = str(attributes['url.query']);
+  if (own) return own.replace(/^\?/, '') || null;
+  /*
+   * `http.target` last, and it is the reason the *path* above prefers the
+   * route over it: the superseded spelling put the path and the query in one
+   * string. Preferring the route loses the query, and this is where it is
+   * picked back up. Unreachable from a current SDK — those code paths are gone
+   * from the shipped instrumentations, measured — so it is for a service that
+   * has pinned an old one, exactly like the spellings beside it.
+   */
+  const full =
+    str(attributes['url.full']) ?? str(attributes['http.url']) ?? str(attributes['http.target']);
+  if (!full) return null;
+  const mark = full.indexOf('?');
+  if (mark === -1) return null;
+  const hash = full.indexOf('#', mark);
+  return full.slice(mark + 1, hash === -1 ? undefined : hash) || null;
 }
 
 /** Database attributes, current names first and the superseded ones behind. */
@@ -456,6 +552,7 @@ function readException(events: unknown): OtelSpan['exception'] {
     return {
       type: str(attributes['exception.type']),
       message: str(attributes['exception.message']),
+      stacktrace: str(attributes['exception.stacktrace']),
     };
   }
   return null;
@@ -565,6 +662,50 @@ export interface TracedCall {
   step: number;
   method: string;
   url: string;
+}
+
+/**
+ * The traced calls a recording carries.
+ *
+ * Here rather than in the server because there are now three callers of it —
+ * the graph ingest, `get_backend_trace`, and the backend layer of
+ * `core/provenance` — and two of them are on the other side of the bundle. A
+ * second copy is how the step a tool *filters* on stops being the step it
+ * *prints*: the server's own copy numbered steps by position while every
+ * renderer beside it prefers the step's own `stepNumber`, so a flow whose
+ * numbers do not match its positions filtered on one and printed the other.
+ * DevFlow's sender renumbers on the way out, which is why nobody had seen it;
+ * `POST /flows` accepts a flow from any page the browser visits, which is why
+ * that is not a reason to leave two.
+ *
+ * A call has a `traceId` only when the injection rule allowed one — off by
+ * default, only while recording, and only to an origin the user named — so on
+ * almost every recording this is empty and the whole of Tier 2 costs nothing.
+ */
+export function tracedCallsOf(flow: FlowPayload): TracedCall[] {
+  const out: TracedCall[] = [];
+  /*
+   * `Array.isArray` on both, though the types promise it. A flow arrives over
+   * loopback from any page the browser visits and `POST /flows` validates its
+   * id and little else, so `steps: 5` is a shape this has to survive rather
+   * than a shape the compiler has ruled out.
+   */
+  const steps = Array.isArray(flow?.steps) ? flow.steps : [];
+  steps.forEach((step, index) => {
+    const number = typeof step?.stepNumber === 'number' ? step.stepNumber : index + 1;
+    const calls = Array.isArray(step?.networkCalls) ? step.networkCalls : [];
+    for (const call of calls) {
+      const traceId = readTraceId(call?.traceId);
+      if (!traceId) continue;
+      out.push({
+        traceId,
+        step: number,
+        method: typeof call?.method === 'string' && call.method ? call.method : 'GET',
+        url: typeof call?.url === 'string' ? call.url : '',
+      });
+    }
+  });
+  return out;
 }
 
 /** One recorded call and the backend work found under its id. */

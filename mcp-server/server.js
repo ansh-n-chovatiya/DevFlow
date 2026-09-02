@@ -68,11 +68,11 @@ import {
   joinTrace,
   joinableSha,
   projectTrace,
-  readTraceId,
   snippet,
   stepFailed,
   suspectFiles,
   traceValue,
+  tracedCallsOf,
   urlPath,
   valueOfStep,
 } from './core.js';
@@ -655,55 +655,135 @@ function otelTry(what, run, fallback = null) {
 }
 
 /**
- * The traced calls a recording carries, as `core/otel` wants them.
+ * What the span store can say about one recording, as `traceValue` wants it.
  *
- * A call has a `traceId` only when the injection rule allowed one — off by
- * default, only while recording, and only to an origin the user named — so on
- * almost every recording this is empty and the whole of Tier 2 costs nothing.
+ * The three states are not three wordings of one nothing: ingest being off is a
+ * flag on this server, a recording with no traced call is a switch in the
+ * extension, and spans that have not arrived are the user's exporter — and the
+ * last of those is the one where DevFlow's side is *already* correct. The
+ * distinction is `get_backend_trace`'s and it is kept here because it is the
+ * same reader, who otherwise goes and changes a setting that was not the
+ * problem. `tracedCalls` is left to the caller of this rather than counted
+ * again inside it, so `unsearchedLayers` and this function cannot disagree.
  */
-function tracedCalls(flow) {
-  const out = [];
-  const steps = Array.isArray(flow?.steps) ? flow.steps : [];
-  for (const [index, step] of steps.entries()) {
-    for (const call of step.networkCalls ?? []) {
-      const traceId = readTraceId(call.traceId);
-      if (!traceId) continue;
-      out.push({ traceId, step: index + 1, method: call.method ?? 'GET', url: call.url ?? '' });
-    }
-  }
-  return out;
+function backendReadingFor(flow) {
+  if (!otelmod || !otelmod.OTEL_ENABLED) return { available: false, reason: 'ingest-off' };
+
+  const calls = tracedCallsOf(flow);
+  const spans =
+    otelTry('read held spans', (o) => o.spansForTraces(calls.map((c) => c.traceId)), []) ?? [];
+  const { joined, awaiting } = joinTrace({ calls, spans });
+  return { available: true, joined, awaiting, tracedCalls: calls.length };
 }
 
 /**
- * One span tree as indented lines.
+ * How much of one span's line is worth printing.
+ *
+ * A span arrives from an endpoint that cannot be authenticated \u2014 the sender
+ * is the user\u2019s own backend or their collector, which has no extension
+ * origin and never will \u2014 so every string on it is untrusted text, and a
+ * 200KB `db.query.text` would otherwise be one line of the answer. Generous
+ * rather than tight, because a query is the one thing here somebody reads in
+ * full, and cut where a reader can see the cut.
+ */
+const SPAN_LINE = 2000;
+
+/**
+ * One operation as the lines a reader can act on.
  *
  * Indentation rather than a table because the shape *is* the answer here: a
  * query three levels under the handler that answered the request is a different
  * fact from one the handler issued itself, and a flat list loses exactly that.
+ *
+ * Extracted from `flattenSpanLines` rather than copied beside it, because there
+ * are now two tools that print a span \u2014 `get_backend_trace` prints a whole
+ * trace, `get_value_provenance` prints the capped chain behind one call \u2014
+ * and the second was otherwise going to be a second span renderer that
+ * disagreed with the first about what a span looks like. It takes the flattened
+ * shape both callers can supply, which is `core/provenance`'s `BackendHop`
+ * almost exactly, rather than an `OtelSpan`: the provenance side never holds
+ * the span, only what the pure module already read off it.
  *
  * Each line carries only what a reader can act on \u2014 where it ran, what it
  * was, how long it took, and whether it failed. The SQL is printed when the
  * instrumentation supplied it and is never invented; `db.query.text` is what
  * the user\u2019s own tracer chose to record, including whether it was
  * parameterised, and rewriting it here would show them a query their database
- * never saw.
+ * never saw. Cutting it at `cap` is not a rewrite: the cut says so, and the
+ * count of what was cut goes with it.
  */
+function spanLines(hop, indent, cap) {
+  const pad = `${indent}${'  '.repeat(Math.max(0, Number(hop.depth) || 0))}`;
+  const cut = (value) => truncate(String(value ?? ''), cap);
+
+  const ms = `${Number(hop.durationMs ?? 0).toFixed(1)}ms`;
+  const status = hop.status === null || hop.status === undefined ? '' : ` \u00b7 ${cut(hop.status)}`;
+  const where = hop.file ? ` \u00b7 ${cut(hop.file)}${hop.line ? `:${cut(hop.line)}` : ''}` : '';
+  const failed = hop.failed ? ' **FAILED**' : '';
+  /*
+   * `?? null` on the two newest fields, because a span read back out of the
+   * store predates them: rows written by an earlier build carry no `query` and
+   * no `stacktrace`, and this renderer is asked for them the moment the schema
+   * grows. Absent is not empty and neither is an error.
+   */
+  const query = hop.query ?? null;
+  /*
+   * Which hop the value actually turned up in, said on the hop rather than in a
+   * footnote. A chain of nine operations with no mark on any of them and a
+   * sighting listed elsewhere leaves the reader to guess which one it was, and
+   * the guess they make is "the query", which is the one this cannot promise.
+   */
+  const carried = hop.carried ? ' **carried the value**' : '';
+
+  const lines = [
+    `${pad}- \`${cut(hop.service)}\` ${cut(hop.name)} \u00b7 ${ms}${status}${where}${failed}${carried}`,
+  ];
+  /*
+   * The query string, printed. A span name is a *route* \u2014 `GET /invoices/:id`
+   * \u2014 so the id, the filter and the page number are nowhere on the line unless
+   * this is, and a query string is where a value most often travels in plain
+   * sight. The stacktrace deliberately is not printed: it is kilobytes of
+   * frames whose first line repeats the message already below, and cutting it
+   * to a first line buys nothing. Where it does matter is the *search*, not the
+   * display \u2014 see the report; that decision is not this file's.
+   */
+  if (query) lines.push(`${pad}  \u21b3 ?${cut(String(query).replace(/^\?/, ''))}`);
+  if (hop.statement) lines.push(`${pad}  \u21b3 \`${cut(hop.statement)}\``);
+  if (hop.exceptionMessage) {
+    lines.push(`${pad}  \u21b3 ${cut(hop.exceptionType ?? 'error')}: ${cut(hop.exceptionMessage)}`);
+  } else if (hop.failed && hop.statusMessage) {
+    lines.push(`${pad}  \u21b3 ${cut(hop.statusMessage)}`);
+  }
+  return lines;
+}
+
+/** One whole span tree as indented lines \u2014 `get_backend_trace`'s half of `spanLines`. */
 function flattenSpanLines(roots) {
   const lines = [];
   const walk = (node) => {
     const span = node.span;
-    const pad = '  '.repeat(node.depth);
-    const mark = span.failed ? ' **FAILED**' : '';
-    const ms = `${span.durationMs.toFixed(1)}ms`;
-    const where = span.code ? ` \u00b7 ${span.code.file}${span.code.line ? `:${span.code.line}` : ''}` : '';
-    const status = span.http?.status !== null && span.http?.status !== undefined ? ` \u00b7 ${span.http.status}` : '';
-    lines.push(`${pad}- \`${span.service}\` ${span.name} \u00b7 ${ms}${status}${where}${mark}`);
-    if (span.db?.statement) lines.push(`${pad}  \u21b3 \`${span.db.statement}\``);
-    if (span.exception?.message) {
-      lines.push(`${pad}  \u21b3 ${span.exception.type ?? 'error'}: ${span.exception.message}`);
-    } else if (span.failed && span.statusMessage) {
-      lines.push(`${pad}  \u21b3 ${span.statusMessage}`);
-    }
+    lines.push(
+      ...spanLines(
+        {
+          depth: node.depth,
+          service: span.service,
+          name: span.name,
+          durationMs: span.durationMs,
+          failed: span.failed,
+          file: span.code?.file ?? null,
+          line: span.code?.line ?? null,
+          statement: span.db?.statement ?? null,
+          status: span.http?.status ?? null,
+          query: span.http?.query ?? null,
+          exceptionType: span.exception?.type ?? null,
+          exceptionMessage: span.exception?.message ?? null,
+          statusMessage: span.statusMessage,
+          carried: false,
+        },
+        '',
+        SPAN_LINE,
+      ),
+    );
     for (const child of node.children) walk(child);
   };
   for (const root of roots) walk(root);
@@ -722,7 +802,7 @@ function flattenSpanLines(roots) {
  * and for the same reason.
  */
 function ingestSpansFor(flow, flowId, git) {
-  const calls = tracedCalls(flow);
+  const calls = tracedCallsOf(flow);
   if (!calls.length) return;
 
   const spans = otelTry('read held spans', (o) => o.spansForTraces(calls.map((c) => c.traceId)), []);
@@ -3421,6 +3501,29 @@ function renderFeature(description, query, neighbours, corpus) {
  * The layer order is the direction data flows through a React application, and
  * it is presentation only. Nothing here concludes that the response caused the
  * render. `get_causal_chain` makes causal claims, out of evidence about events.
+ *
+ * ## The fifth layer, and the two claims this renderer must keep apart
+ *
+ * `backend` is the spans the user's own service exported under the trace id
+ * DevFlow put on the request. It is not a fifth observation of the recording,
+ * and it produces two things of very different strength that a reader will
+ * merge unless the reply refuses to:
+ *
+ *  - A **path** — `result.backend.paths` — is a *known attachment*. The call
+ *    and its spans are joined by 128 bits DevFlow minted and the backend echoed,
+ *    so which call a span belongs to is known rather than inferred. It is the
+ *    only link in this whole reply that is not a comparison of two strings.
+ *  - A **hit** with `layer: 'backend'` is a *sighting*, exactly as weak as the
+ *    other four. A span carries no response body; what it can carry is a query's
+ *    text, a request path, its own name and what an error said. `£42.00` in a
+ *    `db.query.text` and `£42.00` in a response body are two sightings, not a
+ *    lineage.
+ *
+ * So the sightings are printed with the other four layers, under the same
+ * caveat, and the paths are printed in a section of their own that says what a
+ * path is. A reply that let the strong link lend its authority to the weak
+ * search would be claiming DevFlow traced the value into the database, which is
+ * the one thing this tool has never been able to do.
  */
 
 /** The step's own number, or its position, exactly as `stepParts` reckons it. */
@@ -3438,11 +3541,113 @@ function componentLabel(flow, id) {
 const PROVENANCE_LINE = 300;
 
 const LAYER_TITLES = {
+  // Worded as a sighting, not as a chain. What is under this heading is text
+  // that appeared in a span; the chain is the section `backendSection` prints.
+  backend: 'backend — what the server-side work carried',
   response: 'response — what the server sent',
   store: 'store — what the app wrote down',
   render: 'render — what a component was handed',
   dom: 'dom — what the page showed',
 };
+
+/**
+ * The server-side work behind the calls the value was seen at.
+ *
+ * Its own section rather than more lines inside the backend *layer*, because
+ * the two are different kinds of claim and the reply is worth nothing if a
+ * reader merges them — see the header. Printed after the sightings because it
+ * answers "behind which call?", and that question needs the call named first.
+ *
+ * `awaiting` is printed even when other calls did join, and never folded into
+ * "no backend data". Three of a recording's four traced calls rendering as the
+ * whole backend story is worse than none of them rendering at all: the reader
+ * has a complete-looking chain and no reason to doubt it. It is suppressed only
+ * when `unsearched` already carries the backend's own nothing, which says the
+ * same thing at more length and in the right place.
+ */
+function backendSection(reading, explainedAsUnsearched) {
+  const lines = [];
+
+  if (reading.paths.length) {
+    lines.push(
+      '',
+      'the server-side work behind the calls it was seen at',
+      '  These spans are attached to the call by the trace id DevFlow put on the request and the ' +
+        'backend echoed — 128 bits, so which call each one belongs to is known rather than guessed. ' +
+        'That is the one link in this reply which is not a comparison of two strings. What was ' +
+        'found inside a span is still a sighting on the same terms as everything above: a span ' +
+        'carries no response body, only a query’s text, a path, its own name and what an error said.',
+    );
+
+    for (const path of reading.paths) {
+      lines.push(
+        '',
+        `  step ${path.step}  ${truncate(String(path.where ?? ''), PROVENANCE_LINE)}`,
+        `      trace ${truncate(String(path.traceId ?? ''), PROVENANCE_LINE)} · ` +
+          `${truncate((path.services ?? []).join(', '), PROVENANCE_LINE)}`,
+      );
+      for (const hop of path.hops ?? []) lines.push(...spanLines(hop, '      ', PROVENANCE_LINE));
+      /*
+       * The count is the finding, not an apology for the cap. An N+1 query is
+       * four hundred spans of one recorded click, and "and 380 more" is the
+       * sentence somebody acts on — a chain cut to twelve with nothing said
+       * about the rest reads as a handler that issued one query.
+       */
+      if (path.more) {
+        lines.push(
+          `      … ${path.more} more operation${path.more === 1 ? '' : 's'} under this trace, ` +
+            'above what one answer prints. get_backend_trace has all of them.',
+        );
+      }
+    }
+
+    /*
+     * A chain with no file on any hop, said as what it is.
+     *
+     * Measured rather than assumed: of the official Node auto-instrumentations
+     * essentially none record `code.filepath` — not express, not http, not
+     * knex, pg, mysql2, mongodb, redis or graphql — so the roadmap's
+     * "invoice_controller.py:45" is what a *hand-instrumented* service gives
+     * and is not the ordinary case. Left unsaid, a chain with no file reads as
+     * "DevFlow could not find the handler", which sends a reader to look for a
+     * fault in the recording. The true sentence sends them to their own
+     * instrumentation, and is the only one of the two that helps.
+     */
+    const anyFile = reading.paths.some((path) => (path.hops ?? []).some((hop) => hop.file));
+    if (!anyFile) {
+      lines.push(
+        '',
+        '  No operation above names the file it was written in, and that is almost always the ' +
+          'instrumentation rather than the recording: hardly any automatic Node instrumentation ' +
+          'records code.filepath, so a chain is normally located by each operation’s own name and ' +
+          'route. Instrument the handler by hand if you need its file and line here.',
+      );
+    }
+
+    if (reading.more) {
+      lines.push(
+        '',
+        `  … ${reading.more} more traced call${reading.more === 1 ? '' : 's'} the value was seen ` +
+          'at, above what one answer prints.',
+      );
+    }
+  }
+
+  if (reading.awaiting && !explainedAsUnsearched) {
+    const one = reading.awaiting === 1;
+    lines.push(
+      '',
+      `${reading.awaiting} traced call${one ? '' : 's'} in this recording ${one ? 'has' : 'have'} ` +
+        `no spans yet, so what is above is part of this recording’s server-side work and not all ` +
+        `of it. The recording carried the ${one ? 'id' : 'ids'}, so the header went out and nothing ` +
+        'has arrived under it — the backend is not exporting to this server, or it sampled the ' +
+        'trace away, or the spans are still in a batch. Re-send this recording once they arrive ' +
+        'and they will join.',
+    );
+  }
+
+  return lines;
+}
 
 function renderProvenance(flow, result, from) {
   const lines = [
@@ -3451,6 +3656,17 @@ function renderProvenance(flow, result, from) {
     'DevFlow did not watch this value move. It looked for the same value in four independent ' +
       'observations of this recording and reports where it turned up, in the order data flows through ' +
       'an application. Two sightings in adjacent layers are two sightings and not a link.',
+    /*
+     * The fifth layer is introduced separately and deliberately. It is not a
+     * fifth observation of the recording — it arrived from somewhere else
+     * entirely — and folding it into the sentence above would quietly upgrade
+     * the other four by association, which is the opposite of what that
+     * sentence is for.
+     */
+    '',
+    'A fifth layer is the spans the backend exported under the trace id DevFlow put on the ' +
+      'request. Which call those belong to is known rather than inferred; finding this value ' +
+      'written inside one of them is a sighting like any other.',
   ];
 
   if (result.collides) {
@@ -3506,6 +3722,10 @@ function renderProvenance(flow, result, from) {
     }
   }
 
+  const reading = result.backend ?? { paths: [], more: 0, awaiting: 0 };
+  const backendUnsearched = result.unsearched.some((gap) => gap.layer === 'backend');
+  lines.push(...backendSection(reading, backendUnsearched));
+
   if (result.unsearched.length) {
     /*
      * The half of this tool that stops it lying. "The value is not in a
@@ -3520,7 +3740,10 @@ function renderProvenance(flow, result, from) {
   lines.push(
     '',
     'get_causal_chain links events by evidence about the events themselves; this links nothing. ' +
-      'get_flow_step opens any step named above, and get_state_patch has the whole of any store write.',
+      'get_flow_step opens any step named above, and get_state_patch has the whole of any store write.' +
+      (reading.paths.length
+        ? ' get_backend_trace has the whole span tree for every traced call in this recording.'
+        : ''),
   );
   return lines.join('\n');
 }
@@ -3538,6 +3761,16 @@ function renderWhere(flow, where) {
  * Cheap, and it is what makes the expensive call right: the caller is looking
  * at a walkthrough or a screenshot, and what they need first is which of the
  * things on it this recording can actually speak to.
+ *
+ * It says nothing about which steps carried a traced call, and that is a
+ * decision rather than an omission. A traced call is a property of a *call*, so
+ * the annotation would land on the wrong rows — a step can carry four traced
+ * calls and no text worth tracing, and would not be listed here at all — and
+ * being honest about it would mean reading the span store, which is the cost
+ * this listing exists to avoid, and wording the ingest-off / never-traced /
+ * not-yet-arrived distinction in a fourth place. That distinction is the one
+ * thing in this feature that must not fragment. The backend layer is announced
+ * where announcements belong, in the tool's description.
  */
 function renderProvenanceIndex(flow, steps) {
   const lines = [
@@ -3998,14 +4231,24 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: 'get_value_provenance',
       description:
         'Where one value on the screen came from, across one recording: the response body that carried ' +
-        'it, the store write that took it, the component that was handed it, and the element that showed ' +
-        'it. Read what it is before you read what it says — DevFlow did not watch the value move. It has ' +
-        'four independent observations of the recording and this looks for the same value in all four, so ' +
-        'a distinctive value found in three layers is overwhelmingly one value travelling, and a short one ' +
-        'found in three layers is a coincidence three times over. The reply says which, and names any ' +
-        'layer the recording never captured rather than letting it read as "not found there". Give it a ' +
-        '"value" to trace, or a "step" whose element text it should trace; with neither it lists the steps ' +
-        'that have a value worth asking about.',
+        'it, the store write that took it, the component that was handed it, the element that showed ' +
+        'it — and the server-side work behind the call, where the backend exported spans for it. Read ' +
+        'what it is before you read what it says — DevFlow did not watch the value move. Four of those ' +
+        'five layers are independent observations of the one recording and this looks for the same value ' +
+        'in all four, so a distinctive value found in three layers is overwhelmingly one value ' +
+        'travelling, and a short one found in three layers is a coincidence three times over. The reply ' +
+        'says which, and names any layer the recording never captured rather than letting it read as ' +
+        '"not found there". The fifth layer is different in one direction only, and the reply keeps the ' +
+        'halves apart. Which spans belong to a call is **known**: DevFlow minted a 128-bit trace id, put ' +
+        'it on the request and the backend echoed it, so the chain from the call to the controller and ' +
+        'the query it ran is an attachment rather than a guess — the one link here that is not a ' +
+        'comparison of two strings. Finding the value **inside** one of those spans is only a sighting, ' +
+        'as weak as the other four: a span carries no response body, only a query’s text, a request ' +
+        'path, its own name and what an error said, so this value in a db.query.text and the same value ' +
+        'in a response body are two sightings and not a lineage. Nothing here traced the value into a ' +
+        'database, and a reply that reads that way is being read wrong. Give it a "value" to trace, or a ' +
+        '"step" whose element text it should trace; with neither it lists the steps that have a value ' +
+        'worth asking about.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -6067,7 +6310,14 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
        */
       if (!needle) return text(renderProvenanceIndex(flow.json, steps));
 
-      const result = traceValue(flow.json, needle);
+      /*
+       * The span store is asked here rather than inside `traceValue`, which is
+       * pure and has no socket. `backend` is a required argument for the reason
+       * its own header gives: optional would make forgetting it a five-layer
+       * answer silently printed as four, and a layer that goes missing without
+       * saying so is the exact failure the rest of this tool exists to prevent.
+       */
+      const result = traceValue(flow.json, needle, backendReadingFor(flow.json));
       return text(renderProvenance(flow.json, result, from));
     }
 
@@ -6291,7 +6541,17 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         return text(error.message);
       }
 
-      const all = tracedCalls(flow);
+      /*
+       * `flow.json`, not `flow`. `readFlow` returns `{ dir, json }`, so the old
+       * call handed the wrapper to a function that reads `.steps` off it — and
+       * a function that treats a missing `steps` as an empty recording answers
+       * "no call in this recording carried a trace id" for every recording
+       * there has ever been. The tool has never printed a span. Nothing caught
+       * it because the wrong answer is the same sentence as the common right
+       * one, which is the failure mode this whole file's "name the nothings"
+       * discipline exists to make visible and could not see from inside.
+       */
+      const all = tracedCallsOf(flow.json);
       const calls =
         typeof args.step === 'number' ? all.filter((call) => call.step === args.step) : all;
 
@@ -6355,7 +6615,9 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (!sections.length) {
         return text(`No spans have arrived for this recording\u2019s traced calls.${pending}`);
       }
-      return text(`## Backend trace \u2014 ${flow.name ?? args.id}\n\n${sections.join('\n\n')}${pending}`);
+      return text(
+        `## Backend trace \u2014 ${flow.json.name ?? args.id}\n\n${sections.join('\n\n')}${pending}`,
+      );
     }
 
     case 'get_app_architecture': {
