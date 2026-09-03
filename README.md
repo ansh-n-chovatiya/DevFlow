@@ -51,6 +51,14 @@ with no evidence connecting it to anything hangs off the interaction rather than
 off whatever store happened to move, because a graph that joined those would be
 inventing the answer.
 
+**Know what you are about to break.** **Read architecture** and the MCP tools
+answer for the page in front of you; `get_blast_radius` answers for a file —
+which components the runtime has actually watched run in it, what each was seen
+calling and reading, and, if you relay your production errors in, what your users
+are hitting there. `get_commit_candidates` answers the other half: which commits
+changed that file, and which of them landed *after* the last moment DevFlow saw
+the code run. It names no cause and says so; it compares dates, not behaviour.
+
 **Pick a component.** **Pick component** arms a crosshair; click any element and
 DevFlow walks the React tree above it, names the component, and resolves it
 through the page's source maps back to the original file, line and column. On a
@@ -113,7 +121,7 @@ status key at the top of [`ROADMAP_AND_PHASES.md`](./ROADMAP_AND_PHASES.md).
 | **Phase 1** | Runtime-to-Source Intelligence: source mapping with confidence scoring, causal threading, "Why did this render?" | Partly done: source mapping and the locator are the shipped product. Causal threading, state-store inspection and render blame are not started |
 | **Phase 2** | Autonomous bug reproduction, "Why is this value here?" provenance, Interaction-to-Test compiler, natural language app navigator | Started: the Interaction-to-Test compiler exports Playwright and Cypress. The rest is Months 4–6 |
 | **Phase 3** | Full-stack wire & DB lineage (OTel), Living Architecture Map, Temporal Diff & regression detection, Source → Browser live link | Closed: trace headers, OTel span ingest, value lineage to the backend, cross-deploy comparison, the Living Architecture Map and the cascade are all in. The map turned out not to need a live connection — it is a reading with an age on it, because a tool call is a moment and not a stream. The Vue/Svelte/RSC adapters are deferred to Phase 5 as the three separate work streams they are |
-| **Phase 4** | Production telemetry ingestion, autonomous regression watcher (CI), self-healing CI bot, Accessibility Autopilot | Months 10–12 |
+| **Phase 4** | Production telemetry ingestion, autonomous regression watcher (CI), self-healing CI bot, Accessibility Autopilot | Closed: git forensics, the accessibility autopilot, the CI regression watcher and relayed crash ingest are all in. Three boxes closed as written refusals instead. The session-replay Time Capsule is deferred to Phase 5; the VS Code extension is deferred and the blast-radius query it was half of shipped without it; the self-healing fix bot is refused, holding the decision that DevFlow diagnoses and verifies but does not patch |
 | **Phase 5** | Team intelligence, counterfactual replay, platform-level ambient intelligence | Year 2+ |
 
 The ultimate experience: a developer right-clicks a broken button, types *"Why is this disabled?"*, and gets an instant answer tracing the exact state, the event that set it, the source line, and the commit that introduced the bug — along with a two-line fix, a generated test, and a PR link. Under 5 minutes. Zero manual investigation.

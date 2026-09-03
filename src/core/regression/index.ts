@@ -46,7 +46,7 @@
  */
 
 import type { ReplayVerdict } from '../replay/index.js';
-import { matchSourceFile, normaliseSourcePath, projectRelative } from '../git/index.js';
+import { matchSourceFile, projectRelative } from '../git/index.js';
 
 export type RunMode = 'mocked' | 'live';
 
@@ -331,7 +331,3 @@ export function renderRegressionReport(input: {
 
   return lines.join('\n');
 }
-
-/** Every source file a set of paths normalises to, for a stable comparison. */
-export const normalisedFiles = (files: readonly string[]): string[] =>
-  files.map((file) => normaliseSourcePath(file));

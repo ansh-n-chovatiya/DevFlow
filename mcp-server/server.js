@@ -59,6 +59,7 @@ import {
   MACHINE_KEYS,
   describeProductionError,
   flowA11y,
+  renderA11y,
   parseSentryDelivery,
   planActions,
   planReplay,
@@ -3322,40 +3323,27 @@ function stepParts(flow, dir, step, render) {
         lines: ['The page as this step left it was audited and no violation was found in what was checked.'],
       };
     } else {
-      const lines = [];
+      /*
+       * `core/a11y`'s renderer, not a second one here.
+       *
+       * This had its own copy of the grouping for exactly one commit, which is
+       * the two-markdown-renderers mistake `src/core/mcp-bundle.ts` exists
+       * because of: two renderers over one shape drift, and the one a *model*
+       * reads is always the weaker of the two. What this side genuinely owns is
+       * `where` — turning a component id into the name and file the recording
+       * knows — because `core/` has no flow to resolve one against.
+       */
+      const renderable = findings.map((finding) => {
+        const component =
+          typeof finding.component === 'string' ? flow.react?.components?.[finding.component] : null;
+        const source = component ? formatSource(component) : null;
+        return {
+          ...finding,
+          ...(component ? { where: `in ${component.name}${source ? ` ${source}` : ''}` } : {}),
+        };
+      });
 
-      // Grouped by criterion rather than by element: eight buttons missing a
-      // name are one decision, and eight rows saying "4.1.2" are eight readings
-      // of the same sentence.
-      const groups = new Map();
-      for (const finding of findings) {
-        const key = typeof finding?.wcag === 'string' ? finding.wcag : 'unclassified';
-        const list = groups.get(key) ?? [];
-        list.push(finding);
-        groups.set(key, list);
-      }
-
-      for (const [wcag, list] of [...groups].sort((a, b) => b[1].length - a[1].length)) {
-        lines.push(`${wcag} (level ${list[0]?.level ?? 'A'}) — ${list.length}`);
-        for (const finding of list) {
-          const component = typeof finding.component === 'string'
-            ? flow.react?.components?.[finding.component]
-            : null;
-          const where = component ? formatSource(component) : null;
-          lines.push(
-            `  ${finding.label}  ${finding.detail}` +
-              (component ? `  in ${component.name}${where ? ` ${where}` : ''}` : ''),
-          );
-          if (finding.caveat) lines.push(`      ${finding.caveat}`);
-        }
-        lines.push('');
-      }
-
-      if (audit?.note) lines.push(`What was not checked: ${audit.note}.`);
-      lines.push(
-        'No fix is generated. The criterion, the measurement and the component each violation was ' +
-          'found in are what this reports; writing the change is yours.',
-      );
+      const lines = renderA11y(renderable, audit?.note).split('\n');
 
       parts.a11y = {
         have: findings.length
