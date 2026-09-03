@@ -18,7 +18,7 @@
  * The two things that feed this graph disagree about what a component *is*. A
  * flow arrives carrying the extension's own ids — an FNV hash of the display
  * name and the head of the compiled function source, minted in the MAIN world
- * by `core/react/id.ts`. A pick from the panel carries a name, a path and a
+ * by `core/locate/id.ts`. A pick from the panel carries a name, a path and a
  * line and nothing else: the compiled source it would take to mint that hash
  * lives in the page and is never sent. So the server cannot derive the id, and
  * for a while it invented a second one. The same component observed both ways
@@ -767,7 +767,7 @@ function addMissingColumn(table, column, decl) {
  * The shape of an id this file minted: a sha256 prefix, sixteen hex characters.
  *
  * Every other id in the table came from the extension, and none of them can
- * look like this — `core/react/id.ts` emits ten hex characters, or `n`/`n_` and
+ * look like this — `core/locate/id.ts` emits ten hex characters, or `n`/`n_` and
  * eight. So the id itself carries the provenance that `id_source` records, and
  * a database written before that column existed can have it recovered rather
  * than guessed. It matters because the whole no-over-merging rule turns on it:

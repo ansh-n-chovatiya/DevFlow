@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { observationFor } from '../src/features/arkg/ingest.js';
-import { pos1 } from '../src/core/react/positions.js';
+import { pos1 } from '../src/core/locate/positions.js';
 
 describe('observationFor', () => {
   it('records a name alone when nothing knows where the component lives', () => {

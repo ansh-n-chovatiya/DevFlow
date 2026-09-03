@@ -30,7 +30,7 @@ import { globSync, readFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import { createChainBuffer } from '../src/core/react/chains.js';
+import { createChainBuffer } from '../src/core/locate/chains.js';
 import { collectChain } from '../src/core/react/fiber.js';
 import {
   DEFAULT_RESOLVE_LIMITS,
@@ -278,7 +278,7 @@ describe('Tier 3, which is the other half of the same decision', () => {
     // The tiering names "VLQ masks" and they are two named constants, so they are
     // checkable here rather than only readable. The source-map line base is the
     // fifth thing the row names and it is an expression, not a constant — it
-    // carries its comment at `core/react/sourcemap.ts`, where the `+ 1` is.
+    // carries its comment at `core/locate/sourcemap.ts`, where the `+ 1` is.
     'VLQ_CONTINUATION',
     'VLQ_VALUE_MASK',
     'ORPHAN_GRACE_MS',

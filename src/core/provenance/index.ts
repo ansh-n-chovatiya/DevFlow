@@ -80,7 +80,7 @@
 
 import type { FlowPayload, PatchOp, RenderChange, Step } from '../../shared/types.js';
 import { flattenTree, type OtelSpan, type SpanKind, type SpanNode, type TraceJoin } from '../otel/index.js';
-import type { Pos1 } from '../react/positions.js';
+import type { Pos1 } from '../locate/positions.js';
 
 /**
  * The five places one value is looked for.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeSourcePath } from '../src/core/react/sourcemap.js';
+import { normalizeSourcePath } from '../src/core/locate/sourcemap.js';
 
 describe('normalizeSourcePath', () => {
   /** Every case — what the bundlers people actually use emit. */

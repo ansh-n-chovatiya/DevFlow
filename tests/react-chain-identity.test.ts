@@ -19,13 +19,13 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import { collectChain, type DebugSource, type Fiber } from '../src/core/react/fiber.js';
-import { componentId, isNameOnly, isPlaceholderId, nameOnlyId } from '../src/core/react/id.js';
+import { componentId, isNameOnly, isPlaceholderId, nameOnlyId } from '../src/core/locate/id.js';
 import { pickOwner } from '../src/core/react/owner.js';
 import { mergeComponents } from '../src/core/react/table.js';
 import { MAX_COMPONENT_CHAIN } from '../src/shared/constants.js';
 import type { CapturedComponent } from '../src/shared/messages.js';
 import type { ComponentNeedle, ComponentSource } from '../src/shared/types.js';
-import { pos1 } from '../src/core/react/positions.js';
+import { pos1 } from '../src/core/locate/positions.js';
 
 function fiber(type: unknown, parent: Fiber | null = null, debugSource?: DebugSource): Fiber {
   return {

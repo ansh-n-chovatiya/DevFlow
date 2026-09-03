@@ -38,6 +38,7 @@
     "lint:graphify": "node scripts/check-graphify.mjs",
     "lint:brand": "node scripts/check-brand.mjs",
     "lint:vocab": "node scripts/check-vocab.mjs",
+    "lint:locate": "node scripts/check-locate.mjs",
     "test": "vitest run",
     "pretest": "npm run build:mcp && npm run build:settings",
     "pretest:watch": "npm run build:mcp && npm run build:settings",
@@ -50,7 +51,7 @@
     "sync-version": "node scripts/sync-version.mjs",
     "version": "npm run sync-version && git add public/manifest.json mcp-server/package.json mcp-server/package-lock.json compiler-plugin/package.json",
     "package": "npm run verify && node scripts/package.mjs",
-    "verify": "npm run typecheck && npm run lint && npm run lint:tokens && npm run lint:settings-ui && npm run lint:graphify && npm run lint:brand && npm run lint:vocab && npm run test && npm run build"
+    "verify": "npm run typecheck && npm run lint && npm run lint:tokens && npm run lint:settings-ui && npm run lint:graphify && npm run lint:brand && npm run lint:vocab && npm run lint:locate && npm run test && npm run build"
   },
   "devDependencies": {
     "@babel/core": "^8.0.1",

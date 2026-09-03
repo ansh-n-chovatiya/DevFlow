@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CAPPED_ID, isAbsolutePath, mergeComponents } from '../src/core/react/table.js';
 import type { CapturedComponent } from '../src/shared/messages.js';
 import type { ComponentNeedle, ComponentSource } from '../src/shared/types.js';
-import { pos1 } from '../src/core/react/positions.js';
+import { pos1 } from '../src/core/locate/positions.js';
 
 function empty(): { table: Record<string, ComponentSource>; needles: Record<string, ComponentNeedle> } {
   return { table: {}, needles: {} };

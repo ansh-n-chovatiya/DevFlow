@@ -27,7 +27,7 @@ import {
   type ComponentInstanceReading,
   type PageReading,
 } from '../src/core/architecture/index.js';
-import { pos1 } from '../src/core/react/positions.js';
+import { pos1 } from '../src/core/locate/positions.js';
 import { startServer, type McpSession } from './helpers/mcp-server.js';
 
 const servers: McpSession[] = [];

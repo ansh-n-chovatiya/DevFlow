@@ -35,7 +35,7 @@ import {
   type HiddenCategories,
   type VisibleEntry,
 } from '../../core/react/classify.js';
-import { toOneBased, type Pos0 } from '../../core/react/positions.js';
+import { toOneBased, type Pos0 } from '../../core/locate/positions.js';
 import type { ComponentSource, PickedComponent, TreeGroup } from '../../shared/types.js';
 
 // ── Element access ───────────────────────────────────────────────────────────

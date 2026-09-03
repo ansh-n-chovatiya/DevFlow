@@ -582,7 +582,7 @@ applications. The spikes are `.ctx/spike-vue.md`, `.ctx/spike-svelte.md` and
 *It used to say `src/core/react/` is fifteen fiber-shaped modules and none of it
 transfers.* Ten of the fifteen carry zero React references in code. Four `core/`
 modules with nothing to do with React — `otel`, `architecture`, `provenance`,
-`source` — already import `core/react/positions.js` today. And all three spikes
+`source` — already import `core/locate/positions.js` today. And all three spikes
 independently grepped **production** bundles for needles built with DevFlow's own
 `buildNeedle` constants and hit byte-for-byte: Vue 14/14 across Vue and Nuxt,
 Svelte 3/3 decoding to `Counter.svelte:5` exactly, RSC client components through

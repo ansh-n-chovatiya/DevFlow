@@ -11,7 +11,7 @@
 import { bytesInUse, getLocal } from '../../chrome/storage.js';
 import { load as loadSettings } from '../../features/settings/index.js';
 import { flowHost } from '../../core/flow/index.js';
-import { editorTemplate } from '../../core/react/editor.js';
+import { editorTemplate } from '../../core/locate/editor.js';
 import {
   CURRENT_FLOW_NAME,
   listFlows,

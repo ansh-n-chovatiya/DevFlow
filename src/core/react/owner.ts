@@ -17,7 +17,7 @@
 
 import type { ComponentSource } from '../../shared/types.js';
 import { classifyComponent, isSharedPrimitivePath } from './classify.js';
-import { isPlaceholderId } from './id.js';
+import { isPlaceholderId } from '../locate/id.js';
 
 /**
  * The component id a step should be attributed to, or null.

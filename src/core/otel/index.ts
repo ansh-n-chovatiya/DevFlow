@@ -153,7 +153,7 @@
  * and the cap is the answer to it.
  */
 
-import { pos1, type Pos1 } from '../react/positions.js';
+import { pos1, type Pos1 } from '../locate/positions.js';
 import type { FlowPayload } from '../../shared/types.js';
 
 /* ── The wire, as the exporter actually writes it ─────────────────────────── */

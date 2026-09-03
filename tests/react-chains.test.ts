@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createChainBuffer } from '../src/core/react/chains.js';
+import { createChainBuffer } from '../src/core/locate/chains.js';
 
 const OPTIONS = { size: 4, ttlMs: 5000, timeoutMs: 50 };
 

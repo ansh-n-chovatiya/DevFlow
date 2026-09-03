@@ -941,7 +941,7 @@ import {
 import type { CapturedComponent, ControlMessage } from '../shared/messages.js';
 import type { PageReading } from '../core/architecture/index.js';
 import type { PickResult, TreeGroup } from '../shared/types.js';
-import { pos1 } from '../core/react/positions.js';
+import { pos1 } from '../core/locate/positions.js';
 import {
   type ChainEntry,
   type ChainResult,
@@ -953,8 +953,8 @@ import {
   getComponentFn,
   getDisplayName,
 } from '../core/react/fiber.js';
-import { componentId, nameOnlyId } from '../core/react/id.js';
-import { buildNeedle } from '../core/react/needle.js';
+import { componentId, nameOnlyId } from '../core/locate/id.js';
+import { buildNeedle } from '../core/locate/needle.js';
 import { readStamp } from '../core/react/stamp.js';
 import {
   forgetStores,
@@ -1023,7 +1023,7 @@ let prewarm: { el: Element; result: ChainResult; at: number } | null = null;
  * `pos1` and no arithmetic: React records 1-based lines, `CapturedComponent`
  * and `PickedComponent` are both typed `Pos1`, and `pos1` is an assertion that
  * says so rather than a conversion. Its clamp is what `Math.max(1, …)` used to
- * be here. See `core/react/positions.ts` — this is one of the three boundaries
+ * be here. See `core/locate/positions.ts` — this is one of the three boundaries
  * where asserting a base is legitimate.
  */
 function describeDebugSource(

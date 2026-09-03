@@ -49,7 +49,7 @@
 import { flowHost, formatDelta, stepFailed, worstLevel, worstStatus } from '../../core/flow/index.js';
 import type { StatusClass } from '../../core/flow/index.js';
 import { stepEnclosing, stepOwner, summarizeComponents } from '../../core/react/attribution.js';
-import { componentEditorUrl, type EditorLink } from '../../core/react/editor.js';
+import { componentEditorUrl, type EditorLink } from '../../core/locate/editor.js';
 import { detailText, pathText } from '../components/result-card.js';
 import type {
   ComponentSource,

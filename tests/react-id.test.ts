@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { componentId, fnv1a, isNameOnly, nameOnlyId } from '../src/core/react/id.js';
+import { componentId, fnv1a, isNameOnly, nameOnlyId } from '../src/core/locate/id.js';
 
 describe('componentId', () => {
   it('is stable across calls', () => {

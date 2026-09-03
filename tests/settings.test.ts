@@ -4,7 +4,7 @@
  *
  * `react-source-locator/src/panel/settings.ts` and its `tests/settings.test.ts`
  * came across in two pieces. The path and URL half — `EDITORS`,
- * `toAbsolutePath`, `buildEditorUrl` — is `core/react/editor.ts` and is covered
+ * `toAbsolutePath`, `buildEditorUrl` — is `core/locate/editor.ts` and is covered
  * by `tests/react-editor.test.ts`. The *settings* half is this file: the
  * defaults it shipped, the three layers it resolved through, and the set of keys
  * an administrator had fixed.
@@ -26,7 +26,7 @@ import {
   resolve,
   type Overrides,
 } from '../src/features/settings/index.js';
-import { EDITORS } from '../src/core/react/editor.js';
+import { EDITORS } from '../src/core/locate/editor.js';
 import type * as SettingsModuleShape from '../src/features/settings/index.js';
 import { installChromeSync, type SyncFake } from './helpers/chrome-sync.js';
 

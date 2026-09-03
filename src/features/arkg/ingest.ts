@@ -57,7 +57,7 @@ import type { PickedComponent } from '../../shared/types.js';
  *
  * No id, and that is the interesting omission. This extension has one — a hash
  * of the component's compiled function source, minted in the MAIN world by
- * `core/react/id.ts` — and it is exactly what the graph keys a *flow's*
+ * `core/locate/id.ts` — and it is exactly what the graph keys a *flow's*
  * components by, so sending it would look like the way to make a pick and a
  * recording agree. It is not available here: the panel resolves a pick from a
  * fiber it reads across a devtools boundary, and the compiled source the hash

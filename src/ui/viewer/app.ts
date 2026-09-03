@@ -7,7 +7,7 @@
  * it is what the old 1,500-line viewer had none of.
  */
 
-import type { EditorLink } from '../../core/react/editor.js';
+import type { EditorLink } from '../../core/locate/editor.js';
 import type { FlowMeta, RecordingState, Step } from '../../shared/types.js';
 import type { LibrarySort } from './library-view.js';
 import type { ReviewFlow, StepFilter } from './review-view.js';

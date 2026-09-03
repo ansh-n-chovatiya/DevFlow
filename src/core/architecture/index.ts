@@ -55,7 +55,7 @@
  * one map rather than two that disagree.
  */
 
-import type { Pos1 } from '../react/positions.js';
+import type { Pos1 } from '../locate/positions.js';
 
 /**
  * One mounted instance of a component, exactly as the page walk saw it.

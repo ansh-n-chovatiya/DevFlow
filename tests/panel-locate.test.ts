@@ -18,8 +18,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import type { BundleProvider } from '../src/core/react/provider.js';
-import { pos1 } from '../src/core/react/positions.js';
+import type { BundleProvider } from '../src/core/locate/provider.js';
+import { pos1 } from '../src/core/locate/positions.js';
 import type { PickedComponent } from '../src/shared/types.js';
 import { locateComponent, StalePickError } from '../src/ui/locator/locate.js';
 import { sourceMapJson } from './helpers/sourcemap-fixture.js';

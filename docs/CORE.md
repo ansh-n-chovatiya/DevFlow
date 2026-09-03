@@ -82,7 +82,7 @@ This is why fetching and caching are not in `sourcemap.ts`, where they would be
 convenient. `search.ts` is handed a string and given nothing to load it with —
 which is also what makes it testable with no browser.
 
-The seam is `BundleProvider` (`core/react/provider.ts`, contract in CONTRACTS
+The seam is `BundleProvider` (`core/locate/provider.ts`, contract in CONTRACTS
 §2). Two implementations, neither of them a fallback for the other:
 
 | | Reads from | Strength |

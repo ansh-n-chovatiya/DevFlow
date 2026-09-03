@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+**The source-map engine is framework-neutral, and now lives somewhere that says
+so.** Nine modules moved from `src/core/react/` to `src/core/locate/`: needle
+building, bundle search, source-map decode, editor URLs, `Pos0`/`Pos1`, component
+ids and chain buffering. Nothing about them was React-specific — ten of the
+fifteen modules in that directory carried no React reference at all, and
+`core/otel`, `core/architecture`, `core/provenance` and `core/source` were
+already importing `core/react/positions.js` despite having nothing to do with
+React. What stays in `core/react/` is the fiber walk, the owner rule, the
+attribution built on them, classification and the build stamp.
+
+**It was measured before it was moved.** Three throwaway applications — Vue 3 and
+Nuxt, Svelte 5 and SvelteKit, Next.js App Router — were built, run in development
+*and* production, and grepped for needles built with DevFlow's own constants.
+Every one hit byte-for-byte: Vue 14/14, Svelte 3/3 decoding through the real
+source map to `Counter.svelte:5` exactly, and Next.js client components through
+served maps. `Function.prototype.toString()` round-trips through all three
+runtimes exactly as it does through React. The findings are in `.ctx/`, and the
+argument is ADR 0026.
+
+**`npm run lint:locate` is the gate that keeps it true.** One `../react/` import
+inside `core/locate/` would make the directory's whole claim false while
+everything still compiled and every test still passed, because React is in the
+extension regardless. That is the kind of failure this repository has learned to
+gate rather than trust: it is how a second copy of an engine gets written.
+
 **Production crashes, joined to the files you are about to change.** With
 `DEVFLOW_WEBHOOKS=1` the MCP server accepts a relayed Sentry delivery, joins the
 issue to the source files its stack actually reaches, and shows it in
