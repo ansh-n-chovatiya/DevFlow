@@ -26,10 +26,10 @@
 │                              PHASED DELIVERY ROADMAP                                 │
 ├──────────────┬──────────────┬──────────────┬──────────────┬────────────┬─────────────┤
 │   PHASE 0    │   PHASE 1    │   PHASE 2    │   PHASE 3    │  PHASE 4   │   PHASE 5   │
-│ ARKG Schema  │Runtime-to-   │ Autonomous   │ Full-Stack   │ Production │ Ambient     │
-│ Foundation   │Source Intel  │ Bug Agent &  │ Wire &       │ & Self-    │ Intelligence│
-│ (Months 0–1) │ (Months 1–3) │ NL Navigator │ DB Lineage   │Healing CI  │ & Platform  │
-│              │              │ (Months 4–6) │ (Months 7–9) │(Mo. 10–12) │ (Year 2+)   │
+│ ARKG Schema  │Runtime-to-   │ Autonomous   │ Full-Stack   │ Production │ Framework   │
+│ Foundation   │Source Intel  │ Bug Agent &  │ Wire &       │ & CI       │ Adapters    │
+│              │              │ NL Navigator │ DB Lineage   │            │             │
+│   shipped    │   shipped    │   shipped    │   shipped    │  shipped   │ not started │
 └──────────────┴──────────────┴──────────────┴──────────────┴────────────┴─────────────┘
 ```
 
@@ -40,6 +40,10 @@
 `[x]` shipped, on `main`, covered by tests that run in `npm run verify`.
 `[~]` partially shipped — the sub-bullets say which half.
 `[ ]` not started.
+`[—]` **decided against.** The line says what was decided and names the ADR that
+carries the argument. A refusal keeps one line rather than being deleted, because
+the argument is worth more than the absence: a deleted refusal is a question the
+next reader asks again, and answers worse.
 
 A box is ticked when the gate proves it, not when a file exists. The Phase 0–2
 work first attempted in `v3.2.0` was reverted in full: `main` was reset to
@@ -50,7 +54,7 @@ Nothing below is ticked on the strength of that branch.
 
 ---
 
-## Phase 0: Accumulating Runtime Knowledge Graph Foundation (Months 0–1)
+## Phase 0: Accumulating Runtime Knowledge Graph Foundation
 **Objective:** Lay the foundational data layer that every subsequent feature is built upon. The ARKG is DevFlow's deepest competitive moat and must be designed correctly from the start.
 
 ### Work Stream 0.1: ARKG Schema Design & SQLite Implementation
@@ -78,7 +82,7 @@ Nothing below is ticked on the strength of that branch.
 
 ---
 
-## Phase 1: Core Runtime-to-Source Intelligence (Months 1–3)
+## Phase 1: Core Runtime-to-Source Intelligence
 **Objective:** Evolve DevFlow from basic element picking into a standalone, token-efficient data-lineage and render causality inspector with **zero app modifications**, while feeding all observations into the ARKG.
 
 ### Work Stream 1.1: 100% Standalone Runtime Source Mapping
@@ -128,20 +132,8 @@ Nothing below is ticked on the strength of that branch.
 > found: a store that changed and changed back between the two samples shows no
 > change, and nothing says anything about ordering *within* a step.
 - [x] **React DevTools Global Hook Reader** — `getFiberRoots` is read when the extension is installed, and the container-key scan stands whether or not it answered. Read only; installing a renderer to make the hook appear is the mistake one object over.
-- [~] **Non-Invasive State Store Interceptor:** Redux, TanStack Query and React Context are read in full; Zustand is read **only when the store is provided through a context**. **The module-level `create()` store is refused, and this is a decision rather than an omission.** It was carried as "deferred on a condition — it waits for a mechanism with a stable identity", which is not the same thing as a decision; the condition has now been examined against real React and real Zustand rather than argued from the shape of the problem, and the answer is that it cannot be met by reading fibers.
-
-  **What was actually measured.** React 19.2.8, Zustand 4.5.7 and 5.0.15, three consumers of one module-level store — one selecting `items.length`, one selecting `total`, one selecting nothing and therefore holding the whole state. Walking the consumers' hook lists:
-
-  1. The `useSyncExternalStore` hook's `queue` is `{ value, getSnapshot }`, and `getSnapshot` is **not** `api.getState` in either major version. It is the closure Zustand builds per consumer, so calling it returns that component's *selection*.
-  2. The **next** hook in the chain is the effect `useSyncExternalStore` mounts, and its `deps` array is `[api.subscribe]` — the store's own function, **identical by reference across all three consumers**. So consumers of one store *can* be grouped, which the previous sentence ("its only identity is a function reference") had wrong in a way that mattered: the reference is not merely an identity, it is a correct one, within a page.
-  3. Zustand 4 additionally leaks `api.getState` through the `use-sync-external-store` shim's `useMemo` deps. Zustand 5 does not, and 5 is the current major. A path that works on one major and silently reads nothing on the next is not a mechanism; and reaching it means calling a bare closure found in a fiber, with no method shape to recognise it by first — which is the one thing `classify` never does, because every store it reads it recognised before it called anything on it.
-
-  **Why grouping is not enough, which is the argument that decides it.** Even with every consumer of a store correctly grouped, what can be read is the union of the *selections* of whichever components happened to be mounted. That set is a fact about the route the recording visited, not about the store. Two consequences, and each is on its own disqualifying:
-
-  - **The value would be wrong, not merely partial.** A selection disappears from the union when its component unmounts, so the state differ would emit a `remove` for a key the store never touched — a fabricated state change, in the one part of the recording whose whole claim is that it computes nothing and only reports what it saw.
-  - **The label would not survive a reload.** `labelFor` falls back to the store's *shape*, its sorted top-level keys, precisely because that is stable across recordings. A union of selections is not: a recording on the cart page and a recording on the settings page yield different shapes for the same store, so a `state_keys` node keyed on it accumulates one row per recording and answers nothing. That is the shape the `v3.2.0` audit deleted.
-
-  **What would overturn this**, stated so the next attempt does not have to rediscover it: a mechanism that yields the store *object* — something with `getState` on it, recognisable by its methods before anything is called — not a per-consumer snapshot. Reading fibers does not produce one on Zustand 5. Subscribing would, and subscribing is writing to the page, which `src/injected/state.ts` refuses for the reason its header gives. So this is refused on the evidence rather than parked, and the recording continues to say the gap exists in as many words (`stateNote`). `tests/state-reader.test.ts` now carries the shape as a fixture and asserts it yields no store, so reversing this is a deliberate act with a test to update rather than a drift.
+- [~] **Non-Invasive State Store Interceptor:** Redux, TanStack Query and React Context are read in full; Zustand is read **only when the store is provided through a context**.
+  - [—] The module-level `create()` store is **refused on measured evidence, not deferred.** Reading fibers yields each consumer's *selection*, never the store object; a union of selections would fabricate a state change the moment a component unmounted, and would produce a label that does not survive a reload. `stateNote` says the gap exists, and `tests/state-reader.test.ts` carries the measured hook shape as a fixture, so reversing this is a deliberate act with a test to update rather than a drift. **ADR 0005** holds the measurement — React 19.2.8, Zustand 4.5.7 and 5.0.15, three consumers of one store — and states what would overturn it.
 - [x] **Subscription Discovery** — from `fiber.dependencies.firstContext`, React's own record of what a component consumed. Being rendered underneath a provider is not reading it, is true of nearly every component in an app, and is never counted.
 - [x] **RFC 6902 state deltas and `get_state_patch`,** moved here from Work Stream 1.5. The differ is pure and tested (`src/core/state/`); the budget question the deferral named is answered by **collapsing, never trimming** — an over-budget patch is re-cut at a shallower path so it stays applicable exactly, because a patch with operations removed no longer reconstructs the state and says nothing about it. The tool distinguishes "capture was off", "no store was recognised" and "no store moved", because those are three answers and only the last is about the application.
 
@@ -172,7 +164,7 @@ Nothing below is ticked on the strength of that branch.
 
 ---
 
-## Phase 2: Autonomous Bug Reproduction, Remediation & Natural Language Intelligence (Months 4–6)
+## Phase 2: Autonomous Bug Reproduction, Remediation & Natural Language Intelligence
 **Objective:** Closed-loop automated debugging from issue description to verified PR, plus natural language application understanding powered by the ARKG.
 
 > Every item below was ticked in `v3.2.0` and none of it survived audit. The
@@ -184,19 +176,18 @@ Nothing below is ticked on the strength of that branch.
 ### Work Stream 2.1: Deterministic Time-Travel Flow Recorder 2.0
 - [~] **Unified Event Chronicle:**
   - [x] Timestamped user events (click, input, navigate), network with request/response payloads, console output and uncaught exceptions — all attributed to the step that caused them.
-  - [~] DOM MutationObserver deltas **shipped**; periodic layout snapshots **refused, with the reason below.**
+  - [~] DOM MutationObserver deltas **shipped**; periodic layout snapshots **refused — ADR 0006.**
     - **The deltas.** A `MutationObserver` watches the whole document for the length of each step and the step carries a folded summary of what appeared, went, or was rewritten. It is a **different observation from `StepBase.domDelta`**, not a bigger one, and the two are deliberately kept apart: `domDelta` reads the *text* of *one region* — the container around the element that was touched — before and after; `domChanges` reads the *structure* of the *whole document* over the same window. A click that opens an error banner in the page header produces nothing in the first and one entry in the second; a button whose label became "Saving…" produces the reverse. Neither is derivable from the other, so neither replaced the other.
     - **The budget, which was designed before the implementation.** *Observed:* every `childList`, `attributes` and `characterData` mutation under `documentElement`, for a window that opens when the step is **written** and closes `recording.domDeltaMs` later or when the next element step is written, whichever is sooner. For a click those two moments are the same; for typing they are not, because the recorder commits a whole field as one step after `recording.inputDebounceMs` of quiet — so a typed step's window starts once the typing stopped and catches what the finished field caused rather than what each keystroke did. `domDelta` has read its region on that same schedule since it shipped, and this shares it rather than defining a second "settled". The one-window rule is unconditional; "closed by the next interaction" is not — a navigation and a synthesised note are not element steps and do not close an open window. A mutation still belongs to exactly one step; that step is the last element step before it. *Dropped before it costs anything:* DevFlow's own DOM, refused by the `devflow-` id prefix, because the recording indicator is removed and re-added around every screenshot and would otherwise open every step of every flow with a div appearing and going in `<body>`; `<style>`, `<script>`, `<link>`, `<meta>` and `<template>` — refused on the *target* of a record as well as on nodes that come and go, because a `<style>` appended once and then written through is what Vite's HMR and styled-components in development do, and it arrives as `characterData` on a node the added/removed filter never sees; whitespace-only text; and comment nodes. *Two caps, because there are two costs:* `recording.domMutationCap` (400) bounds the **work** and is enforced in the observer's own callback before each record, which then **disconnects** — so a page running a transition at sixty frames a second costs a step the cap and not a second of records; `recording.domMaxChanges` (12) bounds the **recording** and is enforced after folding, where a hundred appended rows are one entry with a count of a hundred. A single number could not do both: low enough to keep a step readable it would stop watching after a dozen records, high enough to watch a real interaction it would print four hundred lines. *What the recording says when a cap bites:* the work cap sets `StepDomChanges.capped`, which `get_step_detail` prints last so it qualifies the list above it and says in as many words that it is not a claim that nothing else changed; the recording cap sets `more`, a different fact — those were seen and did not fit. *What survives the recording cap:* structural change, then text, then attributes, and `style` last of all, first-seen order inside each rank. **The cut happens before the describing, not after it** — a group is ranked on what it already knows, and only the survivors are handed to `generateSelector`. Describing all four hundred groups and then keeping twelve built four hundred `querySelectorAll` passes and threw away three hundred and eighty-eight of them, synchronously inside the user's next click; that is the cost profile the reverted attempt was reverted for, relocated one function along, and an adversarial review of this work stream found it. Never by count: the dialog that mounted is one record and the CSS transition behind it is sixty, so any ordering by how often something changed spends the whole budget on the transition — the same trap `core/render/blame.ts` documents for wasted renders, one tree over.
     - Read through `get_step_detail`'s `dom` part, which now carries both observations and prices them as one. `core/dom/observe.ts` folds and describes, `core/dom/changes.ts` spends the budget, and `content/index.ts` owns only the lifecycle — the split `injected/render.ts` and `core/render/blame.ts` already make. `tests/dom-changes.test.ts` drives the collector with a **real** `MutationObserver` over a real jsdom document rather than hand-written record objects, because a hand-written record is a fixture of what the author believes `MutationRecord` is.
-    - **Periodic layout snapshots are not built, and this is not a partial delivery of them.** A timer that reads layout forces a synchronous reflow on every tick on every recorded page whether or not anything moved, which is the cost profile the v3.2.0 render attempt was reverted for, moved from the fiber tree to the layout tree. And a snapshot taken *between* steps belongs to no step: the schema has nowhere to put it, and giving it one means a flow-level timeline of layouts, which is a time-travel *player* and a different feature from a field on a step. What a layout snapshot taken *at* a step would answer is already answered twice — the screenshot is the layout, and `ElementRef.boundingBox` is where the interaction landed. Building it would need a mechanism that reads layout off the browser's own pass rather than forcing one (`ResizeObserver`, `IntersectionObserver`) and a schema decision about where a between-steps observation lives. Neither is started.
-  - [ ] All events carry `causedBy` references. **Deliberately not built, and this line is the decision rather than a gap.** 1.3 built the graph and derives it at read time from facts the flow already carries — the recorder's attribution of a call to a step, the text of a log line, the body of a response, the values a patch wrote. Stamping the derivation onto the events at capture would be a second copy of those facts to keep in sync, it would be absent from every recording already on somebody's disk, and it would freeze today's rules into flows that a sharpened rule should reach next month. The one thing that would justify it is something needing the chain *before* the flow reaches a reader, and after this work stream nothing does: the DOM summary added above is new evidence a future basis in `core/causal/index.ts` could read, which is an improvement to the derivation and not an argument for a stamp. Left open rather than struck out, because the day something in the extension needs a chain it cannot derive, this is the item that answers it.
+    - [—] **Periodic layout snapshots are refused, and this is not a partial delivery of the deltas.** A timer that reads layout forces a synchronous reflow on every tick of every recorded page whether or not anything moved — the cost profile the `v3.2.0` render attempt was reverted for, moved from the fiber tree to the layout tree. A snapshot taken *between* steps belongs to no step, and giving it one means a flow-level timeline of layouts, which is a time-travel player and a different feature. Taken *at* a step it is already answered twice: the screenshot is the layout, and `ElementRef.boundingBox` is where the interaction landed. **ADR 0006** names the two mechanisms building it would need, neither started.
+  - [—] All events carry `causedBy` references — **not built, and this line is the decision rather than a gap.** §1.3 built the graph and derives it at read time from facts the flow already carries, so a stamp would be a second copy to keep in sync, absent from every recording already on somebody's disk, and would freeze today's rules into flows that a sharpened rule should reach next month. **ADR 0007**, which also records the one thing that would justify a stamp — something needing the chain *before* the flow reaches a reader. Nothing does.
 - [~] **Export to Resilient E2E Tests (Interaction-to-Test Compiler):**
   - [x] 1-click export of a recorded flow to Playwright and Cypress from the flow review screen.
   - [x] Resilient selector hierarchy: aria-label → role+name → text → CSS selector (flagged as fragile).
   - [x] Network mock fixtures injected from real intercepted request/response payloads.
-  - [~] State assertions from before/after store diffs. **The observation ships; the assertion is refused, with the reason in `src/core/export/state.ts` and in the generated file itself.** An exported spec now carries what the app's stores did beside the step that did it — the store, the operations in the differ's own path order, and both of the flags that change what a patch means (`bounded`, so a path that is absent may have changed below the snapshot cut, and `collapsed`, so the operations are coarser than the ones the app made). It is written as comments, once explained per file.
-    - **Why not an assertion.** DevFlow reads a store by walking React's fiber tree from inside the page. A test runner has no handle on that. Playwright *could* run the same walk through `page.evaluate`, and that is precisely what must not be generated: a few hundred lines of React-internals code pasted into a file the developer owns, frozen at the React version current the day the flow was exported, whose failure mode is a red suite reporting a bug in the application that is not there. An assertion that can be wrong about the thing it asserts is worse than no assertion, because the response to a red test is to go and look at the app. The developer's own store *is* reachable to them, by whatever handle they choose to expose — and choosing it is an app change, which is Invariant 1's whole point.
-    - **The open question this narrows.** "Which of a patch's operations are worth asserting on" is still not answered and still cannot be answered from a fixture — so nothing here ranks them. The operations are printed in the differ's order, which is path order, because a reader scanning for a path they recognise is best served by an order they can predict, and a compiler that guessed would bury the operation they came for under one it chose. Capped at six per store, with the count of what was not printed and the name of the tool that has all of it.
+  - [~] State assertions from before/after store diffs. **The observation ships; the assertion is refused.** An exported spec carries what the app's stores did beside the step that did it — the store, the operations in the differ's own path order, and both flags that change what a patch means (`bounded`, so a path that is absent may have changed below the snapshot cut, and `collapsed`, so the operations are coarser than the ones the app made). Written as comments, capped at six per store with the count of what was not printed, once explained per file.
+    - [—] **No assertion is generated.** DevFlow reads a store by walking React's fiber tree from inside the page, and a test runner has no handle on that. Generating one means pasting a few hundred lines of React internals into a file the developer owns, frozen at the React version of the day it was exported, whose failure mode is a red suite reporting a bug in the application that is not there — worse than no assertion, because the response to a red test is to go and look at the app. The developer's own store *is* reachable to them by whatever handle they choose to expose, and choosing it is an app change, which is Invariant 1's whole point. **ADR 0008**, which also carries the open question this narrows: which of a patch's operations are worth asserting on is still unanswered from a fixture, so nothing ranks them.
 
 ### Work Stream 2.2: "Why Is This Value Here?" Provenance Engine
 > The `v3.2.0` attempt was **unreachable dead code** — a module nothing called,
@@ -245,10 +236,7 @@ Nothing below is ticked on the strength of that branch.
 - [x] **Diagnostic Causal Tracing** — `diagnose_failure`, and it **names no cause**.
   - That refusal is the design. `get_causal_chain` says what evidence links two events; a diagnosis is the temptation to go one step further and say which link is *the fault*, and nothing in a recording supports it — `attributed` is temporal containment and `followed` is ordering. So this assembles per failure: what broke, the component the step was attributed to and the file it was written in, and the causal evidence with the basis each link rests on carried through unchanged. One event reached by two paths is printed once, because two lines reads as two pieces of evidence.
   - **What it adds that no single recording can** is the last line of each entry: whether the thing that failed has failed before. "This endpoint failed twice in a hundred and forty observations" and "this endpoint fails six times in ten" send a reader to two different places, and only the accumulated graph can tell them apart. `standing` is named rather than scored — `new`, `chronic`, `unknown` — and **`unknown` is the honest default**: below ten observations the graph knows nothing, and a rate between the two bands is a rate that settles nothing. *"We have never seen this fail"* and *"we have not seen it enough to say"* are different answers, and a reader handed the second as the first goes looking for a regression that may not exist. `tests/diagnose.test.ts` holds two fixtures identical but for their observation count and asserts the two sentences differ.
-- [~] **Patch Generation & In-Memory Application** — **refused, and the reasoning is architectural rather than about effort.**
-  - DevFlow is not a model and cannot write a patch. The caller is — Claude Code, reading `diagnose_failure`, `get_source_snippet`, `get_value_provenance` and `get_causal_chain` — and everything that call needs is now in place. A "patch generator" inside this server could only be a template, and the `v3.2.0` version of this bullet was exactly that: a hardcoded fake diff in a file that did not parse.
-  - "In-memory application" has no honest form either. The application under test is served by the user's own dev server; nothing here can substitute a module into it, and a version that wrote to the working tree and called it in-memory would be editing somebody's repository from a tool call while saying it had not.
-  - So DevFlow's half of the loop is **diagnosis and verification**, and both halves ship. The patch belongs to whoever can write one.
+- [—] **Patch Generation & In-Memory Application** — **refused, and the reasoning is architectural rather than about effort.** DevFlow is not a model and cannot write a patch; the caller is, reading `diagnose_failure`, `get_source_snippet`, `get_value_provenance` and `get_causal_chain`, all of which ship. A generator inside this server could only be a template, and `v3.2.0`'s was exactly that — a hardcoded fake diff in a file that did not parse. "In-memory application" has no honest form either: the app under test is served by the user's own dev server, and a version that wrote to the working tree while calling itself in-memory would be editing somebody's repository from a tool call and saying it had not. DevFlow's half of the loop is diagnosis and verification, and both ship. **ADR 0009.**
 - [x] **Replay Verification & Test Runner** — the comparison `replay_flow` makes when the recording itself carried failures: it names the steps that failed when it was recorded, and says whether this run reproduced them. **The claim is deliberately weak**, and the reply says so: the replay answers with the responses the recording captured, so a fault living in the server is mocked out of the run by construction, and what a pass proves is that the journey through the interface completes.
 
 ### Work Stream 2.5: Natural Language Application Navigator
@@ -265,7 +253,7 @@ Nothing below is ticked on the strength of that branch.
 
 ---
 
-## Phase 3: Full-Stack Wire & Database Lineage (Months 7–9)
+## Phase 3: Full-Stack Wire & Database Lineage
 **Objective:** Connect frontend user interactions to backend endpoints, microservices, and database queries. Introduce the Living Architecture Map and Temporal Diff.
 
 > **Where this phase stands: 3.1 (through Tier 2), 3.2, 3.3 and 3.4 are shipped;
@@ -427,7 +415,8 @@ Nothing below is ticked on the strength of that branch.
 - [~] **Tier Model Enforcement:**
   - [x] Tier 1 (default, zero backend effort): FE-only correlation, response body, error detection, latency — **this is what ships, and it has standalone value that does not depend on Tier 2 ever arriving.** That is the test the header had to pass before it was worth changing anybody's traffic for: the id DevFlow puts on the request is the id in the backend's own logs, so a person or a model can go and grep for it. A header nobody can read back is a change to somebody's traffic in exchange for nothing, which is why the id is *rendered* — on failed calls in the walkthrough, in `get_flow_errors`, in `get_step_detail` and in the flow review — and not merely stored.
   - [x] Tier 2 (OTel SDK, one package): full FE → BE → service span correlation — **shipped**, and "one package" survives contact: the user adds an OTel SDK to their own backend if they have not got one, sets two environment variables, and starts DevFlow's server with `DEVFLOW_OTEL=1`. `get_backend_trace` is the reader, and it keeps three situations apart that have three different fixes — a call that was never traced, a traced call whose spans have not arrived, and a joined trace. The second is the one worth the extra branch: telling somebody "no backend data" when the truth is "your exporter has not sent it yet" sends them to change a setting that was already correct.
-  - [~] Tier 3 (enterprise): automatic SQL query capture (never prioritized over Tiers 1 & 2) — **not built, and what ships is not it.** A span carrying `db.query.text` is rendered and stored, so the SQL a user's *own* tracer chose to record does reach the answer. That is Tier 2 data that happens to describe a query. Tier 3 is DevFlow instrumenting the database itself, which nothing here does and nothing here is a step towards. The distinction matters because the query text is the user's, parameterised or not as their instrumentation left it, and it is never rewritten — showing somebody a tidied query their database never saw would be the wrong kind of helpful.
+    - [x] **This is language-agnostic, and Phase 5 used to carry it as unbuilt work.** The receiver takes OTLP/JSON; nothing in `mcp-server/otel.js` is Node-specific. A Python FastAPI or Go service exporting OTLP to the same endpoint joins the graph today with no adapter, because a span is a span. It was listed under §5.4 as "Server-Side Framework Support" and moved here on discovering it already worked — what is actually missing is a paragraph in `mcp-server/README.md` saying so, which is a documentation gap rather than a work stream.
+  - [—] Tier 3 (enterprise): automatic SQL query capture — **refused, and what ships is not it.** A span carrying `db.query.text` is rendered and stored, so the SQL a user's *own* tracer chose to record does reach the answer; that is Tier 2 data that happens to describe a query. Tier 3 is DevFlow instrumenting the database itself, which is a dependency installed into somebody's infrastructure and therefore the opposite of Invariant 1. The query text is never rewritten — showing somebody a tidied query their database never saw would be the wrong kind of helpful, and indistinguishable in the answer from one that really ran. **ADR 0021.**
 
 ### Work Stream 3.2: End-to-End Data Lineage Engine
 - [x] **Wire-to-Database Inspector:** — **shipped as a fifth layer on `get_value_provenance`, and the decision not to build a third tool is the work stream.** `get_value_provenance` already answered where a value came from across four observations of one recording; `get_backend_trace` already answered what the server did under a recorded request. The gap was the join, and a third tool over the same question is the mistake this repository has made once already with its two markdown renderers — `src/core/mcp-bundle.ts` exists because of it, and 3.4 was written to avoid it. So the backend became `traceValue`'s fifth layer, ordered *first*, because a controller and a query are upstream of the response body and the module's ordering has always been the direction a value travels.
@@ -451,7 +440,7 @@ Nothing below is ticked on the strength of that branch.
   **The persistent channel was costed and refused.** `.ctx/contexts/phase-3-remaining.ctx.md` recorded the blocker correctly: every path into the MCP server is the extension *pushing* over loopback, and there is no channel back to an open tab. That is only a cost if the tool must **pull**. Reversing the direction — the page agent takes one bounded reading, the extension pushes it over the channel that already exists beside `POST /arkg/ingest-component` — needs no socket, no persistent connection and no MV3 service worker kept awake for a feature that may never be called. What a held-open socket would buy is nothing a model can use: the answer would still be one snapshot taken at the moment of the call. What it would cost is permanent, on every page.
 
   - [x] Which components are currently mounted, and which React contexts each reads — one bounded breadth-first walk in `src/injected/architecture.ts`, under the recorder's own `recording.renderNodeCap`, installing nothing.
-  - [~] **Active API calls are not in the reading, and this is a refusal rather than an omission.** A mounted tree is readable in one pass because React keeps it; an in-flight request leaves no trace on that tree, so recording one means ambient bookkeeping on every page the agent is injected into — which is every page — for a feature nobody may have switched on. That is precisely the trade `v3.2.0` made with its commit hook and was reverted for. The endpoints an application calls are already in `get_app_architecture`, accumulated and labelled as accumulated, and the answer points there.
+  - [—] **Active API calls are not in the reading, and this is a refusal rather than an omission.** A mounted tree is readable in one pass because React keeps it; an in-flight request leaves no trace on that tree, so recording one means ambient bookkeeping on every page the agent is injected into — which is every page — for a feature nobody may have switched on. That is the trade `v3.2.0` made with its commit hook and was reverted for. The endpoints an application calls are already in `get_app_architecture`, accumulated and labelled as accumulated, and the answer points there. **ADR 0022.**
   - [x] The walk installs nothing, patches nothing and subscribes to nothing. It takes **one** reading, not two, so it does not even need `render.ts`'s double-buffer pairing.
 - [x] **Structure, never values.** — **a shape decision, not a budget.** The reading carries component names, their source paths where the page knows them, and which contexts they read. No prop, no hook state, no store contents, and there is nowhere in the wire shape for one to sit — not capped, not redacted, absent — which is the only version of that promise a later caller cannot loosen by passing a bigger budget. The reason is that a recording is values and somebody pressed Start and chose in the send dialog what left the browser, while a reading is taken while somebody reads code, through a path with no dialog in front of it.
 - [x] **Interactive Graph Queries:** — **both questions are answered.**
@@ -489,22 +478,18 @@ Nothing below is ticked on the strength of that branch.
   - `compare_flows_across_deploys(flow, sha?, otherSha?)` — the signature above, for the reason above.
 
 ### Work Stream 3.5: Framework-Agnostic Adapters
-**Deferred to Phase 5 §5.4, as three work streams rather than one. This line is the decision, not a gap** — see `.ctx/decisions/0017-framework-adapters-are-deferred-as-three.md`.
+**Deferred to Phase 5, as three work streams rather than one. This line is the decision, not a gap — ADR 0017.**
 
-Vue 3, Svelte 5 and React Server Components do not share React's fiber tree, and **nothing in `src/core/react/` transfers**: that directory is fifteen modules — `fiber.ts`, `owner.ts`, `table.ts`, `chains.ts`, `classify.ts`, `needle.ts`, `stamp.ts`, `search.ts` and the source-map engine — and every entry point into it is fiber-shaped. Each adapter is therefore a Phase-1-sized body of work with its own runtime to measure, and this phase's preamble already said the consequence: *starting one and leaving two would be worse than starting none*, because two of the three would then read as promised.
+Vue 3, Svelte 5 and React Server Components do not share React's fiber tree, and **nothing in `src/core/react/` transfers**: fifteen modules whose every entry point is fiber-shaped. Each adapter is a Phase-1-sized body of work with its own runtime to measure, and this phase's preamble already said the consequence — *starting one and leaving two would be worse than starting none*. Phase 4 depended on none of them and shipped without them.
 
-Three further things say the same, and they were written before this decision rather than to justify it. "What NOT to Build" flags Vue and Svelte before Phase 3 with *"each adapter is a major investment; deep React beats shallow multi-framework"*. Phase 5 §5.4 already carries the same three frameworks at deeper scope, so deferring is a move to where they were always going rather than an invention. And Phase 4 depends on none of them — it is production telemetry, IDE integration, git forensics and CI, all of which are framework-agnostic already — so nothing is blocked by this.
+**The RSC bullet is not the same kind of work as the other two.** A server component never mounts in the browser: there is no runtime tree to adapt, only a wire protocol to read. That puts it closer to `core/otel`, which now exists, than to `core/react`, and makes it the one of the three with a route that does not start from scratch.
 
-**The RSC bullet is not the same kind of work as the other two, and should not be planned beside them.** A server component never mounts in the browser: there is no runtime tree to adapt, only a wire protocol to read. That makes it closer to `core/otel` — which this project has now built — than to `core/react`, and it is the one of the three with a plausible route that does not start from scratch. It is still not started here, because starting it would be starting one of three.
-
-- [ ] **Vue 3 / Nuxt Adapter:** Reactivity Proxy and template AST mapper. → Phase 5 §5.4.
-- [ ] **Svelte 5 / SvelteKit Adapter:** Runes & Signals inspector. → Phase 5 §5.4.
-- [ ] **Next.js App Router & Server Components:** Trace across RSC wire protocol and Client Components. → Phase 5 §5.4, and to be scoped against `core/otel` rather than `core/react`.
+The three are listed in Phase 5, once. Restating them here would be the same list in two places, disagreeing the first time one is edited.
 
 ---
 
-## Phase 4: Production Telemetry & Self-Healing CI/CD (Months 10–12)
-**Objective:** Continuous production error reproduction, regression detection, autonomous remediation, and CI/CD integration.
+## Phase 4: Production Telemetry & CI Regression Watcher
+**Objective:** Production crash ingestion, git forensics, CI regression detection and accessibility auditing. Autonomous remediation was refused rather than built — see §4.5.
 
 **What Phase 4 closed as, and why the shape is not the one this section was written in.** Four work streams were built in the order this project has learnt to use — cheapest join onto existing data first, new mechanism later — and three boxes close as arguments rather than as code, each with an ADR behind it. Built: **4.3** git forensics, a join onto the `changed_in` edges and per-node `git_sha` that Phase 3 left; **4.6** the accessibility autopilot, a bounded page-side read in 3.3's own pattern; **4.4** the regression watcher, the first thing in this product that runs outside a browser; **4.1a** the crash receiver, the first thing that ingests data DevFlow did not observe itself. Closed in writing: **4.1b** (ADR 0018), **4.2**'s editor half (ADR 0019), **4.5** (ADR 0020).
 
@@ -520,13 +505,13 @@ Three further things say the same, and they were written before this decision ra
   - **"Failure rates for all affected components" is refused as worded.** A stack frame names a file and a line, not a component, and in a minified production build it names a chunk. A crash is joined to a **source file** through `matchSourceFile` — exactly after normalisation, or by a suffix exactly one known file answers, never by a guess — so a ten-frame stack may draw one edge or none, and none is a real answer meaning the graph has never watched code run in any file that crash touched.
   - **A production count is never added to an observation count.** `frequency` in the ARKG counts *recordings DevFlow made*; `event_count` counts *events a provider saw in production*. They live in different tables and every surface that prints both says which is which, because merging them would silently change what every existing figure in the graph means — `getAnomalies` would compute a baseline over two units and nothing would notice.
   - **A crash payload is somebody else's user's data, and almost none of it is kept.** The exception **type** but never its interpolated `value`; the culprit, level, count and link; a frame's **filename and line and nothing else**. No `user`, no `request`, no headers, no cookies, no body, no `contexts`, no `breadcrumbs`, no `extra`, no `vars`, no `context_line`. The payload is never handed on as it arrived — every field is read out by key, the way `POST /arkg/ingest-component` reads a pick — and `tests/telemetry.test.ts` asserts the absence of each of those rather than trusting a reading of the parser.
-- [ ] **Session Replay Ingestion (PostHog / LogRocket / FullStory)** — **deferred to Phase 5 as the Production Time Capsule, with the argument in ADR 0018.** This is not a webhook parser with more fields: it is `git checkout` at an incident SHA, a Docker sandbox, seeded storage and HAR-injected network — VISION §7.3 in full, which VISION §9 already scopes as **Long-Term**. Nothing in the rest of Phase 4 depends on it.
+- [—] **Session Replay Ingestion (PostHog / LogRocket / FullStory)** — **deferred to Phase 5 as the Production Time Capsule, with the argument in ADR 0018.** This is not a webhook parser with more fields: it is `git checkout` at an incident SHA, a Docker sandbox, seeded storage and HAR-injected network — VISION §7.3 in full, which VISION §9 already scopes as **Long-Term**. Nothing in the rest of Phase 4 depends on it.
 
 ### Work Stream 4.2: Source → Browser Live Link (IDE Integration)
 
 This is two things wearing one heading, and costing them apart found that one was already built and the other needs two mechanisms this product has never had. See **ADR 0019**.
 
-- [ ] **VS Code Extension** — **deferred, with the cost named.** It needs a fourth npm package, published, plus the one direction the MCP server still cannot address: a channel from the server *to* an open tab. `@devflow/compiler-plugin` is the standing precedent for what a fourth package costs — it is `private: true` and unpublished precisely because it has never been run against a real application's build, and an editor extension is a larger version of the same bet.
+- [—] **VS Code Extension** — **deferred, with the cost named.** It needs a fourth npm package, published, plus the one direction the MCP server still cannot address: a channel from the server *to* an open tab. `@devflow/compiler-plugin` is the standing precedent for what a fourth package costs — it is `private: true` and unpublished precisely because it has never been run against a real application's build, and an editor extension is a larger version of the same bet.
 - [x] **Live Blast-Radius Preview** — **shipped in §4.3 as `get_blast_radius`, and the discovery is the point.** `getBlastRadius` had existed in `mcp-server/arkg.js` since Phase 0, with tests beside it, and was reachable from **nothing**: no MCP tool, no UI, no caller in `src/`. A query no surface prints does not exist from outside the process, so half of this work stream had been built and was invisible.
   - **The claim is made at the size it is true at.** `maps_to` points from a component to **the file it was written in**, so the answer is *components observed to have been written in this file*, plus one hop of what each was seen calling and reading — not the files that import it, because an import is a static fact and nothing in a runtime graph observes one.
   - **This line's own example does not survive that.** *"This change to `useCartStore.ts:42` currently affects 7 rendered components"* describes the wider claim: a store's own file usually has no components written in it at all, and its subscribers are reached through a `subscribes_to` edge rather than through the file. The runtime graph cannot answer the sentence as written, and the tool says what it can answer instead.
@@ -556,10 +541,7 @@ This is two things wearing one heading, and costing them apart found that one wa
   - The action reads the check's exit code directly and never through a pipe, for the reason this repository's own gate does.
 
 ### Work Stream 4.5: Self-Healing Ephemeral Environments
-- [ ] **Automated CI/CD Fix Bot** — **refused, holding ADR 0009, and recorded in ADR 0020.** This is §2.4's refusal restated as a workflow rather than as a tool: DevFlow is not a model, the caller is, and a version that wrote to a working tree from a CI job would be editing somebody's repository while calling itself a check. Phase 4 strengthened the case rather than weakening it, in two places it did not set out to:
-  - **"Isolates the root cause" has nothing behind it.** §4.3's forensics tool names no cause on any answer, because comparing where commits sit in a history against one observation date cannot tell a coincidence from a culprit. A bot that acted on that shortlist would be acting on a ranking its own tool refuses to call a cause.
-  - **"Verifies it in sandbox" would verify against less than found the bug.** §4.4 measured what a CI replay can observe — the journey and, in live mode, the wire. Re-render counts and state come from the extension, whose service worker does not register in Playwright's headless Chromium. So the verification available in CI is narrower than the observation a recording makes, and a patch passing it would prove less than the recording that motivated it.
-
+- [—] **Automated CI/CD Fix Bot** — **refused, holding ADR 0009, and recorded in ADR 0020.** This is §2.4's refusal restated as a workflow rather than as a tool: DevFlow is not a model, the caller is, and a version that wrote to a working tree from a CI job would be editing somebody's repository while calling itself a check. Phase 4 strengthened the case in two places it did not set out to — §4.3's forensics names no cause on any answer, so "isolates the root cause" has nothing behind it, and §4.4 measured that a CI replay observes *less* than the recording that found the bug, so "verifies it in sandbox" would verify against the narrower evidence. Both are in ADR 0020.
   The two ends ship and the middle does not: `diagnose_failure` for the diagnosis, `replay_flow` and `devflow-mcp regression` for the verification. The patch belongs to whoever can write one.
 
 ### Work Stream 4.6: Accessibility Autopilot
@@ -575,54 +557,107 @@ This is two things wearing one heading, and costing them apart found that one wa
 
 ---
 
-## Phase 5: Ambient Intelligence & Platform (Year 2+)
-**Objective:** Evolve DevFlow from a per-developer tool into an ambient intelligence layer shared across the entire team, with multi-framework support and moonshot capabilities.
+## Phase 5: Framework Adapters
+**Objective:** Make DevFlow work at all on the runtimes it currently cannot read.
 
-### Work Stream 5.1: Multi-Developer Session Intelligence
-- [ ] **Team ARKG:**
-  - Merge ARKG data across developers on the same team (opt-in, local network sync or cloud)
-  - Detect when two developers are debugging the same broken component simultaneously
-  - Surface shared institutional knowledge: *"Alice found the root cause of this 20 minutes ago"*
-- [ ] **Shared Flow Library:**
-  - "Known broken flows" become team-wide knowledge
-  - "Explained flows" (annotated by senior engineers) become onboarding material
+This phase used to be called *Ambient Intelligence & Platform* and carried four
+work streams. Three were removed rather than deferred, because each was answering
+a question this product's data cannot answer or had already answered elsewhere;
+the arguments are ADRs 0023, 0024 and 0025 and are summarised at the foot of this
+section. What survives is the one item that answers a complaint nothing else in
+the roadmap touches: on a Vue or Svelte application DevFlow does not degrade, it
+does nothing — the picker finds no component and the locator has no tree to walk.
 
-### Work Stream 5.2: Counterfactual Replay Engine (Moonshot)
-- [ ] **State Branching Replay:**
-  - Fork the recorded state at any step, inject a different event, and continue replaying in a sandbox
-  - Practical implementation: re-seed a headless Playwright session with the logical state snapshot at the fork point
-  - Answers: *"What would have happened if the user had clicked 'Pay Now' instead of 'Save for Later' at step 7?"*
+### Work Stream 5.1: Expanded Framework Support
+Deferred here from §3.5 by ADR 0017, **as three work streams rather than one.**
+Each is Phase-1-sized: `src/core/react/` is fifteen fiber-shaped modules and none
+of it transfers, so each adapter needs its own runtime measured rather than
+reasoned about. Starting one and leaving two would be worse than starting none.
 
-### Work Stream 5.3: Prop Drilling Eliminator
-- [ ] **Runtime-Observed Refactoring:**
-  - Identify prop-drilled chains from runtime observation (not just static analysis)
-  - Propose concrete refactors: *"Move `userId` to UserContext — it's prop-drilled through 6 layers. Here are the 8 affected files."*
-  - Auto-generate the refactoring code change with live blast-radius analysis
+- [ ] **Vue 3 / Nuxt:** Reactivity Proxy inspector and template AST mapper.
+- [ ] **Svelte 5 / SvelteKit:** Runes and Signals state inspector.
+- [ ] **Next.js App Router & React Server Components:** the RSC wire protocol. The
+  cheapest of the three and the only one with a route that does not start from
+  scratch, because a server component never mounts in the browser — there is no
+  runtime tree to adapt, only a protocol to read, which makes it `core/otel`'s
+  kind of work rather than `core/react`'s.
 
-### Work Stream 5.4: Expanded Framework Support
-- [ ] **Vue 3 Deep Integration:** Full Reactivity Proxy inspector, template AST mapper, devtools hook
-- [ ] **Svelte 5 Deep Integration:** Full Runes & Signals state inspector
-- [ ] **Angular Support:** Component tree inspector via Angular DevTools hook
-- [ ] **Server-Side Framework Support:** Node.js, Python FastAPI, Go Gin via OTel (no browser instrumentation needed)
+Angular is **not** a fourth adapter, and was removed rather than left listed.
+ADR 0017's rule is that these are taken together or not at all; adding a fourth
+raises the price of the only version of this work that may be started. Angular
+shares neither React's fiber tree nor Vue's and Svelte's signal model, so it is a
+fourth runtime to measure rather than a reuse of any of the first three, and
+nobody has asked for it.
+
+Server-side framework support — Node, Python, Go — is **not** here, because it
+already works: §3.1's receiver takes OTLP/JSON from any exporter in any language.
+It was listed in this phase until somebody checked.
+
+### Removed from this phase
+
+- [—] **Multi-Developer Session Intelligence** (Team ARKG, shared flow library) —
+  **refused. ADR 0023.** Duplicated debugging is a real cost, but the ARKG holds
+  observations and has never held a conclusion. Merging ten developers' graphs
+  yields aggregate statistics about which components are seen most, not *"Alice
+  found the root cause 20 minutes ago"*, and no amount of merging turns one into
+  the other. Delivering that sentence needs people to write findings down, which
+  is a wiki with a different data model — and the payload would be the most
+  sensitive thing the system produces, recordings taken against developers' own
+  environments, which today never leave the machine that made them.
+- [—] **Counterfactual Replay Engine** — **refused. ADR 0024.** The question is
+  usually answerable by recording the other branch, which yields a complete flow
+  rather than a simulated one. Where the branch point genuinely cannot be reached
+  again, the proposed mechanism fails: DevFlow's state snapshot is capped at depth
+  6, 40 keys, 20 array entries and 200-character strings across at most 8 stores.
+  Those caps are what make reading state cheap enough to do on every interaction.
+  What they produce is a summary, and an application cannot be restored from a
+  summary — while a run restored from a partial one would look, in the report,
+  exactly like the real thing.
+- [—] **Prop Drilling Eliminator** — **refused. ADR 0025.** Prop drilling is a
+  syntactic property of the source; lint rules and codemods find it today, in the
+  editor. Runtime observation adds only that the chain really mounts and how
+  often, and DevFlow does not have even that cheaply: `memoizedProps` is read for
+  reference identity in render blame, never by value. The half that would actually
+  save work — generating the refactor — is ADR 0009, now refused three times.
 
 ---
 
 ## Production-Grade Non-Functional Requirements (NFRs)
 
+This table used to carry eight rows. Four were performance numbers nobody ever
+measured, and one was false: *"multi-tab recording isolation via Web Worker
+buffers"* — there is no Web Worker anywhere in this extension. What
+`src/features/react/providers/worker.ts` names is the MV3 **service** worker, and
+what it isolates is bundle fetching, not tabs. A benchmark table with unmeasured
+numbers in it is worse than no table, because the three real rows below stop being
+readable as claims anybody checked.
+
+A sixth row survived but had to be corrected, and it is the one worth naming:
+*"zero PII leakage"* was not true and could not be. DevFlow redacts request headers,
+password-field values and credential-bearing URL parameters — `src/core/redact/`
+is specific about which — but a response body is captured as it arrived, and an
+email address inside one is stored like any other byte. What is actually true is
+weaker and more useful: nothing leaves the browser until somebody presses Send,
+the dialog says what is about to go, and it goes to a server on loopback.
+
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     PRODUCTION-GRADE BENCHMARKS                             │
-├─────────────────────┬───────────────────────────────────────────────────────┤
-│ Performance Impact  │ < 2% CPU overhead, < 15MB heap usage during recording │
-│ Latency             │ < 50ms element inspection & AST resolution time       │
-│ ARKG Write Latency  │ < 5ms per observation write to SQLite ARKG            │
-│ ARKG Query Latency  │ < 100ms for any ARKG graph query                      │
-│ Privacy & Security  │ Zero PII leakage; configurable client-side masking    │
+┌─────────────────────┬───────────────────────────────────────────────────────┐
+│ Privacy             │ Local by default; credentials redacted; send dialog   │
 │ Reliability         │ Graceful fallback when source maps are missing/broken │
-│ Concurrency         │ Multi-tab recording isolation via Web Worker buffers  │
 │ ARKG Retention      │ Configurable; default 90 days of observations         │
 └─────────────────────┴───────────────────────────────────────────────────────┘
 ```
+
+Each of those three is enforced by something that runs: `src/core/redact/` and the
+send dialog for the first, the two `BundleProvider` implementations and the
+locator's four failure states for the second, and `pruneOldObservations` with
+`DEVFLOW_ARKG_RETENTION_DAYS` for the third.
+
+**What is not claimed here is the recording overhead**, and it is the number a
+reader most wants. Pieces of it have been measured where a decision turned on
+them — the accessibility walk at 4.9ms median over 2107 elements, which is why
+`recording.a11y` ships off — but nothing has measured the whole recorder against a
+real application, so no figure is offered. Putting one here would be inventing it.
 
 ---
 
@@ -634,4 +669,6 @@ This is two things wearing one heading, and costing them apart found that one wa
 | ❌ Custom DB agents (Tier 3) as a priority | OTel is the right answer. Custom agents violate Invariant 1. |
 | ❌ Generic AI refactoring | Cursor/Claude Code own this. Only do refactoring where runtime data creates unique advantage. |
 | ❌ LLM fine-tuning | Better MCP tools + ARKG context beats fine-tuning at current scale. |
-| ⚠️ Vue/Svelte before Phase 3 | Each adapter is a major investment. Deep React beats shallow multi-framework. |
+| ⚠️ One framework adapter at a time | Each is a major investment. Deep React beat shallow multi-framework through Phase 4; Phase 5 takes all three or none — ADR 0017. |
+| ❌ Team sync / shared graph | The graph holds observations, not conclusions — ADR 0023. |
+| ❌ Counterfactual replay | The state snapshot is a summary by design and cannot re-seed a run — ADR 0024. |
