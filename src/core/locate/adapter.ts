@@ -75,8 +75,29 @@ export type Framework = 'react' | 'vue' | 'svelte' | 'rsc';
  *   `not-hydrated`       server-rendered markup that a client runtime has not
  *                        attached to yet. Unlike the other two this one is
  *                        temporary, which is why it is told apart from them.
+ *
+ * Two more arrived from Wave 2, because building the adapters found cases the
+ * three above could only answer by lying:
+ *
+ *   `not-rendered-here`  this framework did not render this element. In a
+ *                        development build an element with no metadata is
+ *                        simply not this framework's, and `null` says so. In
+ *                        production that escape closes: a `<div>` no component
+ *                        ever touched is byte-identical to one a component
+ *                        rendered, and `stripped-by-build` would claim the
+ *                        framework rendered it and lost the evidence.
+ *   `search-exhausted`   the walk ran and hit its budget. Vue production has no
+ *                        element-to-instance link and searches the vnode tree
+ *                        for one; giving up after 20,000 nodes is a different
+ *                        fact from there being nothing to find, and the fix is
+ *                        a bigger budget rather than a different build.
  */
-export type AbsentReason = 'stripped-by-build' | 'server-rendered' | 'not-hydrated';
+export type AbsentReason =
+  | 'stripped-by-build'
+  | 'server-rendered'
+  | 'not-hydrated'
+  | 'not-rendered-here'
+  | 'search-exhausted';
 
 /**
  * One component, as much as its runtime is willing to say about it.
@@ -90,8 +111,33 @@ export type Resolution =
       name: string;
       /** As the runtime recorded it — normalisation is the caller's job. */
       source: string;
-      line: Pos1;
+      /**
+       * Absent when the runtime recorded a file and no position, which is not
+       * hypothetical: Vue attaches `__file` and nothing else — `__source` was
+       * null on every component in every build measured, and `__hmrId` is an
+       * opaque hash.
+       *
+       * This was required until Wave 2, and the cost of that was a component
+       * resolving to line 1 — a number no runtime had said, indistinguishable
+       * in the output from one it had. Optional is the honest shape: an editor
+       * opens a file at the top when given no line, and now does so because the
+       * line is missing rather than because it was invented.
+       */
+      line?: Pos1;
       column?: Pos1;
+      /**
+       * Whether `source` is where the component was *defined* or where it was
+       * *used*. Only ever set when the runtime made the difference knowable.
+       *
+       * RSC forces this: `_debugInfo.stack[0]` is the call site, so a server
+       * component's reachable frame names the parent's file and line, and the
+       * declaration is only on a websocket `src/injected/` may not subscribe
+       * to. Reporting a call site as a declaration would be wrong in exactly
+       * the way `ComponentSource.via` exists to prevent, and the distinction is
+       * one `core/react/attribution.ts` already carries as `stepOwner` against
+       * `stepEnclosing`.
+       */
+      at?: 'declaration' | 'call-site';
     }
   | {
       kind: 'searchable';
@@ -116,6 +162,17 @@ export interface ResolvedChain {
   chain: Resolution[];
   /** The walk hit its cap, so `chain[0]` is not the root. */
   truncated?: boolean;
+  /**
+   * What the walk learned about the build, when `detect()` could not know.
+   *
+   * Svelte is why this is here. `window.__svelte` is byte-identical in
+   * development and production, there is no devtools hook, and the only real
+   * signal — `__svelte_meta` — is per-element, which `detect()` is forbidden to
+   * go looking for because it must stay cheap enough to run on every page. So
+   * the build is a thing the first element walk discovers, not a property of
+   * the page that can be read up front.
+   */
+  build?: 'development' | 'production' | 'unknown';
 }
 
 /** What a page said about the runtime when asked, before any element was picked. */

@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+**Three framework adapters, built against measured runtimes.** Vue 3 / Nuxt
+(`src/core/vue/`, `src/injected/vue.ts`), Svelte 5 / SvelteKit
+(`src/core/svelte/`, `src/injected/svelte.ts`) and Next.js App Router / RSC
+(`src/core/rsc/`, `mcp-server/rsc.js`), 229 tests between them. Taken together
+rather than one at a time, which is ADR 0017's rule.
+
+**They are not wired into the recorder yet, and the roadmap boxes say `[~]`
+rather than `[x]` for that reason.** A recording still reads React and only
+React. What is missing is one chain, not three gaps: an adapter registry in the
+page agent, additive `vue?`/`svelte?`/`rsc?` keys on the persisted flow, and
+then the MCP join that depends on them. `ROADMAP_AND_PHASES.md` §5.1 says so in
+those words. Ticking a box for code that exists and does not run is the exact
+defect the `v3.2.0` audit found.
+
+**What each one can honestly do differs by build, and the adapters say which.**
+Vue reads `__vueParentComponent` in development and falls back in production to
+a walk down from `__vue_app__` — following `suspense.activeBranch`, without
+which it reaches nothing on Nuxt. Svelte reads `__svelte_meta`, which carries
+file, line and column and is richer than React's own `_debugSource`; in
+production it reports *absent* and names `build.sourcemap`, because SvelteKit
+ships no source maps by default and a one-line fix in the user's config beats a
+confidently wrong file. RSC reads `_debugInfo` in development and reports
+*absent* for a production server component, which leaves no identity anywhere.
+
+**Nothing installs, patches or subscribes.** Vue's and Svelte's reactivity make
+subscribing look cheap; it is the trade `v3.2.0` made and was reverted for. The
+Vue adapter does not so much as read `__VUE_DEVTOOLS_GLOBAL_HOOK__`.
+
+**No new MCP tool.** All 27 already ask the questions these answer.
+
 **What a component is when it is not a fiber.** `src/core/locate/adapter.ts` is
 the shape React, Vue, Svelte and React Server Components all agree on, written
 after the three runtimes were measured rather than before. A component resolves

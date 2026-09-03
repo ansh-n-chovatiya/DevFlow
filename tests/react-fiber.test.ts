@@ -9,10 +9,10 @@ import {
   getFiber,
   getFirstDOMNode,
   hasReactRoot,
-  interactionTarget,
   unwrapLazy,
   type Fiber,
 } from '../src/core/react/fiber.js';
+import { interactionTarget } from '../src/core/dom/walk.js';
 import { MAX_COMPONENT_CHAIN } from '../src/shared/constants.js';
 
 /** A fiber as React would leave it: a type, and a parent link. */

@@ -124,7 +124,15 @@ describe('the published MCP server', () => {
      * thread to pull. Every other missing file here degrades into silence; this
      * one degrades into a wrong answer.
      *
-     * `regression.js` and `regression-cli.js` are the seventh and eighth, and
+     * `rsc.js` is the seventh and shares `otel.js`'s failure mode with one extra
+     * turn of the screw. It is reached through a guarded dynamic import, is
+     * gated on `DEVFLOW_RSC`, *and* answers only for Next.js projects — so
+     * omitting it is indistinguishable from the switch being off, from the
+     * feature not applying, and from the user's app simply not being Next.
+     * Three innocent explanations for one missing file is more cover than any
+     * other entry here gets.
+     *
+     * `regression.js` and `regression-cli.js` are the eighth and ninth, and
      * they fail the way `install.js` does rather than the way `arkg.js` does:
      * they are reached only from `devflow-mcp regression`, so a publish without
      * them passes every test that runs the server and throws
@@ -139,6 +147,7 @@ describe('the published MCP server', () => {
       'replay.js',
       'git.js',
       'otel.js',
+      'rsc.js',
       'README.md',
       'regression.js',
       'regression-cli.js',

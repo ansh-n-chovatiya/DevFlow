@@ -948,11 +948,11 @@ import {
   type ComponentFn,
   collectChain,
   hasReactRoot,
-  interactionTarget,
   findNearestComponentFiber,
   getComponentFn,
   getDisplayName,
 } from '../core/react/fiber.js';
+import { interactionTarget } from '../core/dom/walk.js';
 import { componentId, nameOnlyId } from '../core/locate/id.js';
 import { buildNeedle } from '../core/locate/needle.js';
 import { readStamp } from '../core/react/stamp.js';
