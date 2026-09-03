@@ -43,6 +43,7 @@ import { deleteFlow, renameFlow } from '../../features/flows/store.js';
 import { sendToWorker } from '../../shared/messages.js';
 import type { ConsoleEntry, NetworkCall, Step } from '../../shared/types.js';
 import { resultCard } from '../components/result-card.js';
+import { hasCascade, openCascade } from './cascade.js';
 import { hydrateIcons, icon } from '../icons.js';
 import { showToast } from '../toast.js';
 import type { App, UndoEntry } from './app.js';
@@ -982,6 +983,42 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
     }
 
     find(node, '[data-action="delete"]').addEventListener('click', () => deleteStep(card.index));
+
+    /*
+     * What this interaction set off — Work Stream 3.3.
+     *
+     * Removed rather than disabled on a step where nothing observable happened.
+     * A click on a link that navigated, with no store, no request and no
+     * re-render seen, is an ordinary step and a very common one, and a greyed
+     * button on thirty of them reads as a feature that is broken.
+     *
+     * The whole flow goes in, not this step, because `core/cascade` reads the
+     * causal graph, which is derived across the recording: a response that
+     * arrived during the *next* step is still this step's effect. Everything
+     * inside is a read.
+     */
+    const cascade = find(node, '[data-action="cascade"]');
+    if (hasCascade(step)) {
+      cascade.addEventListener('click', () => {
+        const flow = app.state.flow;
+        if (!flow) return;
+        openCascade(
+          {
+            steps: flow.steps,
+            stores: flow.state?.stores ?? [],
+            // Component id → the name a person reads. The cascade falls back to
+            // the id when a component is not in the table, which is what a
+            // recording made with source resolution switched off looks like.
+            componentNames: Object.fromEntries(
+              Object.entries(flow.react?.components ?? {}).map(([id, source]) => [id, source.name]),
+            ),
+          },
+          card.number,
+        );
+      });
+    } else {
+      cascade.remove();
+    }
 
     // ── Selectors ──────────────────────────────────────────────────────
     const selectors = find(node, '.detail--selectors');

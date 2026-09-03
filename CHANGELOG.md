@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+**"Show me everything that renders when I click checkout" — the cascade.** Every
+step in Flow review now has a **What this caused** button. It opens a graph of
+the interaction and what followed it: the stores that moved, the components that
+re-rendered, the requests that went out and the console lines that came back,
+laid out left to right in causal order and revealed one column at a time so the
+order is something you watch rather than something you reconstruct.
+
+**Every arrow says what it is made of, and the weak ones look weak.** A component
+hanging off a state change means one of two things and the picture distinguishes
+them: DevFlow *observed* that component reading that store — the dependency was
+on its own fiber — or a context it depended on merely shares the store's name.
+A component with neither hangs off the **interaction**, not off whatever store
+happened to move in the same step. That last rule is the whole point. A component
+that re-rendered and a store that changed in the same moment are two things that
+happened, and a graph that joined them with a line would be inventing the finding
+you came for. Hover any arrow to read the evidence in words.
+
+**Strength is drawn in weight, not in colour.** Observed is thick and solid, a
+name match is thin, "these merely happened together" is dashed. Spending green
+and amber — which mean success and failure everywhere else in DevFlow — on a
+confidence scale would have made the strength of a claim something a
+colour-blind reader could not see.
+
+**The reveal is ordered, not timed.** Columns appear in causal order because the
+order is the finding; the intervals are fixed and say nothing about how long
+anything took. A cascade animated at recorded speed would be a stopwatch. It is
+skipped under reduced-motion, and **Replay** puts it under your control.
+
+**It says what it cannot claim, under the picture rather than in the footnotes.**
+Re-renders are sampled twice per interaction and not counted, so forty renders
+and one look the same here. An absent arrow is not an absent cause. A capped
+store snapshot means a change below the cut reads as no change. A graph is the
+presentation that most invites a reader to believe it is complete, which is why
+those sentences sit in the body at body size.
+
+**Steps where nothing observable happened do not offer the button** rather than
+offering a disabled one — a click on a link that navigated is an ordinary step,
+and thirty greyed buttons read as something broken.
+
 **The Living Architecture Map: Claude can now see what is mounted on the page in
 front of you.** Press **Read architecture** in the DevFlow panel and the
 extension takes one reading of the running app's component tree — every component
