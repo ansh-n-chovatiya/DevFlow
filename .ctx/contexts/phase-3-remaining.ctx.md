@@ -4,10 +4,18 @@ name: phase-3-remaining
 scope: project
 created: 2026-09-02
 project: DevFlow
-tags: [phase-3, work-stream-3.3, work-stream-3.5, costing, scope]
+tags: [phase-3, work-stream-3.3, work-stream-3.5, costing, scope, resolved]
 ---
 
 # Context — phase-3-remaining
+
+> **RESOLVED 2026-09-03. Do not act on the "Resume here" section as written —
+> it has been replaced at the bottom of this file.** 3.3 is built and merged
+> (`614252d`, merge `54ae8a4`); 3.5 is deferred to Phase 5 §5.4 as three work
+> streams. Phase 3 is closed as scoped. What is kept below is the *costing* that
+> led there, because one of its central claims turned out to be true and
+> load-bearing in the opposite direction from how it was written — see the
+> replacement.
 
 ## Situation
 
@@ -114,27 +122,33 @@ promised, and neither should be started on the momentum of 3.2.
 - **A `[~]` carrying a *condition* is not a decision.** Either meet the condition
   or write the refusal — the shape §1.2 and §2.1 were resolved into.
 
-## Open questions
+## Open questions — all answered on 2026-09-03; kept with their answers
 
-- [ ] Which of 3.3 and 3.5 — if either — is worth starting, and what is the
-      measured cost of each? This is the decision in front of the project.
-- [ ] For 3.3: what is the mechanism for a live read, given the server can only
+- [x] Which of 3.3 and 3.5 is worth starting? **3.3, and it was built. 3.5 is
+      deferred as three (ADR 0017).**
+- [x] For 3.3: what is the mechanism for a live read, given the server can only
       be pushed to and the page may not be instrumented? Is a persistent
       extension↔server channel in scope at all?
-- [ ] For 3.3: does "currently mounted" survive the <2% CPU / <15MB NFR without a
+      **Answered: there is no live read and there does not need to be. The extension pushes one bounded reading; the tool renders it with its age. No persistent channel.**
+- [x] For 3.3: does "currently mounted" survive the <2% CPU / <15MB NFR without a
       commit hook, or does it reduce to a bounded sampler on demand?
-- [ ] For 3.3: if the answer is a snapshot rather than a feed, is that 3.3
+      **Answered: it reduces to a bounded on-demand walk, under the recorder's own `recording.renderNodeCap`, costing nothing when nobody asks.**
+- [x] For 3.3: if the answer is a snapshot rather than a feed, is that 3.3
       delivered with the wording corrected, or 3.3 refused? Say which, in the
       roadmap.
-- [ ] For 3.5: is the RSC bullet even the same kind of work as the other two? A
+      **Answered: delivered, with the wording corrected in the roadmap — ADR 0016.**
+- [x] For 3.5: is the RSC bullet even the same kind of work as the other two? A
       server component never mounts in the browser, so it is a wire-protocol
       reader rather than a runtime-tree adapter — possibly closer to `core/otel`
       than to `core/react`.
-- [ ] For 3.5: if one adapter is built, what stops the other two being read as
+      **Answered: no. A server component never mounts in the browser, so it is a wire-protocol reader — closer to `core/otel` than to `core/react`, and the roadmap now says to scope it there.**
+- [x] For 3.5: if one adapter is built, what stops the other two being read as
       promised? The refusal to start one of three has to be re-argued or held.
-- [ ] Is Phase 3 declared complete-as-scoped with 3.3 and 3.5 written out as
+      **Answered: none was built, so the question does not arise. The refusal is held and re-argued in ADR 0017.**
+- [x] Is Phase 3 declared complete-as-scoped with 3.3 and 3.5 written out as
       refusals or deferrals, so that Phase 4 can start? Phase 4 does not depend
       on either.
+      **Answered: yes. 3.5 is a written deferral, Phase 3 is closed, Phase 4 is unblocked.**
 
 ## Constraints
 
@@ -176,11 +190,41 @@ promised, and neither should be started on the momentum of 3.2.
 
 ## Resume here
 
-**Cost 3.3 and 3.5 and put the answer in `ROADMAP_AND_PHASES.md` — do not start
-either implementation.** Concretely: write the mechanism 3.3 would need for a
-live read of an open page (channel, sampler, and what it costs against the <2%
-CPU NFR), decide whether that is buildable under Invariant 1 or whether 3.3
-reduces to an on-demand snapshot, and record the result as a plan or a refusal in
-the roadmap's own voice. Then state plainly whether 3.5 is deferred as three
-separate work streams. Only after that decision is written down does any code get
-written.
+**Both open work streams are resolved. Phase 4 is what is next, and nothing
+blocks it.**
+
+**3.3 shipped, and the finding is worth carrying forward.** This bundle's
+costing said the blocker was that "every path into the MCP server is the
+extension *pushing*… there is **no channel from the server back to an open
+tab**". That is entirely correct, and it is only a *cost* if the tool must
+**pull**. It does not. A model calling a tool asks once, at a moment, and reads
+one answer — so what the roadmap called a real-time feed can only ever be a
+reading with an age on it, and the extension could already push one. Option (b)
+in the costing above was the right one, and it was right for a sharper reason
+than "narrowing": the snapshot is not a reduced feed, it is what the feed would
+have degenerated to anyway at the point a model reads it.
+
+The general shape is worth remembering: **when a mechanism looks blocked, check
+which direction the requirement actually runs in before costing the channel.**
+Three roadmap signatures have now failed contact in a row (`get_full_lineage`,
+`compare_flows_across_deploys`, `get_living_architecture`) and all three failed
+by assuming the caller could address something it cannot.
+
+- ADR 0016 — the map is a reading with an age, not a feed. Also records what was
+  refused: active API calls (an in-flight request leaves no trace on the fiber
+  tree), ARKG accumulation, and any on-disk persistence.
+- ADR 0017 — the three adapters are deferred to Phase 5 §5.4, not started as one.
+- `ROADMAP_AND_PHASES.md` §3.3 and §3.5 carry both arguments in the roadmap's own
+  voice.
+
+**What is still open, and is named in the roadmap rather than hidden here:** the
+animated *"show me everything that renders when I click checkout"* graph. Its
+**data** is shipped twice over — 1.3's causal graph and 1.4's render blame — so
+what is missing is a visualisation of a finished recording, in a panel that
+already has a component-tree view. That is a UI work stream, and building a
+second tree beside **Parent tree** and **Siblings** to host it is the mistake
+`src/core/mcp-bundle.ts` exists because of.
+
+**State at close:** `npm run verify` EXIT=0 on `main`, 146 test files, 3246
+tests. Eleven commits ahead of `origin/main` and **unpushed; pushing has not been
+asked for.**
