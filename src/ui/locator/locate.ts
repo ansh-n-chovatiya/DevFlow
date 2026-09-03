@@ -55,17 +55,17 @@
  */
 
 import { isDependencyPath } from '../../core/react/classify.js';
-import { buildNeedle, type Needle } from '../../core/react/needle.js';
-import { toOneBased, type Pos0 } from '../../core/react/positions.js';
-import type { BundleProvider } from '../../core/react/provider.js';
-import { countOccurrences, searchBundle } from '../../core/react/search.js';
+import { buildNeedle, type Needle } from '../../core/locate/needle.js';
+import { toOneBased, type Pos0 } from '../../core/locate/positions.js';
+import type { BundleProvider } from '../../core/locate/provider.js';
+import { countOccurrences, searchBundle } from '../../core/locate/search.js';
 import {
   decodeDataUrl,
   extractSourceMappingURL,
   lookupOriginal,
   parseSourceMap,
   SourceMapError,
-} from '../../core/react/sourcemap.js';
+} from '../../core/locate/sourcemap.js';
 import { isAbsolutePath } from '../../core/react/table.js';
 import { MAX_MATCHES_TRACKED } from '../../shared/constants.js';
 import type { ComponentSource, PickedComponent } from '../../shared/types.js';

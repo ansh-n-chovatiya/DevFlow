@@ -20,7 +20,7 @@
  * confident wrong one.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
-import { buildNeedle } from '../src/core/react/needle.js';
+import { buildNeedle } from '../src/core/locate/needle.js';
 import { bundleBudget, createWorkerProvider } from '../src/features/react/providers/worker.js';
 import { clearResolverCaches, resolvePending, type ResolveDeps } from '../src/features/react/resolver.js';
 import { resolve as resolveSettings } from '../src/features/settings/resolve.js';

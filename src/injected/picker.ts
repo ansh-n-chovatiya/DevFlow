@@ -43,7 +43,7 @@ import {
   PAGE_GLOBALS,
   PICK_TIMEOUT_MS,
 } from '../shared/constants.js';
-import { pos1 } from '../core/react/positions.js';
+import { pos1 } from '../core/locate/positions.js';
 import { readStamp } from '../core/react/stamp.js';
 import type { PickResult, PickedComponent, TreeGroup } from '../shared/types.js';
 import {

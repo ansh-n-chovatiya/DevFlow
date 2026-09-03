@@ -37,7 +37,7 @@
 import { describe, expect, it } from 'vitest';
 import { MIN_HISTORY, diagnose } from '../src/core/diagnose/index.js';
 import type { DiagnoseInputs, DiagnosisEvidence, HistoryFact } from '../src/core/diagnose/index.js';
-import { pos1 } from '../src/core/react/positions.js';
+import { pos1 } from '../src/core/locate/positions.js';
 import type {
   ClickStep,
   ComponentSource,

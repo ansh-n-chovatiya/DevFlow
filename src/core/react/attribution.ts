@@ -14,7 +14,7 @@
 
 import { urlPath } from '../flow/index.js';
 import { pickEnclosing, pickOwner } from './owner.js';
-import { formatPosition, positionToOneBased } from './positions.js';
+import { formatPosition, positionToOneBased } from '../locate/positions.js';
 import { CAPPED_ID } from './table.js';
 import type { ComponentSource, FlowReact, Step } from '../../shared/types.js';
 

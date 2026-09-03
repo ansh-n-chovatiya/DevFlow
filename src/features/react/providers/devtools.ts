@@ -1,7 +1,7 @@
 /**
  * The bundle provider that reads the DevTools cache.
  *
- * The other implementation of `BundleProvider` (`core/react/provider.ts`, frozen
+ * The other implementation of `BundleProvider` (`core/locate/provider.ts`, frozen
  * in Wave 0), ported from react-source-locator `src/core/resources.ts` @ 6eb7a30
  * onto the merged seam. It is the panel's, and it is better than the worker's at
  * exactly one thing, which happens to be the thing that matters most on a page
@@ -43,7 +43,7 @@
 
 import { fetchText as fetchTextViaChrome } from '../../../chrome/fetch.js';
 import { getPageResources, getResourceContent } from '../../../chrome/devtools.js';
-import type { BundleBudget, BundleProvider } from '../../../core/react/provider.js';
+import type { BundleBudget, BundleProvider } from '../../../core/locate/provider.js';
 import { isLikelyScript, isSearchableUrl } from '../inventory.js';
 import {
   createBundleTextCache,

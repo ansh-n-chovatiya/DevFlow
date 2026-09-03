@@ -12,7 +12,7 @@
  * only be tested by reading pixels.
  */
 
-import { isEditorScheme } from '../../core/react/editor.js';
+import { isEditorScheme } from '../../core/locate/editor.js';
 import type { Alignment } from '../../features/mcp/port.js';
 import { showValue } from '../../features/settings/stamp.js';
 import type { RowNote } from './components.js';

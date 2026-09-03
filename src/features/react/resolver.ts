@@ -23,7 +23,7 @@
  * ## Where the bytes come from (D4)
  *
  * Nothing in here fetches any more. Reading a bundle and reading a source map
- * are both `BundleProvider` calls (`core/react/provider.ts`, frozen in Wave 0),
+ * are both `BundleProvider` calls (`core/locate/provider.ts`, frozen in Wave 0),
  * and the bundle-text cache, the in-flight dedupe, the size caps and the
  * concurrency gate all moved with them into `providers/worker.ts`. That is what
  * lets the DevTools panel run this same engine over the DevTools cache instead,
@@ -52,9 +52,9 @@
  */
 
 import { isDependencyPath } from '../../core/react/classify.js';
-import { pos0, toOneBased } from '../../core/react/positions.js';
-import type { BundleBudget, BundleProvider } from '../../core/react/provider.js';
-import { searchBundle, countOccurrences } from '../../core/react/search.js';
+import { pos0, toOneBased } from '../../core/locate/positions.js';
+import type { BundleBudget, BundleProvider } from '../../core/locate/provider.js';
+import { searchBundle, countOccurrences } from '../../core/locate/search.js';
 import {
   extractSourceMappingURL,
   decodeDataUrl,
@@ -62,7 +62,7 @@ import {
   parseSourceMap,
   SourceMapError,
   type PreparedMap,
-} from '../../core/react/sourcemap.js';
+} from '../../core/locate/sourcemap.js';
 import { isAbsolutePath } from '../../core/react/table.js';
 import {
   BUNDLE_CACHE_BYTES,

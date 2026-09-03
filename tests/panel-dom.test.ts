@@ -16,7 +16,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { DEFAULTS } from '../src/features/settings/index.js';
-import { pos0, pos1 } from '../src/core/react/positions.js';
+import { pos0, pos1 } from '../src/core/locate/positions.js';
 import { classifyPicked, type HiddenCategories } from '../src/core/react/classify.js';
 import type { ComponentSource, PickedComponent } from '../src/shared/types.js';
 import {

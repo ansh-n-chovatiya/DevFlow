@@ -5,7 +5,7 @@ import {
   lookupOriginal,
   parseSourceMap,
   SourceMapError,
-} from '../src/core/react/sourcemap.js';
+} from '../src/core/locate/sourcemap.js';
 import { sourceMapJson, type FixtureSegment } from './helpers/sourcemap-fixture.js';
 
 /**

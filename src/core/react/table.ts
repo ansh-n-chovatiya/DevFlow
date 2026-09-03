@@ -11,7 +11,7 @@ import { MAX_COMPONENTS_PER_FLOW } from '../../shared/constants.js';
 import type { CapturedComponent } from '../../shared/messages.js';
 import type { ComponentNeedle, ComponentSource } from '../../shared/types.js';
 import { isDependencyPath } from './classify.js';
-import { UNSETTLED_LAZY_NAME, isPlaceholderId } from './id.js';
+import { UNSETTLED_LAZY_NAME, isPlaceholderId } from '../locate/id.js';
 
 /** Id under which the table records that it stopped accepting new components. */
 export const CAPPED_ID = '__capped__';

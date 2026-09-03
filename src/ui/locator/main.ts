@@ -37,7 +37,7 @@
  * same three functions.
  */
 
-import { componentEditorUrl, editorTemplate, type EditorLink } from '../../core/react/editor.js';
+import { componentEditorUrl, editorTemplate, type EditorLink } from '../../core/locate/editor.js';
 import type { HideableCategory } from '../../core/react/classify.js';
 import { evalInPage } from '../../chrome/devtools.js';
 import {

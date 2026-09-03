@@ -18,7 +18,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { pos0, pos1 } from '../src/core/react/positions.js';
+import { pos0, pos1 } from '../src/core/locate/positions.js';
 import type { ComponentSource, ComponentStatus, FlowReact, Step } from '../src/shared/types.js';
 import { resultCard } from '../src/ui/components/result-card.js';
 import { deriveReviewView, type StepComponentView } from '../src/ui/viewer/review-view.js';

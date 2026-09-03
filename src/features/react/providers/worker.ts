@@ -1,7 +1,7 @@
 /**
  * The bundle provider that works with DevTools closed.
  *
- * One of the two implementations of `BundleProvider` (`core/react/provider.ts`,
+ * One of the two implementations of `BundleProvider` (`core/locate/provider.ts`,
  * frozen in Wave 0). This is DevFlow's strategy, lifted out of
  * `features/react/resolver.ts` where it used to be four module-level variables:
  * the page reports which scripts it loaded (`inventory.ts`), and the worker
@@ -52,7 +52,7 @@
 
 import { fetchText as fetchTextViaChrome } from '../../../chrome/fetch.js';
 import { getLocal } from '../../../chrome/storage.js';
-import type { BundleBudget, BundleProvider } from '../../../core/react/provider.js';
+import type { BundleBudget, BundleProvider } from '../../../core/locate/provider.js';
 import type { Result } from '../../../shared/result.js';
 import { load as loadSettings, type Settings } from '../../settings/index.js';
 import { scriptsForPage } from '../inventory.js';

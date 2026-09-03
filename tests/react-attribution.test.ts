@@ -12,7 +12,7 @@ import {
 } from '../src/core/react/attribution.js';
 import { CAPPED_ID } from '../src/core/react/table.js';
 import type { ComponentSource, Step } from '../src/shared/types.js';
-import { pos0, pos1 } from '../src/core/react/positions.js';
+import { pos0, pos1 } from '../src/core/locate/positions.js';
 
 const step = (chain: string[] | null, over: Partial<Step> = {}): Step =>
   ({

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildNeedle, needleRejection } from '../src/core/react/needle.js';
+import { buildNeedle, needleRejection } from '../src/core/locate/needle.js';
 import { MAX_FN_SOURCE_LEN, NEEDLE_BODY_LEN, NEEDLE_HEAD_LEN } from '../src/shared/constants.js';
 
 describe('needleRejection', () => {

@@ -13,7 +13,7 @@ import { buildPayload, pruneSteps } from '../src/features/mcp/send.js';
 import { exportToJSON } from '../src/core/export/json.js';
 import { CAPPED_ID } from '../src/core/react/table.js';
 import type { ComponentSource, FlowReact, Step } from '../src/shared/types.js';
-import { pos1 } from '../src/core/react/positions.js';
+import { pos1 } from '../src/core/locate/positions.js';
 
 const NOW = 1_700_000_000_000;
 

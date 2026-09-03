@@ -15,13 +15,13 @@
  * re-describing it.
  *
  * **Positions are typed, not documented.** `ComponentSource.line` is `Pos1` and
- * `ComponentSource.compiled.line` is `Pos0`; see `core/react/positions.ts` for
+ * `ComponentSource.compiled.line` is `Pos0`; see `core/locate/positions.ts` for
  * why a `base: 0 | 1` parameter was rejected. Reading either back out of storage
  * or off the wire is an assertion (`pos1(raw.line)`) at exactly one edge.
  */
 
 import type { ComponentStamp } from '../core/react/stamp.js';
-import type { Pos0, Pos1 } from '../core/react/positions.js';
+import type { Pos0, Pos1 } from '../core/locate/positions.js';
 
 export interface BoundingBox {
   x: number;
@@ -1084,7 +1084,7 @@ export interface SyncStorageShape {
    * offer to open one in an editor. Empty means no link is offered.
    */
   projectRoot: string;
-  /** A key into `EDITORS` in core/react/editor.ts, or `custom`. */
+  /** A key into `EDITORS` in core/locate/editor.ts, or `custom`. */
   editor: string;
   /** Used when `editor` is `custom`. Supports {path} {line} {col} {line1} {col1}. */
   customEditorTemplate: string;

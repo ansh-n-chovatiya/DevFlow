@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { exportToMarkdown, flowHost, urlPath } from '../src/core/export/markdown.js';
 import { CAPPED_ID } from '../src/core/react/table.js';
 import type { ComponentSource, FlowReact, NetworkCall, Step } from '../src/shared/types.js';
-import { pos0, pos1 } from '../src/core/react/positions.js';
+import { pos0, pos1 } from '../src/core/locate/positions.js';
 
 const click = (over: Partial<Step> = {}): Step =>
   ({

@@ -19,7 +19,7 @@ import type {
   Step,
 } from '../src/shared/types.js';
 import { deriveSendView, SEND_DEFAULTS, type SendProbe } from '../src/ui/viewer/send-view.js';
-import { pos1 } from '../src/core/react/positions.js';
+import { pos1 } from '../src/core/locate/positions.js';
 
 const NOW = 1_700_000_000_000;
 

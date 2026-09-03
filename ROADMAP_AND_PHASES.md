@@ -570,17 +570,65 @@ does nothing — the picker finds no component and the locator has no tree to wa
 
 ### Work Stream 5.1: Expanded Framework Support
 Deferred here from §3.5 by ADR 0017, **as three work streams rather than one.**
-Each is Phase-1-sized: `src/core/react/` is fifteen fiber-shaped modules and none
-of it transfers, so each adapter needs its own runtime measured rather than
-reasoned about. Starting one and leaving two would be worse than starting none.
+ADR 0017's rule stands: taken together or not at all. Its overturn clause admits
+*"an argument for building all three"*, and that is what this work stream is.
 
-- [ ] **Vue 3 / Nuxt:** Reactivity Proxy inspector and template AST mapper.
-- [ ] **Svelte 5 / SvelteKit:** Runes and Signals state inspector.
-- [ ] **Next.js App Router & React Server Components:** the RSC wire protocol. The
-  cheapest of the three and the only one with a route that does not start from
-  scratch, because a server component never mounts in the browser — there is no
-  runtime tree to adapt, only a protocol to read, which makes it `core/otel`'s
-  kind of work rather than `core/react`'s.
+**Two claims this section used to make did not survive contact, and both are
+corrected here rather than quietly dropped.** They were measured on 2026-09-04 —
+once by reading this repository's own code, and three times by running real
+applications. The spikes are `.ctx/spike-vue.md`, `.ctx/spike-svelte.md` and
+`.ctx/spike-rsc.md`; the arguments are ADRs 0026 and 0027.
+
+*It used to say `src/core/react/` is fifteen fiber-shaped modules and none of it
+transfers.* Ten of the fifteen carry zero React references in code. Four `core/`
+modules with nothing to do with React — `otel`, `architecture`, `provenance`,
+`source` — already import `core/locate/positions.js` today. And all three spikes
+independently grepped **production** bundles for needles built with DevFlow's own
+`buildNeedle` constants and hit byte-for-byte: Vue 14/14 across Vue and Nuxt,
+Svelte 3/3 decoding to `Counter.svelte:5` exactly, RSC client components through
+served maps. The needle / bundle-search / source-map / editor-URL engine is the
+part that transfers; the fiber walk and its attribution rule are the part that
+does not. ADR 0026. This makes each adapter smaller than a Phase-1 work stream,
+which is a correction in 0017's favour rather than against it.
+
+*It used to say a server component never mounts in the browser, so RSC is only a
+protocol to read — `core/otel`'s kind of work.* Wrong in both directions. In
+`next dev` there **is** a runtime tree and it is the richest route: `_debugInfo`
+on the fiber carries the name, `env: "Server"`, the owner chain, props and a
+stack that resolved end to end to `ServerOnlyWidget.tsx:7:5` — while the wire
+*lacks* that identity. In `next build` there is no protocol to read either: a
+server component leaves no name, no module id and no file anywhere on the wire.
+And `core/otel` is not where the case starts — `@vercel/otel` produced 30 real
+spans carrying zero component or file identity in any attribute. ADR 0027.
+
+**What each adapter can honestly deliver differs by build mode**, and is written
+out here rather than hidden behind one checkbox. All three work in development.
+
+- [ ] **Vue 3 / Nuxt:** Reactivity proxy inspector and template mapper.
+  *Dev:* `__vueParentComponent` on every element, `type.__file` on the component.
+  *Production:* element links are stripped and installing the devtools hook does
+  not restore them, but an O(tree) walk from `__vue_app__` still resolves —
+  provided it follows `suspense.activeBranch`, or it reaches nothing on Nuxt. The
+  needle comes from `instance.render` and never from `type.setup`: through the
+  real source map, `setup` resolved to the **wrong file** in 3 of 4 production
+  cases, once landing inside `runtime-dom.esm-bundler.js`.
+- [ ] **Svelte 5 / SvelteKit:** Runes and signals inspector.
+  *Dev:* `__svelte_meta` carries `{loc: {file, line, column}, parent}` — strictly
+  richer than React's own `_debugSource`.
+  *Production:* **honestly nothing.** Elements have zero own properties; the only
+  element-to-function edge is `element[Symbol(events)][name]`, which exists for
+  the 23 delegated events, yields the handler rather than the component, and
+  produced a 9-character needle against `MIN_NEEDLE_LEN = 12`. SvelteKit's
+  default build ships **zero source maps** — 0 `.map` files and no
+  `sourceMappingURL` until `build.sourcemap: true`. The right answer here is to
+  report *absent*, naming the one line of the user's own config that would fix
+  it, rather than to guess a file.
+- [ ] **Next.js App Router & RSC:** the wire protocol *and* the dev fiber.
+  *Dev:* `_debugInfo`, as above.
+  *Production:* client components only, and their numeric module ids resolve
+  through `.next/server/*-manifest.js`, which 404s on every served path — so this
+  half is forced into `mcp-server/`, the only one of the two with a filesystem.
+  Server components are unreachable at any price.
 
 Angular is **not** a fourth adapter, and was removed rather than left listed.
 ADR 0017's rule is that these are taken together or not at all; adding a fourth

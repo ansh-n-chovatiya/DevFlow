@@ -19,7 +19,7 @@ import {
   decodeMappings,
   findSegment,
   findSegmentInLine,
-} from '../src/core/react/vlq.js';
+} from '../src/core/locate/vlq.js';
 import { encodeMappings, type FixtureSegment } from './helpers/sourcemap-fixture.js';
 
 /**

@@ -34,7 +34,7 @@ import {
   REACT_CHAIN_TIMEOUT_MS,
   REACT_SETTING_DEFAULTS,
 } from '../shared/constants.js';
-import { createChainBuffer } from '../core/react/chains.js';
+import { createChainBuffer } from '../core/locate/chains.js';
 import { load, subscribe } from '../features/settings/index.js';
 import {
   RECORDING_DEFAULTS,
@@ -122,7 +122,7 @@ function clearBuffers(): void {
 // ── React component chains ───────────────────────────────────────────────────
 
 /**
- * See `core/react/chains.ts` for why chains are keyed rather than buffered.
+ * See `core/locate/chains.ts` for why chains are keyed rather than buffered.
  *
  * Built at the compiled-in defaults and reconfigured from the frozen settings
  * when a recording starts — `refreshFrozen` below. It has to exist before the

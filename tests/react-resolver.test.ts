@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { pos1 } from '../src/core/react/positions.js';
+import { pos1 } from '../src/core/locate/positions.js';
 import { bundleBudget, createWorkerProvider } from '../src/features/react/providers/worker.js';
 import { clearResolverCaches, resolvePending, type ResolveDeps } from '../src/features/react/resolver.js';
 import { resolve as resolveSettings } from '../src/features/settings/resolve.js';

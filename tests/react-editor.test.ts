@@ -14,8 +14,8 @@ import {
   editorTemplate,
   isEditorScheme,
   toAbsolutePath,
-} from '../src/core/react/editor.js';
-import { pos0, pos1 } from '../src/core/react/positions.js';
+} from '../src/core/locate/editor.js';
+import { pos0, pos1 } from '../src/core/locate/positions.js';
 import type { ComponentSource } from '../src/shared/types.js';
 
 const VSCODE = EDITORS.vscode.template;

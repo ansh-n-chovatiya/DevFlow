@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { snippet } from '../src/core/source/snippet.js';
-import type { Pos1 } from '../src/core/react/positions.js';
+import type { Pos1 } from '../src/core/locate/positions.js';
 
 /** A file whose every line names its own number, so a gutter bug is visible. */
 const file = (count: number): string =>

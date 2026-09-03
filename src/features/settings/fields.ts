@@ -117,7 +117,7 @@ import {
   USE_SOURCE_MAPS,
   WARN_STEPS,
 } from "../../shared/constants.js";
-import { EDITORS } from "../../core/react/editor.js";
+import { EDITORS } from "../../core/locate/editor.js";
 import type { Overrides } from "../../shared/types.js";
 
 // ── Vocabulary ───────────────────────────────────────────────────────────────

@@ -50,7 +50,7 @@
 import type { ComponentFn, Fiber } from '../core/react/fiber.js';
 import { getDisplayName } from '../core/react/fiber.js';
 import { readStamp } from '../core/react/stamp.js';
-import { pos1 } from '../core/react/positions.js';
+import { pos1 } from '../core/locate/positions.js';
 import { redactUrl } from '../core/redact/index.js';
 import type { ComponentInstanceReading, ContextReading, PageReading } from '../core/architecture/index.js';
 import { reactRoots } from './roots.js';

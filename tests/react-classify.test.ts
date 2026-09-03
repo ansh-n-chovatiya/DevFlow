@@ -21,7 +21,7 @@ import {
   isPlumbing,
   type HiddenCategories,
 } from '../src/core/react/classify.js';
-import { pos1 } from '../src/core/react/positions.js';
+import { pos1 } from '../src/core/locate/positions.js';
 import type { PickedComponent } from '../src/shared/types.js';
 
 function component(name: string, source?: string): PickedComponent {

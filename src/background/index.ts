@@ -42,7 +42,7 @@ import type {
   OpenEditorResponse,
   WorkerRequest,
 } from '../shared/messages.js';
-import { isEditorScheme } from '../core/react/editor.js';
+import { isEditorScheme } from '../core/locate/editor.js';
 import {
   BADGE_COLOR,
   BADGE_PAUSED_COLOR,

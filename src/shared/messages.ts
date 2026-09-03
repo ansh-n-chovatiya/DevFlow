@@ -30,7 +30,7 @@ import type {
   TreeGroup,
   StepA11yFinding,
 } from './types.js';
-import type { Pos1 } from '../core/react/positions.js';
+import type { Pos1 } from '../core/locate/positions.js';
 import type { ComponentStamp } from '../core/react/stamp.js';
 import type { ArchitectureSnapshot, PageReading } from '../core/architecture/index.js';
 

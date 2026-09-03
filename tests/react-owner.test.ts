@@ -6,7 +6,7 @@ import {
   isSharedPrimitivePath,
 } from '../src/core/react/classify.js';
 import type { ComponentSource } from '../src/shared/types.js';
-import { pos1 } from '../src/core/react/positions.js';
+import { pos1 } from '../src/core/locate/positions.js';
 
 function resolved(name: string, source: string): ComponentSource {
   return {

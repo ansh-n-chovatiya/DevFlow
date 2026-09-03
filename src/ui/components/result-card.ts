@@ -61,8 +61,8 @@
  * permissions and, in the popup's case, no DevTools API at all.
  */
 
-import { componentEditorUrl, type EditorLink } from '../../core/react/editor.js';
-import { positionToOneBased } from '../../core/react/positions.js';
+import { componentEditorUrl, type EditorLink } from '../../core/locate/editor.js';
+import { positionToOneBased } from '../../core/locate/positions.js';
 import type { ComponentSource, ComponentStatus } from '../../shared/types.js';
 import { icon, type IconName } from '../icons.js';
 

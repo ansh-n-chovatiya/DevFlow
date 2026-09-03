@@ -40,7 +40,7 @@
  */
 
 import { MAX_COMPONENT_CHAIN, MAX_FIBER_WALK } from '../../shared/constants.js';
-import { ANONYMOUS_NAME, UNSETTLED_LAZY_NAME } from './id.js';
+import { ANONYMOUS_NAME, UNSETTLED_LAZY_NAME } from '../locate/id.js';
 
 export interface DebugSource {
   fileName?: string;

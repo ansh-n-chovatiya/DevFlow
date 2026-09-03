@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { countOccurrences, offsetToLineColumn, searchBundle } from '../src/core/react/search.js';
-import { buildNeedle } from '../src/core/react/needle.js';
+import { countOccurrences, offsetToLineColumn, searchBundle } from '../src/core/locate/search.js';
+import { buildNeedle } from '../src/core/locate/needle.js';
 import { MAX_MATCHES_TRACKED } from '../src/shared/constants.js';
 
 function needleFor(source: string) {

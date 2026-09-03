@@ -30,7 +30,7 @@
  * cut keeps the surrounding lines — which are the point — affordable.
  */
 
-import type { Pos1 } from '../react/positions.js';
+import type { Pos1 } from '../locate/positions.js';
 
 /**
  * Characters of one source line worth printing.

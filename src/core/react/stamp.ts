@@ -37,7 +37,7 @@
  * Pure — no DOM, no Chrome, no network.
  */
 
-import { pos1, type Pos1 } from './positions.js';
+import { pos1, type Pos1 } from '../locate/positions.js';
 
 /** The property name. `compiler-plugin/index.js` writes it; these two agree. */
 const STAMP_KEY = '__devflow';

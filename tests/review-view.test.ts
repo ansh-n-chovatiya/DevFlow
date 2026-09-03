@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pos0, pos1 } from '../src/core/react/positions.js';
+import { pos0, pos1 } from '../src/core/locate/positions.js';
 import type {
   ComponentSource,
   ComponentStatus,

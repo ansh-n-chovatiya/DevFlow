@@ -15,8 +15,8 @@
  * them the time it takes to work out the tool is lying.
  */
 import { describe, expect, it } from 'vitest';
-import { buildNeedle } from '../src/core/react/needle.js';
-import { searchBundle } from '../src/core/react/search.js';
+import { buildNeedle } from '../src/core/locate/needle.js';
+import { searchBundle } from '../src/core/locate/search.js';
 
 /** As `fn.toString()` returns it in the page, before any bundler touched it. */
 const RUNTIME = 'function Cart(props){ return renderCartRow(props); }';

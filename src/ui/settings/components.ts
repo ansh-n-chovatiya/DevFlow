@@ -38,7 +38,7 @@
  */
 
 import { conceptInfo, consequenceApplies, type Field } from '../../features/settings/index.js';
-import { EDITORS } from '../../core/react/editor.js';
+import { EDITORS } from '../../core/locate/editor.js';
 import { icon, type IconName } from '../icons.js';
 import {
   DEFAULTS_PANE,

@@ -4,7 +4,7 @@
  * `BundleProvider` is the single seam the merge needed, and its whole value is
  * that the React engine cannot tell which side of it is answering. So the
  * interesting tests are not "does the worker cache" and "does the panel cache" —
- * they are the three promises `core/react/provider.ts` makes, asserted against
+ * they are the three promises `core/locate/provider.ts` makes, asserted against
  * both implementations by the same code:
  *
  *   - **Every method resolves, never rejects.** Unreadable is `null`, and `null`
@@ -26,7 +26,7 @@
  * cache the panel prefers to a fetch.
  */
 import { describe, expect, it } from 'vitest';
-import type { BundleBudget, BundleProvider } from '../src/core/react/provider.js';
+import type { BundleBudget, BundleProvider } from '../src/core/locate/provider.js';
 import { createDevtoolsProvider } from '../src/features/react/providers/devtools.js';
 import { bundleBudget, createWorkerProvider } from '../src/features/react/providers/worker.js';
 import { resolve as resolveSettings } from '../src/features/settings/resolve.js';
