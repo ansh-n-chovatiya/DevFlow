@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+**Production crashes, joined to the files you are about to change.** With
+`DEVFLOW_WEBHOOKS=1` the MCP server accepts a relayed Sentry delivery, joins the
+issue to the source files its stack actually reaches, and shows it in
+`get_blast_radius` — so "what does the runtime know about this file" and "what
+are users hitting in it" are one answer at the moment you need both.
+
+**Sentry cannot reach a loopback port, and this does not pretend otherwise.**
+Their servers can no more POST to `localhost` than to any machine behind a
+router. What the endpoint takes is a delivery you relayed (smee.io, an ngrok
+tunnel) or replayed (an exported event, curled in), and the docs say that in
+those words rather than describing a direct integration.
+
+**Almost nothing from a crash payload is kept.** The exception type but never its
+message — that is where an order number or a token ends up. The culprit, the
+level, the count, the link, and a stack frame's filename and line and nothing
+else. No user, no request, no headers, no cookies, no body, no breadcrumbs, no
+contexts, no local variables, no source context lines. The payload is never
+handed on as it arrived: every field is read out by name.
+
+**A production count is never added to an observation count.** DevFlow's own
+`frequency` counts recordings it made; a provider's `event_count` counts events
+your users hit. They are different units, they live in different tables, and
+every surface that prints both says which is which.
+
+**A crash joins to a file or to nothing.** The stack is matched by the same rule
+the commit join uses — exactly after normalisation, or by a suffix exactly one
+known file answers, never by a guess. A minified production stack often matches
+nothing, and that is reported as nothing rather than filed against a plausible
+neighbour.
+
 **Replay your recorded flows in CI.** `devflow-mcp regression` takes the flows
 committed to a repository, replays each against the current checkout, and reports
 what changed — with a composite GitHub Action (`.github/actions/devflow-regression`)

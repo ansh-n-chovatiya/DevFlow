@@ -450,6 +450,42 @@ const DDL = `
     observed_at INTEGER NOT NULL
   );
 
+  /*
+   * A production issue somebody else's users hit, and the one table here whose
+   * counts are not DevFlow's own observations.
+   *
+   * Its own table rather than columns on arkg_source_files, and that is the
+   * whole of the design. "frequency" everywhere else in this database counts
+   * *recordings DevFlow made*; "event_count" here counts *events a provider saw
+   * in production*. Adding a production number into an observation column would
+   * silently change what every existing figure means, and nothing downstream
+   * would notice: getAnomalies would start reading a mixture, and the baseline
+   * it computes would be over two different units.
+   *
+   * Keyed on the provider's own issue id because that is the only identifier in
+   * a crash payload that is stable across deliveries -- the same requirement
+   * caused_by and changed_in are held to. An event id happens once; an issue id
+   * is the same string next week, which is what makes this a node rather than a
+   * log line.
+   *
+   * It carries no timing_p50_ms, timing_p95_ms or failure_rate, on
+   * arkg_git_commits' argument: nothing times an issue, and a failure rate over
+   * a thing that is by definition a failure is not a number.
+   */
+  CREATE TABLE IF NOT EXISTS arkg_production_errors (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    error_type TEXT NOT NULL,
+    culprit TEXT,
+    level TEXT,
+    event_count INTEGER NOT NULL DEFAULT 1,
+    url TEXT,
+    first_seen_at INTEGER,
+    last_seen_at INTEGER,
+    first_observed_at INTEGER NOT NULL,
+    last_observed_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS arkg_edges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT NOT NULL,
@@ -2619,6 +2655,109 @@ export function getSourceFile(id) {
 export function getCommitShas() {
   if (!db) return new Set();
   return new Set(sql('SELECT id FROM arkg_git_commits').all().map((row) => row.id));
+}
+
+/**
+ * One production issue and the source files its stack actually reaches.
+ *
+ * The edge is `errored_in`, from the issue to a source file, and it is drawn
+ * under `changed_in`'s rule exactly: **both ends must land on a node the graph
+ * already keys stably**, so a frame is joined only through `matchSourceFile` —
+ * after normalisation, or by a suffix exactly one known file answers, and never
+ * by a guess. A production stack in a minified build names chunk paths that
+ * match nothing here, and drawing an edge on a near-miss would file somebody
+ * else's crash against a file nobody has evidence for.
+ *
+ * So a ten-frame stack may draw one edge, or none, and none is a real answer:
+ * it means this graph has never watched code run in any file that crash
+ * touched. `insertFactEdge` rather than `upsertEdge`, on `changed_in`'s
+ * argument — an issue reached a file or it did not, and a second delivery of
+ * the same issue is not a second fact about the repository.
+ *
+ * The count is `MAX`ed rather than added. A provider re-delivers the same issue
+ * with a cumulative total, so summing would multiply it by however many times a
+ * relay fired.
+ */
+export function ingestProductionError(error) {
+  if (!db || !error || typeof error.id !== 'string' || !error.id) return 0;
+
+  const now = Date.now();
+
+  return db.transaction(() => {
+    const existing = sql('SELECT event_count FROM arkg_production_errors WHERE id = ?').get(error.id);
+    if (existing) {
+      sql(`
+        UPDATE arkg_production_errors
+           SET event_count = MAX(event_count, ?),
+               culprit = COALESCE(?, culprit),
+               level = COALESCE(?, level),
+               url = COALESCE(?, url),
+               last_seen_at = MAX(COALESCE(last_seen_at, 0), COALESCE(?, 0)),
+               last_observed_at = ?
+         WHERE id = ?
+      `).run(
+        error.count ?? 1,
+        error.culprit ?? null,
+        error.level ?? null,
+        error.url ?? null,
+        error.lastSeenMs ?? null,
+        now,
+        error.id,
+      );
+    } else {
+      sql(`
+        INSERT INTO arkg_production_errors
+          (id, provider, error_type, culprit, level, event_count, url,
+           first_seen_at, last_seen_at, first_observed_at, last_observed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        error.id,
+        error.provider ?? 'unknown',
+        error.type ?? 'Error',
+        error.culprit ?? null,
+        error.level ?? null,
+        error.count ?? 1,
+        error.url ?? null,
+        error.firstSeenMs ?? null,
+        error.lastSeenMs ?? null,
+        now,
+        now,
+      );
+    }
+
+    const known = sql('SELECT id FROM arkg_source_files').all().map((row) => row.id);
+    if (!known.length) return 0;
+
+    let drawn = 0;
+    const seen = new Set();
+    for (const frame of error.frames ?? []) {
+      if (!frame || typeof frame.filename !== 'string') continue;
+      const node = core.matchSourceFile(known, frame.filename);
+      if (!node || seen.has(node)) continue;
+      seen.add(node);
+      insertFactEdge('errored_in', 'production_error', error.id, 'source_file', node, now);
+      drawn += 1;
+    }
+    return drawn;
+  })();
+}
+
+/**
+ * The production issues whose stacks reach one source file.
+ *
+ * Read where somebody is about to change that file, which is the only moment
+ * this is worth anything: a crash in production and a file you are editing are
+ * the same question asked from two ends.
+ */
+export function getProductionErrors(sourceFile, limit = 10) {
+  if (!db) return [];
+  return sql(`
+    SELECT e.* FROM arkg_production_errors e
+    INNER JOIN arkg_edges g
+       ON g.from_node_id = e.id AND g.type = 'errored_in' AND g.to_node_id = ?
+    ORDER BY e.event_count DESC
+    LIMIT ?
+  `).all(sourceFile, Math.max(1, Math.trunc(limit)));
 }
 
 export function getBlastRadius(sourceFile, lineStart, lineEnd) {

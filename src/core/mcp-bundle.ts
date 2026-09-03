@@ -374,3 +374,14 @@ export type {
   WireChange,
   WireChangeKind,
 } from './regression/index.js';
+
+/*
+ * A production crash reduced to the part the graph may keep.
+ *
+ * The allow-list is the whole of this module's value and it belongs where a
+ * test can drive it without a server: what a crash payload holds is somebody
+ * else's user's data, and the rule about which four fields survive is one that
+ * must be checkable line by line rather than inferred from a route handler.
+ */
+export { parseSentryDelivery, describeProductionError } from './telemetry/index.js';
+export type { ErrorFrame, ParseResult, ProductionError, RejectReason } from './telemetry/index.js';

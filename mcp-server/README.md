@@ -114,6 +114,29 @@ Screenshots are written to disk and referenced by absolute path. Claude Code
 reads them with its own file tools, one at a time, so a 500-step recording costs
 nothing until a specific image is opened.
 
+## Production crashes
+
+With `DEVFLOW_WEBHOOKS=1` the server accepts a Sentry delivery on
+`POST /webhooks/sentry` and joins the issue to the source files its stack
+reaches. `get_blast_radius` then shows it beside what the runtime has observed in
+that file.
+
+**Sentry cannot reach this port.** The server binds to loopback, so their servers
+can no more POST to it than to any other machine behind a router. This takes a
+delivery you *relay* — `smee.io`, an `ngrok` tunnel, a small forwarder — or
+*replay*, by curling an exported event at it. It is not a direct integration and
+does not claim to be one.
+
+Almost nothing from the payload is kept: the exception **type** but never its
+message, the culprit, the level, the count, the link, and each frame's filename
+and line. No user, request, headers, cookies, body, breadcrumbs, contexts, local
+variables or source context lines are read at all. A stack that matches no file
+the graph has watched code run in draws no edge, which is reported as none rather
+than filed against a plausible neighbour.
+
+The counts stay separate: DevFlow's own frequencies are recordings it made, and a
+provider's event count is events your users hit. They are never added.
+
 ## Replaying flows in CI
 
 `devflow-mcp regression` replays the flows committed to a repository against the
