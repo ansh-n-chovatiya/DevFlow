@@ -102,6 +102,15 @@ import {
  * on a stdio transport nobody is speaking: a typo should say so, not hang.
  */
 if (process.argv.length > 2) {
+  /*
+   * `regression` is the one verb that is asynchronous — it spawns a browser —
+   * so the dispatch awaits. `run` returns a number for every other verb and
+   * awaiting a number is a number, so nothing else changes shape.
+   */
+  if (process.argv[2] === 'regression') {
+    const { regressionCommand } = await import('./regression-cli.js');
+    process.exit(await regressionCommand(process.argv.slice(3)));
+  }
   const { run } = await import('./install.js');
   process.exit(run(process.argv[2], process.argv.slice(3)));
 }

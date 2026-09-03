@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+**Replay your recorded flows in CI.** `devflow-mcp regression` takes the flows
+committed to a repository, replays each against the current checkout, and reports
+what changed — with a composite GitHub Action (`.github/actions/devflow-regression`)
+and a copyable workflow beside it.
+
+**Two modes, and the mode decides what the report can claim.** In the default
+`mocked` mode each request is answered with the response the recording captured:
+a pass proves the journey through the interface completes, and the report
+compares no statuses or latencies at all, because they would be the recording's
+own played back. In `live` mode nothing is mocked, the run talks to whatever the
+branch built, and the statuses and latencies are real and compared. The mode is on
+the first line of every report, because every other line means something
+different under each.
+
+**A latency change has to clear two bars before it is printed** — 100ms and 30% —
+and the numbers it cleared them with are printed with it. A 40ms endpoint that
+becomes 60ms is half again as slow and nobody cares.
+
+**Re-render counts and state changes are not compared, and the report says why.**
+Those are observed by the DevFlow extension reading React's fibers, and a replay
+drives the page with no extension. Loading it was tried rather than assumed: the
+service worker registers in a headed Chromium and does not register in
+Playwright's headless one, so an observed run needs a display. That is a
+different piece of work and is named as one.
+
+**A check that could not decide does not pass.** A flow that was unreadable or
+matched no tests makes the whole run inconclusive — which outranks regressed,
+because a run it could not read is a run whose failures it cannot trust either.
+Finding no flows at all is inconclusive too, never a green tick meaning nothing
+happened, and `--strict` makes that fail the build.
+
+**It posts nothing anywhere.** The report goes to stdout and to a file, and the
+workflow decides whether to publish it — the credentials that can comment on a
+pull request belong to whoever owns the repository. And because it runs your test
+runner against your application, it is behind the same `DEVFLOW_REPLAY=1` switch
+`replay_flow` is.
+
 **Accessibility, audited against what the browser actually computed.** Turn on
 **Audit accessibility while recording** and each interaction is followed by a
 bounded read of the page as it settled: contrast measured against the colour

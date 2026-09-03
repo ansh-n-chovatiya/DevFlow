@@ -114,6 +114,36 @@ Screenshots are written to disk and referenced by absolute path. Claude Code
 reads them with its own file tools, one at a time, so a 500-step recording costs
 nothing until a specific image is opened.
 
+## Replaying flows in CI
+
+`devflow-mcp regression` replays the flows committed to a repository against the
+current checkout. It is a command rather than an MCP tool because nobody is
+watching: it runs on a machine that has just checked out a branch, and its answer
+has to become an exit code.
+
+```sh
+DEVFLOW_REPLAY=1 npx devflow-mcp-server regression --base origin/main --mode mocked
+```
+
+A flow has to be **committed** for CI to reach it — `.devflow/flows/<id>/flow.json`
+by default — because a recording otherwise lives only in `~/.devflow/flows` on the
+machine that made it. Finding none is reported as inconclusive rather than as a
+pass; `--strict` makes that fail the build.
+
+`--mode mocked` (the default) answers each request with the response the recording
+captured, so a pass proves the journey completes and the report compares no
+statuses or latencies: they would be the recording's own, played back.
+`--mode live` mocks nothing and talks to whatever is running, so those are real and
+are compared — a change is reported only when it is both 100ms and 30% different,
+with the numbers printed. Re-render counts and state changes are not compared at
+all, and the report says why: the extension observes those, a replay has no
+extension, and the service worker does not register in Playwright's headless
+Chromium.
+
+It posts nothing. The report goes to stdout and to `--out`, and publishing it is
+the workflow's decision — `.github/actions/devflow-regression` in this repository
+is a composite action that runs the check and hands the report back as an output.
+
 ## Where flows live
 
 `~/.devflow/flows`, one directory per flow:

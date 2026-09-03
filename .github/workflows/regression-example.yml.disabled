@@ -1,0 +1,66 @@
+# An example, deliberately not enabled — the `.disabled` suffix keeps GitHub
+# from running it in this repository, which has no committed flows to replay.
+#
+# Copy it into an application's own repository, commit a recorded flow under
+# `.devflow/flows/<id>/flow.json`, and it will replay that journey on every PR.
+#
+# Posting to the pull request is a separate step and stays that way on purpose:
+# the check writes a report and this workflow decides whether to publish it,
+# which is the same split DevFlow keeps between what it writes down and what it
+# sends. Delete the comment step and the check still runs and still fails the
+# build; it simply stays inside the log.
+name: DevFlow regression
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  # Only needed by the optional publishing step below.
+  pull-requests: write
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The base ref has to be fetched for `--base` to have anything to diff
+          # against; a shallow clone makes the changed-file shortlist silently
+          # empty.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      # In `live` mode the application has to be up, because that is the whole
+      # difference: the run talks to what this branch actually built.
+      # - run: npm run build && npm run preview &
+      # - run: npx wait-on http://localhost:4173
+
+      - id: devflow
+        uses: ./.github/actions/devflow-regression
+        with:
+          base: origin/${{ github.base_ref }}
+          mode: mocked
+          strict: 'false'
+
+      - name: Publish the report
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `### DevFlow regression — ${{ steps.devflow.outputs.verdict }}\n\n` +
+              '```\n' + process.env.REPORT + '\n```';
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+        env:
+          REPORT: ${{ steps.devflow.outputs.report }}

@@ -18,7 +18,30 @@ import { STATE_PREAMBLE, hasState, stateComments } from './state.js';
 
 const DEFAULT_TEST_NAME = 'DevFlow recorded flow';
 
-export function generatePlaywrightTest(steps: Step[], testName = DEFAULT_TEST_NAME): string {
+/** What a generated spec does about the responses the recording captured. */
+export interface PlaywrightOptions {
+  /**
+   * Serve the recorded responses (the default), or let the run talk to the app.
+   *
+   * Default true, because that is what this has always done and what a
+   * one-click export from Flow review should keep doing: a spec somebody runs
+   * on their laptop against a dev server they have not started should still
+   * exercise the journey.
+   *
+   * False is what a CI regression check in `live` mode needs, and the two are
+   * never blended — with mocks in place every status and latency the run sees
+   * is the recording's own played back, so a wire comparison would be measuring
+   * its own fixtures. `core/regression` refuses to compare the wire at all in
+   * mocked mode for exactly this reason.
+   */
+  mocks?: boolean;
+}
+
+export function generatePlaywrightTest(
+  steps: Step[],
+  testName = DEFAULT_TEST_NAME,
+  options: PlaywrightOptions = {},
+): string {
   const name = jsLiteral(commentText(testName) || DEFAULT_TEST_NAME);
 
   /*
@@ -44,7 +67,38 @@ export function generatePlaywrightTest(steps: Step[], testName = DEFAULT_TEST_NA
   lines.push(``);
   lines.push(`test(${name}, async ({ page }) => {`);
 
-  const { mocks, omitted } = planMocks(steps);
+  /*
+   * An unmocked spec plans no mocks at all rather than planning them and
+   * skipping the emit: `omitted` exists to tell a reader which recorded
+   * responses were *not* turned into fixtures, and printing that list above a
+   * spec that deliberately uses none of them would be a paragraph about a
+   * decision nobody made.
+   */
+  const { mocks, omitted } =
+    options.mocks === false ? { mocks: [], omitted: [] } : planMocks(steps);
+
+  if (options.mocks === false) {
+    lines.push(
+      `  // Recorded responses are NOT served: this spec talks to whatever is running.`,
+      `  // Statuses and latencies observed here are the application's own.`,
+      `  //`,
+      `  // The run collects its own wire, because nothing outside the browser can.`,
+      `  // Without this a live comparison would hold the recording's calls against an`,
+      `  // empty set and report every endpoint as never called, which is the most`,
+      `  // confident possible way to be wrong.`,
+      `  const __devflowCalls = [];`,
+      `  page.on('response', (response) => {`,
+      `    const request = response.request();`,
+      `    const timing = request.timing();`,
+      `    __devflowCalls.push({`,
+      `      method: request.method(),`,
+      `      url: response.url(),`,
+      `      status: response.status(),`,
+      `      durationMs: Math.max(0, Math.round(timing.responseEnd - timing.startTime)),`,
+      `    });`,
+      `  });`,
+    );
+  }
 
   if (mocks.length > 0 || omitted.length > 0) {
     lines.push(`  // --- Recorded responses ---`);
@@ -132,6 +186,28 @@ export function generatePlaywrightTest(steps: Step[], testName = DEFAULT_TEST_NA
     // After the action, not before it: this is what the interaction *did*, and
     // a recording only ever attaches it to a step that had one.
     for (const line of stateComments(step)) lines.push(`  // ${line}`);
+  }
+
+  if (options.mocks === false) {
+    /*
+     * The wire leaves as a Playwright *attachment* rather than as a file this
+     * spec writes, and the reason is a rule about this module rather than a
+     * preference. `core/` is bundled into `mcp-server/core.js` and
+     * `tests/react-server-guard.test.ts` asserts that the bundle contains no
+     * filesystem access at all — a generated string holding `node:fs` trips it,
+     * and rightly: the way that guard stops being useful is somebody deciding
+     * their occurrence is the harmless one.
+     *
+     * Attaching is better on the merits too. Playwright writes the body itself
+     * and records the path in the JSON report the runner already parses, so
+     * there is one artefact per run instead of a file beside the spec that
+     * nothing cleans up, and no path built out of `test.info().file`.
+     */
+    lines.push(``);
+    lines.push(`  await test.info().attach('devflow-calls', {`);
+    lines.push(`    body: JSON.stringify(__devflowCalls),`);
+    lines.push(`    contentType: 'application/json',`);
+    lines.push(`  });`);
   }
 
   lines.push(`});`);
