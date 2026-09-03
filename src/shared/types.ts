@@ -635,6 +635,61 @@ interface StepBase {
    * budget would be spent on.
    */
   renders?: StepRender[];
+  /**
+   * Accessibility violations found in the page as this step left it.
+   *
+   * Absent when nothing was found *and* nothing limited the audit — the same
+   * rule `state` and `renders` follow. Present with an empty list only when
+   * there is a `note`, because "we found nothing" and "we could not look" are
+   * two different answers and a reader must not have to guess which.
+   */
+  a11y?: StepA11y;
+}
+
+/**
+ * One violation, as the step records it.
+ *
+ * `component` is what makes this different from a linter's output: the
+ * violation is attributed through the same fiber walk every other part of a
+ * recording uses, so it arrives naming the component it lives in and the file
+ * that component was written in.
+ */
+export interface StepA11yFinding {
+  /** Which check found it — `core/a11y`'s `A11yCheck`. */
+  check: string;
+  /** The WCAG success criterion, numbered and named. */
+  wcag: string;
+  level: 'A' | 'AA';
+  /** A short handle for the element, for a person reading the step. */
+  label: string;
+  /** What was measured. */
+  detail: string;
+  /** What this finding does not know about itself, when there is something. */
+  caveat?: string;
+  /** The component it was found in, as `FlowReact.components` keys it. */
+  component?: string;
+}
+
+export interface StepA11y {
+  findings: StepA11yFinding[];
+  /** Why there is less here than the reader expected. */
+  note?: string;
+}
+
+/**
+ * What the recording could and could not see of the page's accessibility.
+ *
+ * `read` is false on a flow recorded with the audit switched off, which is the
+ * default — so an absent finding means "not looked at" far more often than it
+ * means "nothing wrong", and this is where a reader is told which.
+ */
+export interface FlowA11y {
+  /** Whether the audit ran at all during this recording. */
+  read: boolean;
+  /** A walk hit its element cap, so part of the page was never audited. */
+  capped?: boolean;
+  /** Why there is less here than the reader expected, in the words they need. */
+  note?: string;
 }
 
 export interface ClickStep extends StepBase {
@@ -745,6 +800,8 @@ export interface FlowPayload {
    * additive terms as `state` above.
    */
   renders?: FlowRenders;
+  /** What the recording could and could not see of the page's accessibility. */
+  a11y?: FlowA11y;
   /**
    * Which sections the sender deliberately left out.
    *

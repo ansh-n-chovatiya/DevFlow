@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+**Accessibility, audited against what the browser actually computed.** Turn on
+**Audit accessibility while recording** and each interaction is followed by a
+bounded read of the page as it settled: contrast measured against the colour
+really behind the text, interactive roles with no accessible name, controls the
+keyboard cannot reach, focusable things inside `aria-hidden`, positive
+`tabindex`, ARIA states a role does not take, and a native `disabled`
+contradicted by `aria-disabled="false"`. Every violation carries the numbered
+WCAG criterion it fails and the **component and file** it was found in — which is
+what a static linter cannot give you, because it is the same fiber walk the rest
+of a recording uses.
+
+**Two checks exist only in the difference between two moments.** A modal that
+opened and left focus outside it, and one that closed leaving focus nowhere.
+Neither is a property of any file, which is why no linter finds them.
+
+**Where it refuses to answer, it says so.** Contrast is measured against the
+nearest opaque ancestor background, and an element with none — behind a
+gradient, an image or a translucent stack — is skipped rather than compared
+against an assumed white. On a real page a third of the elements walked are in
+that state, so the step's note counts them: a missing finding is never a passing
+one. The accessible name is computed by the common paths rather than the full
+accname algorithm, and every finding that reads one says so. And whether focus is
+*trapped* in a dialog is not tested at all — that needs pressing Tab, and DevFlow
+does not take part in the app it records.
+
+**No fix is generated, and every answer says that too.** The criterion, the
+measurement and the component are the deliverable; writing the change is yours.
+
+**It is off by default**, the only recording capture that is, and the default came
+from a measurement: the settled walk costs 4.9ms on a 2000-element page. The
+reading taken inside your click is a thousand times cheaper than that — it looks
+at what has focus and nothing else. A flow recorded with the audit off says so
+rather than reading as a page with nothing wrong.
+
 **Which commits changed this, and which of them has never been watched running.**
 `get_commit_candidates` takes a component or a source file and answers with the
 commits that changed the code it was written in — author, subject, date and SHA

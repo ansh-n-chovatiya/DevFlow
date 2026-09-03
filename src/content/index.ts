@@ -78,7 +78,11 @@ import {
  * the wrong realm. See the note on `PickQuery` in that file for why the wire
  * shape lives there rather than in `shared/messages.ts`.
  */
-import type { AgentQueryInput, AgentQueryReply } from '../shared/messages.js';
+import type {
+  AgentA11yMessage,
+  AgentQueryInput,
+  AgentQueryReply,
+} from '../shared/messages.js';
 
 let isRecording = false;
 let isPaused = false;
@@ -337,6 +341,33 @@ function onRenderSample(data: AgentRenderMessage): void {
   });
 }
 
+/**
+ * Pass one interaction's accessibility findings to the worker.
+ *
+ * Thinner than its two neighbours on purpose. `onStateSample` and
+ * `onRenderSample` each make a *budget* decision here because the MAIN world is
+ * the context DevFlow cannot test without a browser — but there is no budget to
+ * spend on a list of violations, and the one thing the audit can only do in the
+ * page is read a fiber to attribute a finding to a component. So the agent
+ * sends findings already judged by `core/a11y` and already attributed, and this
+ * does the routing and nothing else.
+ *
+ * Sent with no findings when there is a note, which is the case that matters: a
+ * step whose walk was cut and reported nothing clean is reporting on the cut.
+ */
+function onA11ySample(data: AgentA11yMessage): void {
+  const key = stepByEventTime.get(data.eventTime);
+  if (!key) return;
+  if (!data.findings.length && !data.note) return;
+
+  void sendToWorker({
+    type: 'STEP_A11Y',
+    key,
+    findings: data.findings,
+    ...(data.note ? { note: data.note } : {}),
+  });
+}
+
 // ── Agent bridge ─────────────────────────────────────────────────────────────
 
 window.addEventListener('message', (event: MessageEvent<AgentMessage | AgentQueryReply>) => {
@@ -393,6 +424,8 @@ window.addEventListener('message', (event: MessageEvent<AgentMessage | AgentQuer
     onStateSample(data);
   } else if (data.kind === 'renders') {
     onRenderSample(data);
+  } else if (data.kind === 'a11y') {
+    onA11ySample(data);
   } else if (data.kind === 'react-meta') {
     void sendToWorker({
       type: 'REACT_META',

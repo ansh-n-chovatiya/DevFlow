@@ -58,6 +58,8 @@ import {
   CAPTURE_RENDERS,
   CAPTURE_STATE,
   RENDER_NODE_CAP,
+  CAPTURE_A11Y,
+  A11Y_NODE_CAP,
   STATE_MAX_DEPTH,
   STATE_MAX_ENTRIES,
   STATE_MAX_KEYS,
@@ -117,6 +119,8 @@ const config: AgentConfig = {
   stateMaxStores: STATE_MAX_STORES,
   captureRenders: CAPTURE_RENDERS,
   renderNodeCap: RENDER_NODE_CAP,
+  captureA11y: CAPTURE_A11Y,
+  a11yNodeCap: A11Y_NODE_CAP,
 };
 
 /**
@@ -213,6 +217,12 @@ function applyConfig(next: Partial<AgentConfig> | undefined): void {
     // least able to tell from a working one — and `FlowRenders.capped` would
     // be the only trace of it.
     config.renderNodeCap = Math.max(1, next.renderNodeCap);
+  }
+  if (typeof next.captureA11y === 'boolean') config.captureA11y = next.captureA11y;
+  if (typeof next.a11yNodeCap === 'number' && Number.isFinite(next.a11yNodeCap)) {
+    // Floored at one for `renderNodeCap`'s reason: a zeroed cap audits nothing
+    // and the step's note would be the only trace that it had not looked.
+    config.a11yNodeCap = Math.max(1, next.a11yNodeCap);
   }
 }
 
@@ -939,6 +949,9 @@ import {
   collectChain,
   hasReactRoot,
   interactionTarget,
+  findNearestComponentFiber,
+  getComponentFn,
+  getDisplayName,
 } from '../core/react/fiber.js';
 import { componentId, nameOnlyId } from '../core/react/id.js';
 import { buildNeedle } from '../core/react/needle.js';
@@ -957,6 +970,8 @@ import {
   type RenderSample,
 } from './render.js';
 import { sampleArchitecture } from './architecture.js';
+import { sampleA11y, sampleFocus } from './a11y.js';
+import { auditA11y, a11yNote, type A11ySample } from '../core/a11y/index.js';
 import { cancelPick, pickedEntry, startPick } from './picker.js';
 import { hide as hideHighlight, highlight } from './highlight.js';
 
@@ -1243,6 +1258,15 @@ function abandonReact(): void {
 let pendingState: {
   before: StateSample[] | null;
   renders: RenderSample | null;
+  /**
+   * The cheap half of the accessibility pair, taken inside the gesture.
+   *
+   * Only what the two focus checks need — which element has focus and which
+   * modals are open. The full walk, with the computed styles that are the
+   * expensive part, waits for the settled sample. A recorder that costs a
+   * person latency on every click is one they turn off.
+   */
+  a11yBefore: Pick<A11ySample, 'focus' | 'dialogs'> | null;
   timer: ReturnType<typeof setTimeout>;
 } | null = null;
 
@@ -1283,6 +1307,28 @@ function renderSnapshotBudget(): SnapshotBudget {
  * cache entry. Two id functions over one component is how a `subscribers` list
  * ends up joining to nothing.
  */
+/**
+ * The component a DOM element sits inside, as the flow's table keys it — or null.
+ *
+ * The same walk the picker and the recorder make, reused rather than
+ * re-derived, so an accessibility finding names the component by the id every
+ * other part of the recording already uses. That is the whole point of
+ * attributing here: a violation that arrives as `div#root > button` is a
+ * linter's output, and one that arrives naming a component is one a model can
+ * open the file for.
+ *
+ * Null is an ordinary answer — an element outside any React tree, or one whose
+ * nearest component fiber has no readable function — and the finding is kept
+ * without a component rather than dropped. Where it is is still where it is.
+ */
+function componentOf(el: Element): string | null {
+  const fiber = findNearestComponentFiber(el);
+  if (!fiber) return null;
+  const fn = getComponentFn(fiber, { force: false });
+  if (!fn) return null;
+  return identifyComponent(fn, getDisplayName(fiber));
+}
+
 function identifyComponent(fn: ComponentFn, name: string): string {
   return describeEntry({ name, fn, type: fn, debugSource: null, development: false }).id;
 }
@@ -1329,7 +1375,8 @@ function pairSamples(
 function onStateInteraction(event: Event): void {
   const wantState = config.captureState;
   const wantRenders = config.captureRenders;
-  if (!wantState && !wantRenders) return;
+  const wantA11y = config.captureA11y;
+  if (!wantState && !wantRenders && !wantA11y) return;
 
   // The first sample of the gesture is the `before`; a later interaction in the
   // same gesture keeps it. This listener is `capture: true` on the document, so
@@ -1345,6 +1392,9 @@ function onStateInteraction(event: Event): void {
     : wantRenders
       ? sampleRenders(config.renderNodeCap)
       : null;
+  // Cheap by construction — `document.activeElement` and the modal containers,
+  // and no element walk at all. This is the one reading taken inside the click.
+  const a11yBefore = pendingState ? pendingState.a11yBefore : wantA11y ? sampleFocus() : null;
   if (pendingState) clearTimeout(pendingState.timer);
 
   const eventTime = event.timeStamp;
@@ -1388,9 +1438,47 @@ function onStateInteraction(event: Event): void {
         });
       }
     }
+    if (a11yBefore) {
+      /*
+       * The judgement is `core/a11y`'s and is called from here rather than from
+       * the content script, which is a departure from the two samples above and
+       * is worth the sentence. Those send observations because the *budget*
+       * decision belongs on the testable side; this has no budget to spend, and
+       * the one thing it can only do in this world is read a fiber to say which
+       * component a violation lives in. Sending a record per element so the
+       * content script could do the join would put the page's whole DOM on a
+       * postMessage to save nothing. Every rule still lives in `core/a11y`,
+       * where the tests drive it with no browser in sight.
+       */
+      const { sample, elements } = sampleA11y(config.a11yNodeCap);
+      const findings = auditA11y({ nodes: [], walked: 0, capped: false, ...a11yBefore }, sample);
+      const note = a11yNote({ nodes: [], walked: 0, capped: false, ...a11yBefore }, sample);
+
+      if (findings.length || note) {
+        emit({
+          kind: 'a11y',
+          eventTime,
+          findings: findings.map((finding) => {
+            const el = finding.node === null ? null : (elements[finding.node] ?? null);
+            const component = el ? componentOf(el) : null;
+            return {
+              check: finding.check,
+              wcag: finding.wcag,
+              level: finding.level,
+              label: finding.label,
+              detail: finding.detail,
+              ...(finding.caveat ? { caveat: finding.caveat } : {}),
+              ...(component ? { component } : {}),
+            };
+          }),
+          ...(sample.capped ? { capped: true } : {}),
+          ...(note ? { note } : {}),
+        });
+      }
+    }
   }, config.stateSettleMs);
 
-  pendingState = { before, renders, timer };
+  pendingState = { before, renders, a11yBefore, timer };
 }
 
 /** Drops a sample nobody will claim — a recording that stopped, a page that left. */

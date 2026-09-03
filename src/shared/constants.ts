@@ -618,6 +618,30 @@ export const CAPTURE_RENDERS = true;
 export const RENDER_NODE_CAP = 1500;
 
 /**
+ * Whether the accessibility audit runs during a recording.
+ *
+ * **Off**, and the default was chosen from a measurement rather than from a
+ * preference: the settled walk calls `getComputedStyle` once per element and
+ * climbs for a backdrop, which is real style-recalculation work on a page of
+ * any size. Every other recorder default is something almost every recording
+ * wants; this is a question a person asks of a particular screen. It costs
+ * nothing while off — there is no listener and no walk — and the flow says
+ * `a11y.read: false` so an absent finding is never read as a clean bill.
+ */
+export const CAPTURE_A11Y = false;
+
+/**
+ * Elements one accessibility walk visits before it stops.
+ *
+ * Its own number rather than `RENDER_NODE_CAP`, because it bounds a different
+ * tree: that one counts React fibers and this one counts DOM elements, and a
+ * page's element count is neither a fraction nor a multiple of its fiber count
+ * in any way worth relying on. Sharing the number would have made two limits
+ * move together for no reason anyone could state later.
+ */
+export const A11Y_NODE_CAP = 1500;
+
+/**
  * Components one step may report as having re-rendered.
  *
  * A step where three hundred components re-rendered has a different problem

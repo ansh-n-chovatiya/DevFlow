@@ -60,6 +60,7 @@ import type {
   Step,
   StepRender,
   StepStateDelta,
+  StepA11yFinding,
 } from '../shared/types.js';
 import type { CapturedComponent } from '../shared/messages.js';
 import { stripReactRef } from '../core/react/attribution.js';
@@ -598,6 +599,43 @@ async function attachRenders(
     ...(index !== -1 && renders.length ? { recordedSteps } : {}),
     flowRenders,
   });
+  if (!written.ok) await reportError(written.error);
+}
+
+/**
+ * One step's accessibility findings, written onto the step.
+ *
+ * Unlike `attachRenders` this writes no flow-level record, and the absence is
+ * the design rather than an omission. Whether the audit ran at all is decided
+ * by a setting the recording already froze, and whether a walk was cut is on
+ * the step's own note — so the flow's summary is derived from those two at read
+ * time by `core/a11y`. Nothing accumulates in storage that could drift from the
+ * steps it claims to summarise.
+ *
+ * The write happens even when `findings` is empty, provided there is a note: a
+ * step whose walk was cut and reported nothing is reporting on the cut, which
+ * is the same rule `attachRenders` keeps for `capped`.
+ */
+async function attachA11y(
+  key: string,
+  findings: StepA11yFinding[],
+  note: string | undefined,
+): Promise<void> {
+  if (!findings.length && !note) return;
+
+  const stored = await getLocal(['recordedSteps', 'recordingActive']);
+  if (!stored.ok || !stored.value.recordingActive) return;
+
+  const recordedSteps = stored.value.recordedSteps ?? [];
+  const index = recordedSteps.findIndex((step) => stepKey(step) === key);
+  if (index === -1) return;
+
+  recordedSteps[index] = {
+    ...recordedSteps[index],
+    a11y: { findings, ...(note ? { note } : {}) },
+  };
+
+  const written = await setLocal({ recordedSteps });
   if (!written.ok) await reportError(written.error);
 }
 
@@ -1526,6 +1564,17 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
       captureQueue = captureQueue.then(() =>
         attachRenders(message.key, message.renders, message.capped, message.note).catch(
           (error: unknown) => console.warn('DevFlow: renders not attached', error),
+        ),
+      );
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    case 'STEP_A11Y': {
+      // Behind the capture queue, for `STEP_DOM_DELTA`'s reason.
+      captureQueue = captureQueue.then(() =>
+        attachA11y(message.key, message.findings, message.note).catch((error: unknown) =>
+          console.warn('DevFlow: a11y findings not attached', error),
         ),
       );
       sendResponse({ ok: true });

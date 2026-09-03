@@ -28,6 +28,7 @@ import type {
   StepRender,
   StepStateDelta,
   TreeGroup,
+  StepA11yFinding,
 } from './types.js';
 import type { Pos1 } from '../core/react/positions.js';
 import type { ComponentStamp } from '../core/react/stamp.js';
@@ -156,6 +157,26 @@ export interface StepRendersMessage {
   /** The walk stopped at `recording.renderNodeCap` — see `FlowRenders.capped`. */
   capped?: boolean;
   /** Why there is less here than expected, in the reader's words. */
+  note?: string;
+}
+
+/**
+ * One step's accessibility findings, merged in by key.
+ *
+ * Sent separately and merged exactly as `StepRendersMessage` is, and it carries
+ * no flow-level flag where that one carries `capped`. There is nothing to
+ * carry: whether the audit ran is a settings question the flow already answers,
+ * and whether a walk was cut is on the step's own note — so the flow's summary
+ * is *derived* from the steps at read time rather than accumulated in storage.
+ * That is ADR 0007's rule, and it has the property that matters here: a
+ * recording already on disk gets a sharpened summary from a later release.
+ */
+export interface StepA11yMessage {
+  type: 'STEP_A11Y';
+  /** `timestamp:type`, exactly as `stepKey` builds it. */
+  key: string;
+  findings: StepA11yFinding[];
+  /** What was not checked. Sent even with no findings, which is the point. */
   note?: string;
 }
 
@@ -395,6 +416,7 @@ export type WorkerRequest =
   | StepDomChangesMessage
   | StepStateDeltaMessage
   | StepRendersMessage
+  | StepA11yMessage
   | FinishRecording
   | Precapture
   | AnnotateScreenshot
@@ -498,6 +520,7 @@ export interface ResponseByType {
   STEP_DOM_CHANGES: OkResponse;
   STEP_STATE_DELTA: OkResponse;
   STEP_RENDERS: OkResponse;
+  STEP_A11Y: OkResponse;
   PRECAPTURE: OkResponse;
   ANNOTATE_SCREENSHOT: AnnotateScreenshotResponse;
   REACT_META: OkResponse;
@@ -668,6 +691,43 @@ export interface AgentRenderMessage {
 }
 
 /**
+ * What the page audited of one interaction's settled DOM.
+ *
+ * The findings arrive already judged and already attributed, which is a
+ * departure from `AgentStateMessage` and `AgentRenderMessage` and is worth the
+ * sentence. Those two send observations because the *budget* decision belongs
+ * on the testable side; this one has no budget decision to make in the page,
+ * and the one thing it can only do there is the attribution — a fiber is
+ * readable from the MAIN world and from nowhere else. Sending a record per
+ * element so the content script could join them would put a page's whole DOM
+ * on a `postMessage` to save nothing.
+ *
+ * `core/a11y` still holds every rule; the agent calls it, and the tests drive
+ * it directly with no browser in sight.
+ */
+export interface AgentA11yMessage {
+  __devflow_source__: string;
+  kind: 'a11y';
+  eventTime: number;
+  findings: AgentA11yFinding[];
+  /** The walk stopped at `recording.a11yNodeCap` — see `FlowA11y.capped`. */
+  capped?: boolean;
+  /** What was not checked, in the words a reader needs. */
+  note?: string;
+}
+
+/** Structurally `StepA11yFinding`, and not an import of it, for the reason above. */
+export interface AgentA11yFinding {
+  check: string;
+  wcag: string;
+  level: 'A' | 'AA';
+  label: string;
+  detail: string;
+  caveat?: string;
+  component?: string;
+}
+
+/**
  * What the page saw of one component that re-rendered.
  *
  * Structurally `RenderObservation` from `core/render`, and deliberately not an
@@ -822,6 +882,7 @@ export type AgentMessage =
   | AgentReactMetaMessage
   | AgentStateMessage
   | AgentRenderMessage
+  | AgentA11yMessage
   | AgentScriptsMessage;
 
 // ── Content script → injected agent ──────────────────────────────────────────
@@ -945,6 +1006,17 @@ export interface AgentConfig {
    * not need to cross should not.
    */
   renderNodeCap: number;
+  /** `recording.a11y` — whether the settled DOM is audited for accessibility. */
+  captureA11y: boolean;
+  /**
+   * `recording.a11yNodeCap` — elements one accessibility walk visits.
+   *
+   * Its own number rather than `renderNodeCap`'s, because it bounds a different
+   * tree: one counts React fibers and this counts DOM elements. Unlike
+   * `renderNodeCap` its cost lands on the recording rather than on the person —
+   * the walk it bounds runs after the app has settled, never inside the click.
+   */
+  a11yNodeCap: number;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -12,7 +12,7 @@
  * `settings-page.test.ts` opens the Advanced disclosure on the real page and
  * counts what appears.
  *
- * This file holds the half that is not visible: that each of the forty-two is
+ * This file holds the half that is not visible: that each of the forty-three is
  * actually *read* by the process it names, and that each says what a bad value
  * costs. A Tier 2 control that does nothing would be worse here than anywhere
  * else on the screen — these are the settings whose symptom is a recording that
@@ -54,12 +54,12 @@ import {
 const tier2 = (FIELDS as readonly Field[]).filter((field) => field.tier === 2);
 
 describe('the table', () => {
-  it('wires all forty-two, so the disclosure holds no control that does nothing', () => {
+  it('wires all forty-three, so the disclosure holds no control that does nothing', () => {
     /*
      * the list reads as twenty-two because it pairs four of them off —
      * `BUNDLE_CACHE_ENTRIES / BUNDLE_CACHE_BYTES`, `REACT_BUFFER_SIZE / _TTL_MS`
      * — and names two groups by their shape ("the three send/health/remote
-     * TIMEOUT_MS", "thumbnail WIDTH/HEIGHT/QUALITY"). That is twenty-six.
+     * TIMEOUT_MS", "thumbnail WIDTH/HEIGHT/QUALITY"). That is twenty-seven.
      *
      * The last two are `react.prewarmTtlMs` and `ui.launcherTimeoutMs`, which
      * the tier tables list in no tier at all. Phase 3 ruled both Tier 2 and handed them
@@ -97,7 +97,7 @@ describe('the table', () => {
      * too, because whether a backend accepts a header is a fact about that
      * backend and only its owner knows it.
      */
-    expect(tier2).toHaveLength(42);
+    expect(tier2).toHaveLength(43);
     expect(tier2.filter((field) => field.wired !== true)).toEqual([]);
     expect(WIRED).toHaveLength(FIELDS.length);
   });
@@ -156,7 +156,7 @@ describe('the table', () => {
     expect(consequenceApplies(field('react.bundleCacheBytes'), 400 * 1024 * 1024, true)).toBe(true);
   });
 
-  it('freezes the twenty-six that shape a recording, and leaves the rest live', () => {
+  it('freezes the twenty-seven that shape a recording, and leaves the rest live', () => {
     /*
      * The freeze, applied to Tier 2. A setting the *recorder* reads while a recording
      * runs has to be frozen or the flow describes two rules at once; a setting
@@ -179,6 +179,12 @@ describe('the table', () => {
      * next would report a component as having re-rendered in the second and not
      * the first, with nothing in the recording to say the cap had moved rather
      * than the app.
+     *
+     * The accessibility cap is frozen on the render cap's argument exactly: a
+     * step audited to fifteen hundred elements and a step audited to five
+     * thousand are not comparable, and a violation absent from the first is
+     * absent because of the cap rather than because the page was clean — which
+     * is the one thing an accessibility report must never be wrong about.
      *
      * And the mutation observer's two, for the same argument a third time: a
      * step whose observer watched four hundred records and a step whose
@@ -211,6 +217,7 @@ describe('the table', () => {
       'react.maxComponentChain',
       'react.maxFiberWalk',
       'react.prewarmTtlMs',
+      'recording.a11yNodeCap',
       'recording.domMaxChanges',
       'recording.domMutationCap',
       'recording.renderMaxChanges',
