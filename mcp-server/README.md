@@ -292,6 +292,16 @@ machine and turns it into rows in the accumulated graph. Every other write this
 server accepts is checked to have come from the DevFlow extension; this one
 cannot be, because the sender is your backend, which has no extension origin.
 
+**Any exporter, in any language.** There is no DevFlow adapter to install and no
+supported-language list to be on. What this endpoint reads is OTLP/JSON —
+OpenTelemetry's own wire format, not one of DevFlow's — so a Python backend under
+`opentelemetry-instrumentation`, a Go service under `otlptracehttp`, or anything
+else that speaks OTLP joins on exactly the two variables below. The *frontend* is
+what has to be a page DevFlow can record; the backend only has to export spans. A
+span is already language-neutral: its service and operation names are what become
+nodes in the graph, and the trace id the browser minted is what joins them to the
+recording.
+
 Then point your exporter at this server:
 
 ```sh

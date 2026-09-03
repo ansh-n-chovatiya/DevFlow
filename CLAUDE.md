@@ -168,15 +168,21 @@ repo already runs on, each agent holding a disjoint file set and forbidden to
 edit anyone else's. That pattern **is** L2; its units are the same thing with
 the ownership and the merge written down instead of held in one head.
 
-**L2's dispatch half is not installed here, so check before relying on it.**
-The `ctx` plugin pinned on this machine is `0.1.0`, whose CLI stops at `spec` —
-`plan`, `start`, `merge` and `handoff` are subcommands it does not have, so
-`.ctx/plans/` cannot be filled and `/ctx:plan` does not exist. The repo has them;
-the installed copy does not, and both call themselves `0.1.0`, so nothing detects
-the gap for you. Until it is updated, L2 in this repo means the spec plus the
-disjoint-ownership subagent pattern run by hand. Confirm with
-`ctx plan --help` rather than trusting this paragraph, which was true when it was
-written.
+**L2's dispatch half is installed — but keep checking rather than trusting this.**
+The `ctx` plugin pinned on this machine is `0.1.1`, and its CLI carries `plan`,
+`plan-unit`, `plan-check`, `start`, `merge`, `unit`, `worktree` and `handoff`, so
+`.ctx/plans/` can be filled and `/ctx:plan` exists. This paragraph said the
+opposite until 2026-09-04, and it was right when it was written: `0.1.0`'s CLI
+stopped at `spec`, so L2 here meant the spec plus the disjoint-ownership subagent
+pattern run by hand. It went stale silently, which is the failure mode it warned
+about — an installed copy upgrading underneath a sentence that describes it.
+Confirm with `ctx plan --help` and read the exit code, the way the old paragraph
+told you to; that instruction was the half of it that stayed true.
+
+`plan-check` is worth knowing about specifically: it computes waves and collision
+sets from the unit files, so the ownership table a parallel dispatch runs on can
+be derived rather than asserted. Where a hand-written table and `plan-check`
+disagree, the disagreement is the finding.
 
 **An ADR in `.ctx/decisions/` is immutable.** Overturn one by writing a new ADR
 that supersedes it, never by editing the old one. The record of having changed

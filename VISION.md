@@ -3,6 +3,39 @@
 
 ---
 
+> **How to read this document.**
+>
+> This is the aspirational document, and its own subtitle says so: it describes
+> the largest thing DevFlow could become, not the thing that exists.
+> `ROADMAP_AND_PHASES.md` is the truth about what is built, and where the two
+> disagree, the roadmap wins.
+>
+> Several capabilities below have since been **decided against** rather than
+> merely left unbuilt. Those sections are kept rather than cut, because the
+> aspiration is what the refusal was weighed against, and a deleted section is a
+> question the next reader asks again and answers worse. Each now opens with a
+> line naming the ADR that carries the argument.
+>
+> | Section | Status | ADR |
+> |---|---|---|
+> | §4.1 Counterfactual Branching Replay | refused | 0024 |
+> | §5 stages 12–18 — patch, apply, open a PR | refused | 0009, held again in 0020 |
+> | §7.3 Production Time Capsule | **deferred** | 0018 |
+> | §7.4 Prop Drilling Eliminator | refused | 0025 |
+> | §7.9 Multi-Developer Session Intelligence | refused | 0023 |
+> | §10 Tier 3 database agent | refused | 0021 |
+>
+> A refusal and a deferral are different, and the difference is load-bearing.
+> 0018 is a deferral: the capability is wanted and is not scheduled. The other
+> five say the thing should not be built at all, for reasons that do not expire
+> when the schedule changes.
+>
+> Everything else here is simply unbuilt, which is a third thing again. The ADRs
+> live in `.ctx/decisions/` and are immutable — overturn one with a new ADR that
+> supersedes it, never by editing it and never by quietly building the thing.
+
+---
+
 ## 1. Executive Summary & Core Thesis
 
 Most modern AI coding assistants (Copilot, Cursor, Claude Code, Devin) operate as **Static Code Manipulators with Terminal Access**. They inspect codebases, execute shell commands, and read static Abstract Syntax Trees (AST). However, they are fundamentally **blind to runtime reality**. They cannot see the dynamic cascade of state transitions, user interactions, network requests, render lifecycles, and database side-effects in a live environment.
@@ -152,6 +185,20 @@ This transforms the recorder from a log into a reasoning substrate. DevFlow can 
    - Fork the recorded state at any step, inject a different event, and continue replaying in a sandbox.
    - Answers: *"What would have happened if the user had clicked 'Pay Now' instead of 'Save for Later' at step 7?"*
 
+> **Item 4, Counterfactual Branching Replay, is refused — ADR 0024.** The
+> question is usually answerable by recording the other branch, which yields a
+> complete flow rather than a simulated one. Where the branch point genuinely
+> cannot be reached again, the proposed mechanism fails: DevFlow's state snapshot
+> is capped at depth 6, 40 keys, 20 array entries and 200-character strings
+> across at most 8 stores, and those caps are what make reading state cheap
+> enough to do on every interaction. What they produce is a summary, and an
+> application cannot be restored from a summary — while a run restored from a
+> partial one would look, in the report, exactly like the real thing.
+>
+> Items 1–3 shipped. `causedBy` is **derived at read time rather than stamped**
+> onto events — ADR 0007 — so every recording already on disk gets the causal
+> graph and a sharpened rule reaches all of them.
+
 ### 4.2 Source Locator: Omnidirectional Code Intelligence
 
 The existing locator is browser → source. The evolution is multidirectional.
@@ -237,6 +284,14 @@ flowchart TD
 | | 16. Re-run Flow | Replay recorded browser flow; verify button transitions through loading state to `/order-success`. |
 | | 17. Assert Fixed | Verify absence of console errors, HTTP 422s, and check visual regression thresholds. |
 | | 18. Deliver Diff | Open Git branch, output explanatory PR description, and attach video recording of before/after execution. |
+
+> **Stages 12–18 are refused — ADR 0009, held again in 0020.** DevFlow owns
+> stages 1–11: it diagnoses, and it verifies. It does not write the patch, apply
+> it, or open the PR. The caller is the model; DevFlow is the instrument. "Apply
+> patch in memory" (stage 14) has no honest form either — there is no in-memory
+> workspace whose test run means anything. What survives of the verification half
+> is real and shipped: `replay_flow` re-runs the recorded flow, which is stages
+> 16–17 without the three before them.
 
 ### Autonomy Taxonomy & UX Entry Points
 
@@ -338,6 +393,12 @@ When a session recording (PostHog, FullStory, LogRocket) captures a production b
 
 Result: a locally-running, faithful reproduction of a production bug — without prod database or infrastructure access.
 
+> **Deferred — ADR 0018.** This is a deferral rather than a refusal: the
+> capability is wanted, and it is not scheduled. What exists today is the near
+> half — §7.7's incident timeline and the production crash ingest in Phase 4.1 —
+> which reaches a production error and the commit it arrived at, without the
+> Docker sandbox, the build checkout or the HAR replay.
+
 ### 7.4 Prop Drilling Eliminator
 DevFlow observes which data flows through prop drilling chains at runtime (not just statically) and identifies:
 - Props passed 4+ levels deep without transformation
@@ -345,6 +406,13 @@ DevFlow observes which data flows through prop drilling chains at runtime (not j
 - Context values that are read-only at every consumption site
 
 It proposes concrete refactors with auto-generated code changes and live blast-radius analysis: *"Move `userId` to UserContext — it's prop-drilled through 6 layers. Here are the 8 affected files."*
+
+> **Refused — ADR 0025.** Prop drilling is a syntactic property of the source,
+> and lint rules and codemods find it today, in the editor. Runtime observation
+> adds only that the chain really mounts and how often, and DevFlow does not have
+> even that cheaply: `memoizedProps` is read for reference identity in render
+> blame, never by value. The half that would actually save work — generating the
+> refactor — is ADR 0009, now refused three times.
 
 ### 7.5 Render Performance Autopilot
 Automatically detects performance anti-patterns from recorded runtime data and suggests specific fixes:
@@ -399,6 +467,15 @@ When multiple developers on the same team run DevFlow against the same codebase:
 - Preserve institutional knowledge about why components are designed the way they are
 
 This transforms DevFlow from a per-developer tool into a **team intelligence layer**.
+
+> **Refused — ADR 0023.** Duplicated debugging is a real cost, but the ARKG holds
+> observations and has never held a conclusion. Merging ten developers' graphs
+> yields aggregate statistics about which components are seen most, not *"Alice
+> found the root cause 20 minutes ago"*, and no amount of merging turns one into
+> the other. Delivering that sentence needs people to write findings down, which
+> is a wiki with a different data model — and the payload would be the most
+> sensitive thing the system produces: recordings taken against developers' own
+> environments, which today never leave the machine that made them.
 
 ### 7.10 Autonomous Regression Watcher
 On every PR/commit, DevFlow re-runs recorded "known-good" flows in a headless sandbox and generates **semantic diffs** — not just pass/fail:
@@ -465,6 +542,15 @@ DevFlow is not a debugging tool that also does other things. It is a **developme
 | **Tier 3 (Enterprise)** | DevFlow backend agent | Automatic SQL query capture + DB column lineage |
 
 Tier 1 is always the default. Every feature must work usefully without Tier 2. Tier 3 is opt-in enterprise. **Never break Invariant 1 (zero-app-dependency) to chase Tier 3 features.**
+
+> **Tier 3 is refused — ADR 0021.** A DevFlow backend agent breaks Invariant 1,
+> which this table's own last line forbids, and the capability it promises is
+> already Tier 2's: a span carrying SQL is what the OTel instrumentation records,
+> and DevFlow reads it. What Tier 3 would add over that is the bind values a
+> parameterised query hides, and the honest way to those is the exporter's own
+> configuration, not an agent of ours inside somebody's database process.
+>
+> Tiers 1 and 2 both shipped in Phase 3.
 
 ---
 
