@@ -318,6 +318,65 @@
       </div>
     </div>
 
+    <!--
+      ── Cascade ────────────────────────────────────────────────────────────
+
+      What one interaction set off, drawn as a graph — Work Stream 3.3.
+
+      A dialog rather than a section inside the step card, because the picture
+      needs the width of the window and the card is one column of a two-column
+      review. It is built entirely by `ui/viewer/cascade.ts`: the columns, the
+      nodes and the connector overlay are all geometry, and geometry written in
+      markup is geometry that cannot follow the data.
+
+      The legend is here rather than generated, because it is the same four
+      sentences on every cascade and they are the part a reader has to be able
+      to find without having asked for it.
+    -->
+    <dialog id="cascade-dialog" class="dialog dialog--cascade">
+      <div class="dialog__header">
+        <div>
+          <h2 class="dialog__title">What this caused</h2>
+          <p id="cascade-subtitle" class="meta"></p>
+        </div>
+        <button
+          id="cascade-close"
+          class="btn btn--ghost btn--icon btn--compact"
+          type="button"
+          aria-label="Close"
+        >
+          <span data-icon="x"></span>
+        </button>
+      </div>
+
+      <div class="dialog__body cascade">
+        <div id="cascade-stage" class="cascade__stage">
+          <svg
+            id="cascade-wires"
+            class="cascade__wires"
+            aria-hidden="true"
+            focusable="false"
+          ></svg>
+          <div id="cascade-layers" class="cascade__layers"></div>
+        </div>
+
+        <ul id="cascade-notes" class="cascade__notes"></ul>
+      </div>
+
+      <div class="dialog__footer cascade__foot">
+        <p class="cascade__legend">
+          <span class="cascade__key" data-basis="subscribed">observed subscription</span>
+          <span class="cascade__key" data-basis="named">name matched</span>
+          <span class="cascade__key" data-basis="echoed">value echoed</span>
+          <span class="cascade__key" data-basis="sampled">seen in the same step only</span>
+        </p>
+        <button id="cascade-replay" class="btn btn--secondary" type="button">
+          <span data-icon="play"></span>
+          <span>Replay</span>
+        </button>
+      </div>
+    </dialog>
+
     <!-- ── Export (structural decision B) ───────────────────────────────── -->
     <dialog id="export-dialog" class="dialog dialog--export">
       <div class="dialog__header">
@@ -810,6 +869,37 @@
       </li>
     </template>
 
+    <!--
+      Cascade nodes — Work Stream 3.3.
+
+      Templates rather than `document.createElement` in `cascade.ts`, for the
+      reason `tpl-step` is one: `tests/viewer-markup.test.ts` holds that every
+      class a controller queries is present in this file, and a graph whose
+      boxes are invented in TypeScript is markup no gate can see. It caught this
+      exact drift the first time the cascade was built.
+    -->
+    <template id="tpl-cascade-layer">
+      <div class="cascade__layer" data-revealed="false"></div>
+    </template>
+
+    <template id="tpl-cascade-node">
+      <article class="cascade__node" tabindex="0">
+        <p class="cascade__node-head">
+          <span data-icon="circle-dot" data-icon-class="cascade__node-icon"></span>
+          <span class="cascade__node-label truncate"></span>
+        </p>
+        <!-- Both removed unless the node carries the claim; never both at once,
+             because `blame.ts` refuses `wasted` on a cut observation. -->
+        <span class="chip cascade__flag" data-flag="wasted">wasted render</span>
+        <span class="chip cascade__flag" data-flag="bounded">observation cut</span>
+        <p class="cascade__node-detail"></p>
+      </article>
+    </template>
+
+    <template id="tpl-cascade-note">
+      <li class="cascade__note"></li>
+    </template>
+
     <template id="tpl-step">
       <article class="step card" tabindex="0">
         <header class="step__head">
@@ -818,6 +908,24 @@
           <h2 class="step__action"></h2>
           <span class="step__delta chip chip--count"></span>
           <span class="step__tools">
+            <!--
+              What this interaction set off — Work Stream 3.3.
+
+              Removed by `buildCard` on a step where nothing observable
+              happened, rather than shown disabled: a click on a link that
+              navigated, with no store, request or re-render seen, is a real and
+              common step, and offering a graph of it is worse than not offering
+              one.
+            -->
+            <button
+              class="btn btn--ghost btn--icon btn--compact"
+              type="button"
+              data-action="cascade"
+              aria-label="What this step caused"
+              title="What this caused"
+            >
+              <span data-icon="network"></span>
+            </button>
             <button
               class="btn btn--ghost btn--icon btn--compact"
               type="button"

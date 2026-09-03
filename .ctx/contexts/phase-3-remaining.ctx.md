@@ -217,24 +217,25 @@ by assuming the caller could address something it cannot.
 - `ROADMAP_AND_PHASES.md` §3.3 and §3.5 carry both arguments in the roadmap's own
   voice.
 
-**One item is still open and is a gap rather than a decision:** the animated
-*"show me everything that renders when I click checkout"* graph (§3.3). Its
-**data** ships twice over — 1.3's causal graph and 1.4's render blame — and
-`ui/viewer/review-view.ts` already reads `FlowRenders` per step and prints it. So
-what is missing is one visualisation, in the **viewer's flow review**, of a
-recording that has already finished.
+**Nothing is open.** The one remaining gap — the animated *"show me everything
+that renders when I click checkout"* graph — shipped as the **cascade** in Flow
+review. `core/cascade` is the join; `ui/viewer/cascade.ts` draws it.
 
-An earlier draft of this note, and of the roadmap line, argued it away as "a
-second component-tree view beside the panel's **Parent tree** and **Siblings**".
-That was the wrong surface — the panel is the locator and nothing proposed here
-belongs in it — and it dressed a gap as a refusal. Corrected in both places. It
-is the one thing in Phases 0–3 somebody could pick up tomorrow without a new
-mechanism.
+Two things in it were got wrong by reasoning and settled in minutes by printing
+the real object, which is this project's most reliable habit and worth restating:
 
-Two questions to settle before starting it: whether an animation earns itself
-over the step-ordered list that already exists, and that "real-time" here means
-replaying a finished recording, not watching a live page — §3.3 having settled
-that this product holds no live feed.
+- `core/causal` writes a state event's ref as `state:<step>/<store id>/<n>`, not
+  `state:N.1`. The rebuilt ref matched nothing, every render fell through to the
+  weakest basis, and the picture looked entirely reasonable. `eventRef` exists so
+  that nothing else builds a ref; the fix was to stop building one.
+- A console line under a failing request has **two** parents — the step
+  (`attributed medium`) and the request (`named high`). Layering by shortest path
+  therefore drew the error beside the request rather than after it, hiding the
+  only edge that said anything. Layers now come from the strongest incoming edge.
+
+The refusal at the centre of it is the one to preserve: a component with no
+observed subscription and no matching context name hangs off the **interaction**,
+never off a store that merely moved in the same step.
 
 **State at close:** `npm run verify` EXIT=0 on `main`, 146 test files, 3246
 tests. Eleven commits ahead of `origin/main` and **unpushed; pushing has not been

@@ -92,3 +92,28 @@ would need ambient bookkeeping on every page), and the animated "show me
 everything that renders when I click checkout" graph is not built — 1.3 and 1.4
 already ship its data, so what is missing is a visualisation, and a second
 component-tree view beside the panel's own would be the two-renderers mistake.
+
+## Addendum (2026-09-03) — the cascade
+
+The audit after this task asked whether anything in Phases 0–3 was still
+buildable. One thing was, and one line of this repository's own roadmap had
+dressed it as a refusal: the animated render graph in §3.3 was argued away as "a
+second component-tree view beside the panel's Parent tree and Siblings", which is
+the wrong surface — the panel is the locator, and `ui/viewer/review-view.ts`
+already reads `FlowRenders` per step. Corrected first, then built.
+
+Shipped: `src/core/cascade/index.ts` (pure — the evidence-gated join),
+`src/ui/viewer/cascade.ts` (columns in the DOM, wires in one SVG overlay, an
+ordered reveal), the dialog and three templates in `src/viewer.html`, styles in
+`viewer.css` with confidence carried in weight and dash rather than hue, and
+`tests/cascade.test.ts` — 22 tests, most of them about the edge a render was
+**not** given.
+
+`npm run verify` EXIT=0 — 147 test files, 3271 tests. Three mutations killed the
+suite: guessing a cause for an unexplained render, ordering a layer so wasted
+renders fall out under budget, and flattening the confidence rank so layers come
+from shortest path again.
+
+`tests/viewer-markup.test.ts` earned its keep twice here, catching five invented
+Lucide icon names that would have rendered as nothing at all, and a graph whose
+boxes were built in TypeScript where no gate could see them.

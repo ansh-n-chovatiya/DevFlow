@@ -42,6 +42,15 @@ did this". Screenshots are captured per step. Stop when the bug has happened.
 them. Each step shows what was done, what broke, and — on a React page — the
 component that rendered the element, with a click through to its source.
 
+**See what a click set off.** **What this caused** on any step draws the cascade:
+the stores that moved, the components that re-rendered, the requests that went
+out and the console lines that came back, in causal order. Every arrow says what
+it is made of — whether DevFlow *observed* that component reading that store, or
+only matched a name, or only saw the two happen in the same step. A component
+with no evidence connecting it to anything hangs off the interaction rather than
+off whatever store happened to move, because a graph that joined those would be
+inventing the answer.
+
 **Pick a component.** **Pick component** arms a crosshair; click any element and
 DevFlow walks the React tree above it, names the component, and resolves it
 through the page's source maps back to the original file, line and column. On a
@@ -103,7 +112,7 @@ status key at the top of [`ROADMAP_AND_PHASES.md`](./ROADMAP_AND_PHASES.md).
 | **Phase 0** | Accumulating Runtime Knowledge Graph (ARKG) — the foundational data layer | In progress: the graph, its ingestion pipeline and its three MCP tools are in. `state_keys` and `git_commits` nodes wait on Phases 1 and 3 |
 | **Phase 1** | Runtime-to-Source Intelligence: source mapping with confidence scoring, causal threading, "Why did this render?" | Partly done: source mapping and the locator are the shipped product. Causal threading, state-store inspection and render blame are not started |
 | **Phase 2** | Autonomous bug reproduction, "Why is this value here?" provenance, Interaction-to-Test compiler, natural language app navigator | Started: the Interaction-to-Test compiler exports Playwright and Cypress. The rest is Months 4–6 |
-| **Phase 3** | Full-stack wire & DB lineage (OTel), Living Architecture Map, Temporal Diff & regression detection, Source → Browser live link | Closed as scoped: trace headers, OTel span ingest, value lineage to the backend, cross-deploy comparison and the Living Architecture Map are all in. The map turned out not to need a live connection — it is a reading with an age on it, taken on demand, because a tool call is a moment and not a stream. The Vue/Svelte/RSC adapters are deferred to Phase 5 as the three separate work streams they are |
+| **Phase 3** | Full-stack wire & DB lineage (OTel), Living Architecture Map, Temporal Diff & regression detection, Source → Browser live link | Closed: trace headers, OTel span ingest, value lineage to the backend, cross-deploy comparison, the Living Architecture Map and the cascade are all in. The map turned out not to need a live connection — it is a reading with an age on it, because a tool call is a moment and not a stream. The Vue/Svelte/RSC adapters are deferred to Phase 5 as the three separate work streams they are |
 | **Phase 4** | Production telemetry ingestion, autonomous regression watcher (CI), self-healing CI bot, Accessibility Autopilot | Months 10–12 |
 | **Phase 5** | Team intelligence, counterfactual replay, platform-level ambient intelligence | Year 2+ |
 
@@ -118,7 +127,7 @@ The ultimate experience: a developer right-clicks a broken button, types *"Why i
 | **Popup** | the toolbar button | start, pause and stop a recording |
 | **Panel** | the DevTools panel, "React Locator" | locating: picking, the full component tree — **Parent tree**, **Siblings** — and **Recent**. Also **Read architecture**, which is about the page rather than about any pick |
 | **Library** | opens in a tab | every flow you have kept |
-| **Flow review** | a flow in that tab | one recording, step by step, with annotation, export and send |
+| **Flow review** | a flow in that tab | one recording, step by step, with annotation, export and send — and **What this caused** on any step, which draws what the interaction set off |
 | **Settings** | the extension's options page | the whole table, grouped by concept |
 
 Picking is the panel's, and only the panel's. The popup used to offer it too,
