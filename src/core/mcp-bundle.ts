@@ -352,3 +352,25 @@ export type {
   ContrastReading,
   NameSource,
 } from './a11y/index.js';
+
+/*
+ * The regression check's judgement, on this side because the runner is a
+ * subprocess and a subprocess is the least testable thing in this repository.
+ * What mode a report is in decides what every line of it means, and that
+ * decision is here where a test can drive it without spawning a browser.
+ */
+export {
+  compareWire,
+  endpointKey,
+  implicatedFiles,
+  renderRegressionReport,
+  runVerdict,
+} from './regression/index.js';
+export type {
+  FlowRun,
+  ObservedCall,
+  RunMode,
+  RunVerdict,
+  WireChange,
+  WireChangeKind,
+} from './regression/index.js';

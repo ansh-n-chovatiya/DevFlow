@@ -1,7 +1,7 @@
 {
   "name": "devflow-mcp-server",
   "version": "3.1.1",
-  "description": "MCP server exposing browser flows recorded by the DevFlow Chrome extension — steps, console errors, network calls and screenshots — to Claude Code.",
+  "description": "MCP server exposing browser flows recorded by the DevFlow Chrome extension \u2014 steps, console errors, network calls and screenshots \u2014 to Claude Code.",
   "type": "module",
   "main": "server.js",
   "bin": {
@@ -15,7 +15,9 @@
     "replay.js",
     "git.js",
     "otel.js",
-    "README.md"
+    "README.md",
+    "regression.js",
+    "regression-cli.js"
   ],
   "license": "MIT",
   "author": "Ansh Chovatiya",

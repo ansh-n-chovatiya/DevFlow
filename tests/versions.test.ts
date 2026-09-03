@@ -123,6 +123,13 @@ describe('the published MCP server', () => {
      * on. The user turns the variable on, sees the same sentence, and has no
      * thread to pull. Every other missing file here degrades into silence; this
      * one degrades into a wrong answer.
+     *
+     * `regression.js` and `regression-cli.js` are the seventh and eighth, and
+     * they fail the way `install.js` does rather than the way `arkg.js` does:
+     * they are reached only from `devflow-mcp regression`, so a publish without
+     * them passes every test that runs the server and throws
+     * `ERR_MODULE_NOT_FOUND` on the one command a CI workflow runs — in
+     * somebody else's pipeline, on a red build they did not cause.
      */
     expect(server.files).toEqual([
       'server.js',
@@ -133,6 +140,8 @@ describe('the published MCP server', () => {
       'git.js',
       'otel.js',
       'README.md',
+      'regression.js',
+      'regression-cli.js',
     ]);
   });
 

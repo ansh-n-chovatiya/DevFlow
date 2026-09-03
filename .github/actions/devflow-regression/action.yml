@@ -1,0 +1,71 @@
+name: DevFlow regression check
+description: >-
+  Replay the flows committed to this repository against the current checkout and
+  report what changed. Prints the report and sets it as an output; publishing it
+  is the calling workflow's decision.
+
+inputs:
+  flows:
+    description: Directory holding committed flows.
+    required: false
+    default: .devflow/flows
+  mode:
+    description: >-
+      "mocked" serves the responses each recording captured, so a pass proves the
+      journey completes and says nothing about your server. "live" talks to
+      whatever this branch built, so statuses and latencies are real.
+    required: false
+    default: mocked
+  base:
+    description: Ref to compare changed files against, e.g. origin/main. Optional.
+    required: false
+    default: ''
+  strict:
+    description: Fail the step when the check could not decide, not only when it regressed.
+    required: false
+    default: 'false'
+
+outputs:
+  report:
+    description: The report, for a workflow that means to publish it.
+    value: ${{ steps.check.outputs.report }}
+  verdict:
+    description: clean, regressed or inconclusive.
+    value: ${{ steps.check.outputs.verdict }}
+
+runs:
+  using: composite
+  steps:
+    # The switch is the same one `replay_flow` is behind, and it is set here
+    # rather than defaulted inside the tool: this runs the repository's own test
+    # runner against its own application, and a workflow file is where somebody
+    # deliberately asks for that.
+    - name: Run the check
+      id: check
+      shell: bash
+      env:
+        DEVFLOW_REPLAY: '1'
+      run: |
+        set -o pipefail
+        args=(--flows "${{ inputs.flows }}" --mode "${{ inputs.mode }}" --out devflow-regression.txt)
+        if [ -n "${{ inputs.base }}" ]; then args+=(--base "${{ inputs.base }}"); fi
+        if [ "${{ inputs.strict }}" = "true" ]; then args+=(--strict); fi
+
+        # The exit code is read directly and never through a pipe: a pipeline
+        # reports the *last* command's status, which is how a red gate reads as
+        # a green one.
+        set +e
+        npx --yes devflow-mcp-server regression "${args[@]}"
+        code=$?
+        set -e
+
+        {
+          echo 'report<<DEVFLOW_EOF'
+          cat devflow-regression.txt 2>/dev/null || echo 'no report was written'
+          echo 'DEVFLOW_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+        verdict=$(head -n 1 devflow-regression.txt 2>/dev/null | sed -n 's/.*— \([a-z]*\) (.*/\1/p')
+        echo "verdict=${verdict:-inconclusive}" >> "$GITHUB_OUTPUT"
+
+        exit $code
