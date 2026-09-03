@@ -268,8 +268,10 @@ Nothing below is ticked on the strength of that branch.
 ## Phase 3: Full-Stack Wire & Database Lineage (Months 7–9)
 **Objective:** Connect frontend user interactions to backend endpoints, microservices, and database queries. Introduce the Living Architecture Map and Temporal Diff.
 
-> **Where this phase stands: 3.4, 3.1 (through Tier 2) and 3.2 are shipped, and
-> 3.3 and 3.5 are not started.**
+> **Where this phase stands: 3.1 (through Tier 2), 3.2, 3.3 and 3.4 are shipped;
+> 3.5 is deferred to Phase 5 §5.4 as three work streams, with the argument in
+> §3.5 below and in ADR 0017. Phase 3 is closed as scoped, and Phase 4 depends on
+> none of what was deferred.**
 >
 > 3.4 went first because it needed only the commit stamp and `compare_flows`,
 > both one step away, and because it closed the three Phase 0 items — `git_sha`,
@@ -287,7 +289,15 @@ Nothing below is ticked on the strength of that branch.
 > **3.5 is out of scope as a unit and should be planned as three.** Vue 3,
 > Svelte 5 and React Server Components do not share React's fiber tree and
 > nothing in `src/core/react/` transfers, so each adapter is a Phase-1-sized body
-> of work. Starting one and leaving two would be worse than starting none.
+> of work. Starting one and leaving two would be worse than starting none. That
+> reading held: 3.5 is now deferred to Phase 5 §5.4 in those three pieces.
+>
+> 3.3 went last because it was the one whose *mechanism* was unsettled rather
+> than merely unbuilt, and the unsettling turned out to be a word. It was carried
+> as needing a live channel from the server back to an open tab — which is true
+> only if the tool must pull, and it does not: the extension already pushes, and
+> what the roadmap called a feed is a reading with an age on it. §3.3 has the
+> argument.
 
 ### Work Stream 3.1: Distributed Trace Correlation
 
@@ -428,15 +438,25 @@ Nothing below is ticked on the strength of that branch.
   **One definition of "which calls are traced" replaced two on the way.** `tracedCallsOf` moved into `core/otel` because there are now three callers and two of them are on the far side of the bundle. The server's own copy numbered steps by position while every renderer beside it prefers the step's own `stepNumber`, so `get_backend_trace({step})` filtered on one number and printed the other. DevFlow's sender renumbers on the way out, which is why nobody had seen it; `POST /flows` accepts a flow from any local process that reaches the port without an `Origin` header, which is why that was not a reason to leave two. (An earlier draft of this sentence said "any page the browser visits" and that is false: `extensionOrigin` admits a missing origin or an extension's, and a browser attaches one to every cross-origin POST. The input is untrusted either way — the writer is a local process rather than a visited site.)
 
 ### Work Stream 3.3: Living Architecture Map
-- [ ] **Real-Time Component Graph:**
-  - Continuously observe the running app and display an up-to-date architecture map
-  - Which components are currently mounted, subscribed state stores, active API calls
-  - Updates in real-time as the developer navigates the app
-- [ ] **Interactive Graph Queries:**
-  - *"Show me everything that renders when I click checkout"* → animated real-time graph
-  - *"Which components depend on `cartState`?"* → highlighted graph with source links
-- [ ] **MCP Tool:**
-  - `get_living_architecture()` → current snapshot of the full component/state/API graph
+- [x] **Real-Time Component Graph:** — **shipped as a reading with an age on it, and "real-time" is the word that did not survive contact.**
+
+  The roadmap asked for a graph that "updates in real-time as the developer navigates". A model calling an MCP tool asks **once**, at a moment, and reads **one** answer; there is no frame to render a stream into and no reader watching it arrive. So "real-time" here can only ever mean *fresh at the moment it was read*, and the honest unit of that is a reading that carries its own age — never a feed. This is the same correction `get_full_lineage(domNodeId)` and `compare_flows_across_deploys(flowId, sha1, sha2)` needed, and it is written out here for the same reason: a signature that reads well and cannot be built is worse than one that was corrected.
+
+  Everything is built around not losing the age. `takenAt` is a required field of the reading rather than an optional annotation; the server **refuses a reading without one** (`400`, and the message says why) because a map with no age is this feature's one way of being actively misleading; the age and the URL are the first line of the answer, above anything a reader would act on; and past ten minutes the sentence changes from *this is mounted* to *this was the last reading, take another*. The reading is still printed when stale — withholding it would leave a reader with no map at all — but it is not offered under the present tense.
+
+  **The persistent channel was costed and refused.** `.ctx/contexts/phase-3-remaining.ctx.md` recorded the blocker correctly: every path into the MCP server is the extension *pushing* over loopback, and there is no channel back to an open tab. That is only a cost if the tool must **pull**. Reversing the direction — the page agent takes one bounded reading, the extension pushes it over the channel that already exists beside `POST /arkg/ingest-component` — needs no socket, no persistent connection and no MV3 service worker kept awake for a feature that may never be called. What a held-open socket would buy is nothing a model can use: the answer would still be one snapshot taken at the moment of the call. What it would cost is permanent, on every page.
+
+  - [x] Which components are currently mounted, and which React contexts each reads — one bounded breadth-first walk in `src/injected/architecture.ts`, under the recorder's own `recording.renderNodeCap`, installing nothing.
+  - [~] **Active API calls are not in the reading, and this is a refusal rather than an omission.** A mounted tree is readable in one pass because React keeps it; an in-flight request leaves no trace on that tree, so recording one means ambient bookkeeping on every page the agent is injected into — which is every page — for a feature nobody may have switched on. That is precisely the trade `v3.2.0` made with its commit hook and was reverted for. The endpoints an application calls are already in `get_app_architecture`, accumulated and labelled as accumulated, and the answer points there.
+  - [x] The walk installs nothing, patches nothing and subscribes to nothing. It takes **one** reading, not two, so it does not even need `render.ts`'s double-buffer pairing.
+- [x] **Structure, never values.** — **a shape decision, not a budget.** The reading carries component names, their source paths where the page knows them, and which contexts they read. No prop, no hook state, no store contents, and there is nowhere in the wire shape for one to sit — not capped, not redacted, absent — which is the only version of that promise a later caller cannot loosen by passing a bigger budget. The reason is that a recording is values and somebody pressed Start and chose in the send dialog what left the browser, while a reading is taken while somebody reads code, through a path with no dialog in front of it.
+- [~] **Interactive Graph Queries:** — **the data ships; the animated graph does not, and is not this repository's to build.**
+  - [x] *"Which components depend on `cartState`?"* is answered: every context in the reading carries the components observed depending on it, which is the `subscribes_to` edge read live instead of accumulated. It inherits that edge's limit exactly — a module-level Zustand store with no provider leaves no dependency on a consumer's fiber (ADR 0005) — and the answer says so rather than printing an empty section that reads as "nothing subscribes to anything".
+  - [ ] *"Show me everything that renders when I click checkout" → animated real-time graph.* Not built. The **data** for it is already shipped twice over — 1.4's render blame says what re-rendered under a step, and 1.3's causal graph says what a click caused — so what is missing is an animation, in a DevTools panel, of a recording that has already finished. That is a visualisation of existing facts rather than a new capability, and building a second component-tree view beside the panel's **Parent tree** and **Siblings** to host it is the two-markdown-renderers mistake in a new place.
+- [x] **MCP Tool:**
+  - `get_living_architecture(url?)` — the URL argument is the one addition to the roadmap's signature, and it is there because readings are held per page: a developer with two tabs open has two, and the freshest is not always the one being asked about. A miss names the pages that *are* held, because a typo and an unread page are two situations with two next moves and neither is "the application is empty".
+  - **It does not write to the ARKG, and that is deliberate.** Every other ingest on the server accumulates — a pick raises a frequency, a flow adds edges. A reading is a census of one moment rather than an observation of behaviour, and folding it in would inflate exactly the counts the graph exists to keep honest: a component mounted on a page nobody interacted with would count as often "seen" as one somebody exercised, and `get_anomalies` reads those counts.
+  - **Nothing survives a server restart, by design.** A saved map's only possible use is to answer a question wrongly — handing a reader yesterday's map of a page that is not open. So readings live in memory, the most recent eight pages, and this work stream adds no retention ceiling, no sweep and no line in `~/.devflow/config.json`, which every other thing the server stores needed.
 
 ### Work Stream 3.4: Temporal Diff & Regression Detection
 - [x] **Cross-Deploy Flow Comparison:** — **shipped, and it is a join rather than a second comparison.** `compare_flows` already answers what differs between two runs: where they stop doing the same thing, which endpoints answered differently, what only one of them calls, which errors only one logs. Building a second comparison beside a working one is the mistake this repository has already made once, with its two markdown renderers, and `src/core/mcp-bundle.ts` exists because of it. So the new work is the commit join and nothing else — which is also why this was the cheapest of Phase 3's five work streams by a wide margin, and why it went first.
@@ -455,9 +475,17 @@ Nothing below is ticked on the strength of that branch.
   - `compare_flows_across_deploys(flow, sha?, otherSha?)` — the signature above, for the reason above.
 
 ### Work Stream 3.5: Framework-Agnostic Adapters
-- [ ] **Vue 3 / Nuxt Adapter:** Reactivity Proxy and template AST mapper.
-- [ ] **Svelte 5 / SvelteKit Adapter:** Runes & Signals inspector.
-- [ ] **Next.js App Router & Server Components:** Trace across RSC wire protocol and Client Components.
+**Deferred to Phase 5 §5.4, as three work streams rather than one. This line is the decision, not a gap** — see `.ctx/decisions/0017-framework-adapters-are-deferred-as-three.md`.
+
+Vue 3, Svelte 5 and React Server Components do not share React's fiber tree, and **nothing in `src/core/react/` transfers**: that directory is fifteen modules — `fiber.ts`, `owner.ts`, `table.ts`, `chains.ts`, `classify.ts`, `needle.ts`, `stamp.ts`, `search.ts` and the source-map engine — and every entry point into it is fiber-shaped. Each adapter is therefore a Phase-1-sized body of work with its own runtime to measure, and this phase's preamble already said the consequence: *starting one and leaving two would be worse than starting none*, because two of the three would then read as promised.
+
+Three further things say the same, and they were written before this decision rather than to justify it. "What NOT to Build" flags Vue and Svelte before Phase 3 with *"each adapter is a major investment; deep React beats shallow multi-framework"*. Phase 5 §5.4 already carries the same three frameworks at deeper scope, so deferring is a move to where they were always going rather than an invention. And Phase 4 depends on none of them — it is production telemetry, IDE integration, git forensics and CI, all of which are framework-agnostic already — so nothing is blocked by this.
+
+**The RSC bullet is not the same kind of work as the other two, and should not be planned beside them.** A server component never mounts in the browser: there is no runtime tree to adapt, only a wire protocol to read. That makes it closer to `core/otel` — which this project has now built — than to `core/react`, and it is the one of the three with a plausible route that does not start from scratch. It is still not started here, because starting it would be starting one of three.
+
+- [ ] **Vue 3 / Nuxt Adapter:** Reactivity Proxy and template AST mapper. → Phase 5 §5.4.
+- [ ] **Svelte 5 / SvelteKit Adapter:** Runes & Signals inspector. → Phase 5 §5.4.
+- [ ] **Next.js App Router & Server Components:** Trace across RSC wire protocol and Client Components. → Phase 5 §5.4, and to be scoped against `core/otel` rather than `core/react`.
 
 ---
 

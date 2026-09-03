@@ -31,6 +31,7 @@ import type {
 } from './types.js';
 import type { Pos1 } from '../core/react/positions.js';
 import type { ComponentStamp } from '../core/react/stamp.js';
+import type { ArchitectureSnapshot, PageReading } from '../core/architecture/index.js';
 
 /**
  * One component the agent found above an interaction.
@@ -336,6 +337,25 @@ export interface CancelPick {
 }
 
 /**
+ * Take one reading of a tab's mounted component tree, and send it to the local
+ * graph — Work Stream 3.3, the Living Architecture Map.
+ *
+ * `tabId` for `StartPick`'s reason: the panel asks about the window it inspects,
+ * never the one it is in.
+ *
+ * The worker is the right owner of the round trip rather than a relay for half
+ * of it, because two things have to happen after the page answers and neither
+ * belongs to a DevTools page: the reading is stamped with a clock (`core/
+ * architecture` is pure and has none) and it is pushed to the MCP server over
+ * loopback. A panel that did both would hold a network relationship with a
+ * local server, which no surface in this extension has.
+ */
+export interface SnapshotArchitecture {
+  type: 'SNAPSHOT_ARCHITECTURE';
+  tabId: number;
+}
+
+/**
  * The compiled source text of one component from the last pick, by tree position.
  *
  * `fn.toString()` has to happen in the page's own world, where the function
@@ -368,6 +388,7 @@ export type WorkerRequest =
   | DevtoolsOpened
   | StartPick
   | CancelPick
+  | SnapshotArchitecture
   | ReadComponentSource
   | HighlightComponent
   | StepDomDelta
@@ -415,6 +436,40 @@ export interface ComponentSourceResponse {
   source: string | null;
 }
 
+/**
+ * What a reading of the mounted tree amounts to, for the surface that asked.
+ *
+ * The snapshot comes back as well as going to the server, because the panel that
+ * asked has something to say either way and cannot find out from a fire-and-
+ * forget write. `sent` is deliberately separate from a successful reading: a page
+ * read perfectly well and a server that is not running are an ordinary
+ * combination — the ordinary one, in fact, for anybody who has not started the
+ * MCP server — and a surface told only "failed" would send its user to debug the
+ * page rather than to start the server.
+ */
+/**
+ * What the *content script* hands back, one hop below `ArchitectureResponse`.
+ *
+ * The reading, and nothing about the server. It is a separate type from the
+ * worker's answer because the two hops know different things and neither should
+ * pretend to the other's: the content script can say what the page holds and has
+ * no clock and no socket, while the worker stamps the reading and pushes it. A
+ * single shared type would have the content script returning a `sent` field it
+ * cannot fill.
+ */
+export interface ArchitectureReadingResponse {
+  reading: PageReading | null;
+}
+
+export interface ArchitectureResponse {
+  /** The reading, or null when the page has no React on it or the walk threw. */
+  snapshot: ArchitectureSnapshot | null;
+  /** Whether it reached the local graph. False is ordinary — see above. */
+  sent: boolean;
+  /** Why it did not reach the graph, when it did not. Never a stack. */
+  error?: string;
+}
+
 export interface ResponseByType {
   FETCH_CONTENT: FetchContentResponse;
   DEVTOOLS_OPENED: OkResponse;
@@ -434,6 +489,7 @@ export interface ResponseByType {
    */
   START_PICK: PickResult;
   CANCEL_PICK: OkResponse;
+  SNAPSHOT_ARCHITECTURE: ArchitectureResponse;
   READ_COMPONENT_SOURCE: ComponentSourceResponse;
   HIGHLIGHT_COMPONENT: OkResponse;
   /** Resolves once the capture is done, so the page can restore its indicator. */
@@ -478,6 +534,8 @@ export type ContentRequest =
   | { type: 'CLEAR_STEPS' }
   /** Arm the picker in this tab's page. Relayed to the agent as a control message. */
   | { type: 'START_PICK' }
+  /** Take one reading of the mounted component tree — Work Stream 3.3. */
+  | { type: 'SNAPSHOT_ARCHITECTURE' }
   | { type: 'CANCEL_PICK' }
   | { type: 'READ_COMPONENT_SOURCE'; group: TreeGroup; index: number }
   | { type: 'HIGHLIGHT_COMPONENT'; group: TreeGroup; index: number | null };
@@ -687,7 +745,38 @@ export interface AgentPickMessage {
 export type PickQuery = { id: number } & (
   | { kind: 'source'; group: TreeGroup; index: number }
   | { kind: 'highlight'; group: TreeGroup; index: number | null }
+  /**
+   * One reading of what is mounted on the page — Work Stream 3.3.
+   *
+   * It rides this channel rather than getting one of its own because it is the
+   * same kind of question the two above are: a fact that cannot cross
+   * `postMessage` as data, because answering it means walking React's fiber
+   * tree, and only the MAIN world can see one. Naming it a `PickQuery` is the
+   * one thing here that reads oddly — nothing is being picked — and a second
+   * channel with its own envelope, its own pending map and its own timeout
+   * would be a worse answer to that than a paragraph. The type is the request/
+   * reply channel to the agent; `PickQuery` is what it has always been called.
+   */
+  | { kind: 'architecture' }
 );
+
+/**
+ * A query as a caller writes it, before the channel numbers it.
+ *
+ * `Omit<PickQuery, 'id'>` is what this used to be spelled at the call sites, and
+ * it was quietly wrong the moment `PickQuery` gained a third member: `Omit` over
+ * a union is not distributive, so it collapses to the keys *every* member has —
+ * which, once one member has neither `group` nor `index`, is neither. The result
+ * was a type error at both existing call sites and would otherwise have been
+ * something worse: had a fourth member happened to share those keys, the union
+ * would have silently widened instead.
+ *
+ * The conditional distributes because `T` is naked, so each member is omitted
+ * from separately and the result is still a discriminated union the `kind` check
+ * narrows.
+ */
+type WithoutId<T> = T extends unknown ? Omit<T, 'id'> : never;
+export type AgentQueryInput = WithoutId<PickQuery>;
 
 /**
  * A query, in the same envelope as `ControlMessage`.
@@ -713,6 +802,16 @@ export interface AgentQueryReply {
   source?: string | null;
   /** `highlight` queries: whether the component was still on the page to draw. */
   ok?: boolean;
+  /**
+   * `architecture` queries: the mounted tree, or null when the page has no
+   * React on it or the walk threw.
+   *
+   * Structure only — no prop, no hook, no store value ever crosses here. See
+   * the header of `core/architecture` for why that is a shape decision rather
+   * than a budget: this reading is taken with nothing recording, through a path
+   * that has no send dialog in front of it.
+   */
+  architecture?: PageReading | null;
 }
 
 export type AgentMessage =

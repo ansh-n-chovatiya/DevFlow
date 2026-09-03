@@ -78,7 +78,7 @@ import {
  * the wrong realm. See the note on `PickQuery` in that file for why the wire
  * shape lives there rather than in `shared/messages.ts`.
  */
-import type { AgentQueryReply, PickQuery } from '../shared/messages.js';
+import type { AgentQueryInput, AgentQueryReply } from '../shared/messages.js';
 
 let isRecording = false;
 let isPaused = false;
@@ -466,7 +466,7 @@ const pendingQueries = new Map<number, (reply: AgentQueryReply | null) => void>(
 let nextQueryId = 1;
 
 /** Asks the page a question about the last pick, resolving null if it never answers. */
-function askAgent(query: Omit<PickQuery, 'id'>): Promise<AgentQueryReply | null> {
+function askAgent(query: AgentQueryInput): Promise<AgentQueryReply | null> {
   const id = nextQueryId++;
 
   return new Promise((resolve) => {
@@ -481,7 +481,9 @@ function askAgent(query: Omit<PickQuery, 'id'>): Promise<AgentQueryReply | null>
     });
 
     window.postMessage(
-      { __devflow_control__: CONTROL_MESSAGE_SOURCE, query: { ...query, id } as PickQuery },
+      // No assertion needed: `AgentQueryInput` distributes over the union, so
+      // spreading the id back on lands in `PickQuery` on its own.
+      { __devflow_control__: CONTROL_MESSAGE_SOURCE, query: { ...query, id } },
       '*',
     );
   });
@@ -592,6 +594,21 @@ chrome.runtime.onMessage.addListener((message: ContentRequest, _sender, sendResp
       // row than claim it drew something.
       void askAgent({ kind: 'highlight', group: message.group, index: message.index }).then(
         (reply) => sendResponse({ ok: Boolean(reply?.ok) }),
+      );
+      return true;
+
+    /*
+     * One reading of the mounted tree, answered from the page for the reason the
+     * two above are: walking React's fiber tree needs the MAIN world.
+     *
+     * A null reading is returned as `snapshot: null` rather than as a failure. A
+     * page with no React on it is most of the web, the agent is injected into
+     * all of it, and a surface told "error" would send its user to debug a page
+     * that is working exactly as it should.
+     */
+    case 'SNAPSHOT_ARCHITECTURE':
+      void askAgent({ kind: 'architecture' }).then((reply) =>
+        sendResponse({ reading: reply?.architecture ?? null }),
       );
       return true;
   }

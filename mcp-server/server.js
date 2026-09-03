@@ -37,6 +37,7 @@ import {
   buildCausalGraph,
   callFailed,
   causesOf,
+  buildArchitecture,
   choosePair,
   commitCaveats,
   compactBody,
@@ -59,6 +60,7 @@ import {
   planActions,
   planReplay,
   readRun,
+  renderArchitecture,
   renderComponents,
   renderDeployDiff,
   renderStep,
@@ -177,6 +179,54 @@ const MAX_CONFIG_BYTES = 64 * 1024;
  * `MAX_CONFIG_BYTES` are not: a bound the POST can raise is not a bound.
  */
 const MAX_PICK_BYTES = 64 * 1024;
+
+/*
+ * The ceiling on one architecture reading. Larger than a pick's, because a
+ * reading of a real app is a few hundred components with their source paths, and
+ * smaller than a flow's by three orders of magnitude, because it carries no
+ * screenshot, no body and no value from the page at all.
+ *
+ * Not configurable, for the reason none of the others is: a bound the POST can
+ * raise is not a bound.
+ */
+const MAX_ARCHITECTURE_BYTES = 512 * 1024;
+
+/**
+ * The living architecture readings, in memory and nowhere else.
+ *
+ * ## Why this is not on disk, unlike every other thing this server is sent
+ *
+ * A flow is a record: somebody made it deliberately, it is worth keeping, and it
+ * is still worth reading next week. A reading of what is mounted is the opposite
+ * kind of fact — it is true of one page at one moment, it is superseded by the
+ * next navigation, and its whole value is its freshness. Writing it to
+ * `~/.devflow` would create a file whose only possible use is to answer a
+ * question wrongly: a reader who restarts the server tomorrow and is handed
+ * yesterday's map has been told about a page that is not open.
+ *
+ * So a restart loses these, and that is correct rather than a limitation. It
+ * also means this feature adds no retention ceiling, no sweep and no line in the
+ * config — the three things every other thing the server stores needed.
+ *
+ * Keyed by URL and capped, so a developer with two tabs open gets both and a
+ * long session does not accumulate one entry per route they visited. Eviction is
+ * oldest-first by reading time, not by insertion: re-reading a page moves it to
+ * the front, which is what makes the cap describe "the pages recently looked at"
+ * rather than "the pages first looked at".
+ */
+const MAX_ARCHITECTURE_READINGS = 8;
+const architectureReadings = new Map();
+
+/** Keep the most recent readings, newest first, and drop the rest. */
+function rememberArchitecture(snapshot) {
+  architectureReadings.set(snapshot.url, snapshot);
+  if (architectureReadings.size <= MAX_ARCHITECTURE_READINGS) return;
+  const ordered = [...architectureReadings.entries()].sort((a, b) => b[1].takenAt - a[1].takenAt);
+  architectureReadings.clear();
+  for (const [url, reading] of ordered.slice(0, MAX_ARCHITECTURE_READINGS)) {
+    architectureReadings.set(url, reading);
+  }
+}
 
 /*
  * The ceiling on one span delivery, larger than a pick's because a batching
@@ -2263,6 +2313,150 @@ const httpServer = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ ok: true, stored }));
     } catch (error) {
       log(`error ingesting component pick: ${error.message}`);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  /*
+   * `POST /architecture` — one reading of what is mounted on an open page.
+   * Work Stream 3.3.
+   *
+   * Guarded and bounded exactly as its neighbours are:
+   *
+   *   - **Same caller rule.** `extensionOrigin`, as `POST /flows`, `POST
+   *     /config` and `POST /arkg/ingest-component`. The port is loopback and
+   *     unauthenticated, so this is what keeps a page the browser happens to
+   *     have open from writing a map of an application it made up.
+   *   - **Its own ceiling.** `MAX_ARCHITECTURE_BYTES`, because the body is read
+   *     into memory before anything has vouched for it.
+   *
+   * What it does *not* do is write to the graph, and that is the decision worth
+   * naming. Every other ingest here accumulates: a pick raises a frequency, a
+   * flow adds edges. A reading must not, because it is a census of one moment
+   * rather than an observation of behaviour, and folding it into the ARKG would
+   * inflate exactly the numbers the graph exists to keep honest — a component
+   * mounted on a page nobody interacted with would count as often "seen" as one
+   * somebody exercised, and `get_anomalies` reads those counts.
+   */
+  if (req.method === 'POST' && req.url === '/architecture') {
+    if (!extensionOrigin(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({ error: 'Architecture readings may only be posted by the DevFlow extension.' }),
+      );
+      return;
+    }
+
+    try {
+      let body = '';
+      let bytes = 0;
+      for await (const chunk of req) {
+        bytes += chunk.length;
+        if (bytes > MAX_ARCHITECTURE_BYTES) {
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              error: `An architecture reading may not exceed ${MAX_ARCHITECTURE_BYTES} bytes.`,
+            }),
+          );
+          req.destroy();
+          return;
+        }
+        body += chunk;
+      }
+
+      let sent;
+      try {
+        sent = JSON.parse(body);
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'An architecture reading must be a JSON object.' }));
+        return;
+      }
+
+      /*
+       * A URL and a time, or nothing.
+       *
+       * Both are load-bearing rather than descriptive. Without the URL there is
+       * nothing to key the reading on and nothing to tell a reader which page
+       * they are looking at; without `takenAt` there is no age, and a map with
+       * no age is this feature's one way of being actively misleading — it would
+       * present some past moment as the present.
+       */
+      const url = typeof sent?.url === 'string' ? sent.url.trim() : '';
+      if (!url) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing required field: url' }));
+        return;
+      }
+      if (!Number.isFinite(sent?.takenAt)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: 'Missing required field: takenAt. A reading with no age cannot be rendered honestly.',
+          }),
+        );
+        return;
+      }
+
+      /*
+       * Rebuilt through `buildArchitecture` rather than stored as it arrived.
+       *
+       * The extension already ran it, so this looks redundant and is not: the
+       * body came off an unauthenticated loopback port, and running the same
+       * pure builder over it is what guarantees the shape the renderer is about
+       * to walk — every component named, every context subscribed to by
+       * somebody, both lists ordered and capped. Trusting the sender's arrays
+       * would mean the renderer is the first code to meet whatever was posted.
+       */
+      const snapshot = buildArchitecture(
+        {
+          url: url.slice(0, 2048),
+          title: typeof sent.title === 'string' ? sent.title.slice(0, 200) : '',
+          ...(typeof sent.reactVersion === 'string' ? { reactVersion: sent.reactVersion.slice(0, 32) } : {}),
+          roots: Number.isInteger(sent.roots) && sent.roots >= 0 ? sent.roots : 0,
+          capped: sent.capped === true,
+          instances: Array.isArray(sent.components)
+            ? sent.components.flatMap((component) =>
+                // Back out of the collapse the sender already did, so one
+                // builder produces every snapshot this server renders. An
+                // instance count is the only thing that has to be reinstated;
+                // everything else is per-component already.
+                Array.from({ length: Math.min(Math.max(1, component?.instances ?? 1), 10_000) }, () => ({
+                  id: String(component?.id ?? '').slice(0, 128),
+                  name: String(component?.name ?? '').slice(0, 128),
+                  depth: Number.isInteger(component?.depth) && component.depth >= 0 ? component.depth : 0,
+                  ...(typeof component?.sourceFile === 'string'
+                    ? { sourceFile: component.sourceFile.slice(0, 1024) }
+                    : {}),
+                  ...(Number.isInteger(component?.sourceLine) && component.sourceLine > 0
+                    ? { sourceLine: component.sourceLine }
+                    : {}),
+                  contextIds: Array.isArray(component?.reads)
+                    ? component.reads.slice(0, 64).map((id) => String(id).slice(0, 64))
+                    : [],
+                })),
+              )
+            : [],
+          contexts: Array.isArray(sent.contexts)
+            ? sent.contexts.slice(0, 64).map((context) => ({
+                id: String(context?.id ?? '').slice(0, 64),
+                label: String(context?.label ?? 'Context').slice(0, 60),
+                kind: String(context?.kind ?? 'context').slice(0, 32),
+              }))
+            : [],
+        },
+        sent.takenAt,
+      );
+
+      rememberArchitecture(snapshot);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, components: snapshot.components.length }));
+    } catch (error) {
+      log(`error ingesting architecture reading: ${error.message}`);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error.message }));
     }
@@ -4419,6 +4613,21 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
         },
         required: ['componentId'],
+      },
+    },
+    {
+      name: 'get_living_architecture',
+      description:
+        'What is mounted on the developer’s open page right now: the component tree as it currently stands, how many instances of each, and which React contexts each component reads. This is a reading with an age on it, not a feed — the extension takes it on demand from the DevTools panel, so it describes one page at one moment and says how long ago that was. Use it to see the shape of the screen in front of the developer; use get_app_architecture for what has been observed over time, with frequencies and failure rates.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: {
+            type: 'string',
+            description:
+              'Which page, when readings are held for more than one. A substring is enough. Omit for the most recent.',
+          },
+        },
       },
     },
     {
@@ -6618,6 +6827,39 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       return text(
         `## Backend trace \u2014 ${flow.json.name ?? args.id}\n\n${sections.join('\n\n')}${pending}`,
       );
+    }
+
+    case 'get_living_architecture': {
+      /*
+       * The three answers below are three different situations and a reader who
+       * cannot tell them apart assumes the worst of them — the shape
+       * `getAnomalyReport` was built into and `stateNote` has in the page agent.
+       *
+       * No reading at all is not "the app has no components": it is nobody
+       * having taken one, and the next move is a button in the panel. A URL
+       * filter that matched nothing is not an empty app either — it is a typo or
+       * a page that has not been read — and it names what *is* held so the
+       * reader can see which.
+       */
+      if (!architectureReadings.size) {
+        return text(
+          'No architecture reading has been taken. This map is read on demand from an open page rather than accumulated, so there is nothing here until somebody takes one: open the DevFlow panel in Chrome DevTools on the page in question and press "Read architecture". Nothing is stored between server restarts, by design — a saved map would describe a page that is no longer open.',
+        );
+      }
+
+      const held = [...architectureReadings.values()].sort((a, b) => b.takenAt - a.takenAt);
+      const wanted = typeof args?.url === 'string' ? args.url.trim().toLowerCase() : '';
+      const matched = wanted ? held.filter((reading) => reading.url.toLowerCase().includes(wanted)) : held;
+
+      if (!matched.length) {
+        return failure(
+          `No reading is held for a URL containing "${args.url}". ` +
+            `Readings are held for: ${held.map((reading) => reading.url).join(', ')}.`,
+        );
+      }
+
+      const [freshest, ...rest] = matched;
+      return text(renderArchitecture(freshest, Date.now(), rest.map((reading) => reading.url)));
     }
 
     case 'get_app_architecture': {

@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+**The Living Architecture Map: Claude can now see what is mounted on the page in
+front of you.** Press **Read architecture** in the DevFlow panel and the
+extension takes one reading of the running app's component tree — every component
+currently mounted, how many instances of each, where it was written when the page
+knows, and which React contexts each one reads. `get_living_architecture` hands
+that to Claude. It answers what the screen *is*, where `get_app_architecture`
+answers what has been *observed over time*; the tool says so in its own output so
+the two are never mistaken for one another.
+
+**It is a reading with an age on it, and the roadmap's word for it does not
+survive contact.** Phase 3 asked for a graph that "updates in real-time as the
+developer navigates". A model calling a tool asks once and reads one answer, so
+"real-time" can only mean *fresh at the moment it was read* — and the honest unit
+of that is a reading that says how old it is, never a feed. Every line of the
+answer is built around not losing that: the age and the URL come first, before
+anything a reader would act on, and past ten minutes the wording changes from
+"this is mounted" to "this was the last reading, take another". The alternative —
+a socket held open from the server back to your browser, with the service worker
+kept awake to hold it — was costed and refused. It buys nothing a model can use,
+and charges every page for it.
+
+**It carries structure and never values.** No prop, no hook state, no store
+contents: component names, their source paths, and which contexts they read. This
+is not a budget that ran out — there is nowhere in the wire shape for a value to
+sit. A recording is values, and you pressed Start and chose in the send dialog
+what left the browser; a reading is taken while you are reading code, through a
+path with no dialog in front of it. The two should not carry the same things.
+
+**Nothing is stored between server restarts, and that is the design.** A saved
+map's only possible use is to describe a page that is no longer open. Readings
+live in memory, the most recent eight pages, and the map adds no retention
+setting, no sweep and no file. It does not write to the knowledge graph either: a
+component mounted on a page nobody interacted with would otherwise count as often
+"seen" as one somebody exercised, and `get_anomalies` reads those counts.
+
+**A page with no React, a reading nobody took, and a page you have not read are
+three different sentences.** Each names the next move, because a reader who
+cannot tell them apart assumes the worst of them — the same rule the anomaly
+report and the recorder's state note were built to.
+
 **`get_value_provenance` now reaches past the response body to the work that
 produced it.** Ask where a value on the screen came from and the answer can now
 carry a fifth layer: the handler that answered the request, the calls it made,

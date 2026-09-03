@@ -73,6 +73,7 @@ import type { Fiber, ComponentFn } from '../core/react/fiber.js';
 import { getDisplayName } from '../core/react/fiber.js';
 import { snapshot, type SnapshotBudget } from '../core/state/snapshot.js';
 import { isSecretStateKey } from '../core/redact/index.js';
+import { reactRoots } from './roots.js';
 
 /**
  * The fields of a fiber this module reads and `core/react/fiber.ts` does not.
@@ -188,79 +189,14 @@ export function forgetStores(): void {
 
 // ── Finding the roots ────────────────────────────────────────────────────────
 
-interface DevToolsHook {
-  renderers?: Map<number, unknown>;
-  getFiberRoots?: (id: number) => Set<{ current?: StateFiber | null }> | undefined;
-}
-
-/**
- * Every React root on the page, asked of React DevTools first.
- *
- * The hook's `getFiberRoots` is the authoritative answer — it is how React
- * itself tells DevTools what it has mounted, it covers roots rendered into
- * places nothing would think to scan, and reading it costs a map lookup. It is
- * only present when the DevTools extension is installed, which on a developer's
- * browser is usual and is never something to depend on, so the container-key
- * scan below stands whether or not it answered.
- *
- * Nothing here assigns to the hook. Installing a renderer of our own to make it
- * appear is what the reverted attempt did to the Redux global, one object over.
+/*
+ * The root finder used to be copied here, with a comment saying it would become
+ * a module on the day a third caller wanted it. `architecture.ts` is that
+ * caller, so it did — `roots.ts`, generic over the fiber type so this file keeps
+ * its own `StateFiber` view rather than widening to one no caller wanted. The
+ * lifecycle argument that kept the copies apart is unaffected: `roots.ts` holds
+ * no state, so nothing there can be warm or cold when this module calls it.
  */
-function reactRoots(): StateFiber[] {
-  const found: StateFiber[] = [];
-  const seen = new Set<StateFiber>();
-
-  const add = (fiber: StateFiber | null | undefined): void => {
-    if (fiber && !seen.has(fiber)) {
-      seen.add(fiber);
-      found.push(fiber);
-    }
-  };
-
-  try {
-    const hook = (window as unknown as Record<string, unknown>)
-      .__REACT_DEVTOOLS_GLOBAL_HOOK__ as DevToolsHook | undefined;
-    if (hook?.renderers && typeof hook.getFiberRoots === 'function') {
-      for (const id of hook.renderers.keys()) {
-        for (const root of hook.getFiberRoots(id) ?? []) add(root?.current);
-      }
-    }
-  } catch {
-    // A hostile or unusual hook object. The scan below is the answer that does
-    // not depend on anyone else's extension being well behaved.
-  }
-
-  for (const el of containerCandidates()) {
-    for (const key of Object.keys(el)) {
-      if (!key.startsWith('__reactContainer$')) continue;
-      const container = (el as unknown as Record<string, unknown>)[key];
-      add(container as StateFiber);
-    }
-    const legacy = (el as unknown as { _reactRootContainer?: { _internalRoot?: { current?: StateFiber } } })
-      ._reactRootContainer;
-    add(legacy?._internalRoot?.current);
-  }
-
-  return found;
-}
-
-/**
- * The same candidate set `hasReactRoot` uses, for the same reason: a React app
- * is nearly always mounted into `<body>` or a direct child of it, and scanning
- * every element on the page to find out would cost more than the walk it feeds.
- */
-function containerCandidates(): Element[] {
-  const out: Element[] = [];
-  if (document.body) {
-    out.push(document.body);
-    for (const child of Array.from(document.body.children)) out.push(child);
-  }
-  for (const id of ['root', 'app', '__next', '__nuxt']) {
-    const el = document.getElementById(id);
-    if (el) out.push(el);
-  }
-  return out;
-}
 
 // ── Recognising a store ──────────────────────────────────────────────────────
 
@@ -404,6 +340,21 @@ function labelFor(kind: StateStoreKind, context: ReactContext, value: unknown): 
   return shape ? `{${shape}}` : 'context';
 }
 
+/**
+ * What kind of store a context value is, without reading it.
+ *
+ * Exported for `architecture.ts`, which names the same four kinds in the living
+ * map that `subscribes_to` names in the graph, and must not invent a fifth
+ * vocabulary for one question. It is `classify` with the reader thrown away:
+ * every check behind it is a `typeof` on a method, so nothing is copied out of
+ * the page and no budget is spent. The map carries structure and never values —
+ * see the header of `core/architecture` — and this is the line that lets it say
+ * "redux" without crossing that.
+ */
+export function classifyKind(value: unknown): StateStoreKind {
+  return classify(value)?.kind ?? 'context';
+}
+
 // ── Discovery ────────────────────────────────────────────────────────────────
 
 /**
@@ -512,7 +463,7 @@ function discover(budget: StateBudget, identify: Identify): void {
     }
   };
 
-  for (const root of reactRoots()) walk(root);
+  for (const root of reactRoots<StateFiber>()) walk(root);
 
   for (const [context, ids] of dependents) {
     const store = byContext.get(context);

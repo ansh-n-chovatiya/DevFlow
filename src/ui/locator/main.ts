@@ -520,6 +520,49 @@ async function toggleCategory(category: HideableCategory): Promise<void> {
 
 // ── Actions ──────────────────────────────────────────────────────────────────
 
+/**
+ * Read what is mounted on the inspected page and hand it to the local graph —
+ * Work Stream 3.3.
+ *
+ * Every branch below reports something, and the three outcomes are deliberately
+ * three sentences rather than one. A page with no React on it, a reading that
+ * worked, and a reading that worked but reached no server are three different
+ * next moves, and the last is the one that matters: the map was read perfectly
+ * well and the MCP server — which Claude Code starts, not the extension — is not
+ * running. Told simply "failed", somebody would go and debug the page.
+ *
+ * There is no view for the map itself, and that is the honest shape of the
+ * feature rather than an omission. This panel already renders the component tree
+ * around a pick; the map's reader is Claude, through `get_living_architecture`,
+ * and building a second tree view here would be a second answer to a question
+ * the **Parent tree** and **Siblings** sections already answer for a person.
+ */
+async function readArchitecture(): Promise<void> {
+  const button = el<HTMLButtonElement>('architecture-btn');
+  button.disabled = true;
+  try {
+    const answer = await sendToWorker({ type: 'SNAPSHOT_ARCHITECTURE', tabId });
+    if (!answer?.snapshot) {
+      showToast({
+        message: answer?.error ?? 'That page could not be read.',
+        tone: 'neutral',
+      });
+      return;
+    }
+
+    const { components, totalInstances } = answer.snapshot;
+    const read = `Read ${components.length} component${components.length === 1 ? '' : 's'} in ${totalInstances} instance${totalInstances === 1 ? '' : 's'}`;
+
+    if (answer.sent) {
+      showToast({ message: `${read}. Claude can now call get_living_architecture.`, tone: 'success' });
+    } else {
+      showToast({ message: `${read}, but it was not sent. ${answer.error ?? ''}`.trim(), tone: 'neutral' });
+    }
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function copyPath(path?: string): Promise<void> {
   const text = path ?? (state.source ? pathText(state.source) : null);
   if (!text) return;
@@ -779,6 +822,7 @@ function wire(): void {
     el('history-drawer').hidden = true;
   });
   el('history-btn').addEventListener('click', openHistory);
+  el('architecture-btn').addEventListener('click', () => void readArchitecture());
   el('history-close').addEventListener('click', () => {
     el('history-drawer').hidden = true;
   });

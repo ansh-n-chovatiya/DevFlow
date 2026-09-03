@@ -929,6 +929,7 @@ import {
   REACT_PROBE_ATTEMPTS,
 } from '../shared/constants.js';
 import type { CapturedComponent, ControlMessage } from '../shared/messages.js';
+import type { PageReading } from '../core/architecture/index.js';
 import type { PickResult, TreeGroup } from '../shared/types.js';
 import { pos1 } from '../core/react/positions.js';
 import {
@@ -955,6 +956,7 @@ import {
   sampleRenders,
   type RenderSample,
 } from './render.js';
+import { sampleArchitecture } from './architecture.js';
 import { cancelPick, pickedEntry, startPick } from './picker.js';
 import { hide as hideHighlight, highlight } from './highlight.js';
 
@@ -1554,6 +1556,28 @@ function componentSource(group: TreeGroup, index: number): string | null {
 function answerQuery(query: PickQuery): void {
   if (query.kind === 'source') {
     emit({ kind: 'reply', id: query.id, source: componentSource(query.group, query.index) });
+    return;
+  }
+
+  if (query.kind === 'architecture') {
+    /*
+     * The one query answered with nothing recording and no pick outstanding, so
+     * it is the one that has to be cheap unconditionally. It is: a single
+     * bounded breadth-first walk under the recorder's own `renderNodeCap`,
+     * reading no prop, no hook and no store value. See `injected/architecture.ts`.
+     *
+     * A throw is answered `null` rather than left to reject. The agent is in
+     * somebody else's page and a map is a nicety; a reading that failed must
+     * never be the reason a `postMessage` handler dies, taking the recorder's
+     * control channel with it.
+     */
+    let reading: PageReading | null = null;
+    try {
+      reading = sampleArchitecture(config.renderNodeCap, identifyComponent, reactVersion());
+    } catch {
+      reading = null;
+    }
+    emit({ kind: 'reply', id: query.id, architecture: reading });
     return;
   }
 

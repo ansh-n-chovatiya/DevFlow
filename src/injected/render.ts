@@ -72,6 +72,7 @@ import type { RenderChange } from '../shared/types.js';
  * runtime. Both modules mint component ids through the recorder's own function
  * for the same reason: an id minted twice is an id that joins to nothing.
  */
+import { reactRoots } from './roots.js';
 import type { Identify } from './state.js';
 
 /**
@@ -167,75 +168,12 @@ export interface RenderSample {
 
 // ── Finding the roots ────────────────────────────────────────────────────────
 
-interface DevToolsHook {
-  renderers?: Map<number, unknown>;
-  getFiberRoots?: (id: number) => Set<{ current?: RenderFiber | null }> | undefined;
-}
-
-/**
- * Every React root on the page, asked of React DevTools first.
- *
- * The same two answers `state.ts` uses and in the same order — the hook's
- * `getFiberRoots` when the extension is installed, the container-key scan
- * always — and deliberately a second copy of them rather than an import: the
- * two modules are the two halves of the page agent that may not depend on each
- * other's lifecycle, and `state.ts` exports no root finder. If a third caller
- * ever wants this, the three share a module; two is not yet an abstraction.
- *
- * Nothing here assigns to the hook. Installing a renderer of our own to make it
- * appear is what the reverted attempt did, one object over.
+/*
+ * The root finder used to be copied here, with a comment saying it would become
+ * a module on the day a third caller wanted it. `architecture.ts` is that
+ * caller, so it did — `roots.ts`, generic over the fiber type so this file keeps
+ * its own `RenderFiber` view rather than widening to one no caller wanted.
  */
-function reactRoots(): RenderFiber[] {
-  const found: RenderFiber[] = [];
-  const seen = new Set<RenderFiber>();
-
-  const add = (fiber: RenderFiber | null | undefined): void => {
-    if (fiber && !seen.has(fiber)) {
-      seen.add(fiber);
-      found.push(fiber);
-    }
-  };
-
-  try {
-    const hook = (window as unknown as Record<string, unknown>)
-      .__REACT_DEVTOOLS_GLOBAL_HOOK__ as DevToolsHook | undefined;
-    if (hook?.renderers && typeof hook.getFiberRoots === 'function') {
-      for (const id of hook.renderers.keys()) {
-        for (const root of hook.getFiberRoots(id) ?? []) add(root?.current);
-      }
-    }
-  } catch {
-    // A hostile or unusual hook object. The scan below does not depend on
-    // anyone else's extension being well behaved.
-  }
-
-  for (const el of containerCandidates()) {
-    for (const key of Object.keys(el)) {
-      if (!key.startsWith('__reactContainer$')) continue;
-      add((el as unknown as Record<string, unknown>)[key] as RenderFiber);
-    }
-    const legacy = (
-      el as unknown as { _reactRootContainer?: { _internalRoot?: { current?: RenderFiber } } }
-    )._reactRootContainer;
-    add(legacy?._internalRoot?.current);
-  }
-
-  return found;
-}
-
-/** The candidate set `hasReactRoot` and `state.ts` both use, for their reason. */
-function containerCandidates(): Element[] {
-  const out: Element[] = [];
-  if (document.body) {
-    out.push(document.body);
-    for (const child of Array.from(document.body.children)) out.push(child);
-  }
-  for (const id of ['root', 'app', '__next', '__nuxt']) {
-    const el = document.getElementById(id);
-    if (el) out.push(el);
-  }
-  return out;
-}
 
 // ── Reading one component ────────────────────────────────────────────────────
 
@@ -356,7 +294,7 @@ function readContexts(fiber: RenderFiber): Reading[] {
  * a handful of property reads.
  */
 export function sampleRenders(nodeCap: number): RenderSample {
-  const roots = reactRoots();
+  const roots = reactRoots<RenderFiber>();
   const sample: RenderSample = {
     entries: [],
     byFiber: new Map(),

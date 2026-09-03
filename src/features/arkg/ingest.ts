@@ -2,12 +2,14 @@
  * Telling the local knowledge graph about a component somebody picked.
  *
  * Impure — it reaches the network — so it lives in `features/` and could not
- * live in `core/`. One POST, to the MCP server on loopback, and it is the *only*
- * thing this extension sends to the graph. A recorded flow is added by the
- * server itself, in the handler that receives it: the server already holds the
- * flow, already parsed and already checked, and a second POST carrying the same
- * megabytes back would only be a second chance for the two sides to disagree
- * about what was recorded.
+ * live in `core/`. Two POSTs, both to the MCP server on loopback, and between
+ * them they are the *only* thing this extension sends the server outside a
+ * recording: a component somebody picked, and — since Work Stream 3.3 — one
+ * reading of what is mounted on a page. A recorded flow is not among them. It is
+ * added by the server itself, in the handler that receives it: the server
+ * already holds the flow, already parsed and already checked, and a second POST
+ * carrying the same megabytes back would only be a second chance for the two
+ * sides to disagree about what was recorded.
  *
  * ## Why a pick is worth sending at all
  *
@@ -43,6 +45,7 @@
  */
 
 import { load as loadSettings } from '../settings/index.js';
+import type { ArchitectureSnapshot } from '../../core/architecture/index.js';
 import type { PickedComponent } from '../../shared/types.js';
 
 /**
@@ -142,6 +145,80 @@ export async function ingestComponentPick(component: PickedComponent): Promise<v
     // A server that is not running, an address that is not a URL, a timeout.
     // All three are the ordinary case for a best-effort background write, and
     // none of them is worth a line in the console of every pick.
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Send one reading of a page's mounted tree to the local server — Work Stream
+ * 3.3, the Living Architecture Map.
+ *
+ * ## Why this rides the same switch, and the same fire-and-forget shape
+ *
+ * `mcpAutoSend`, for `ingestComponentPick`'s reason and with more room to spare:
+ * the question that switch answers is *may this browser talk to the local server
+ * without the user pressing anything*, and that is exactly what this does. What
+ * it sends is strictly less than a pick's neighbour in one respect that matters
+ * — a reading carries **no value from the page**. No prop, no hook, no store
+ * contents; component names, their source paths when the page knows them, and
+ * which contexts they read. The shape has nowhere for a value to sit, which is
+ * the version of that promise a later caller cannot loosen by passing a bigger
+ * budget. See the header of `core/architecture`.
+ *
+ * ## It cannot fail anything, and reports whether it worked anyway
+ *
+ * Never throws, never rejects — a developer taking a reading must not wait on a
+ * socket. But unlike `ingestComponentPick` it *returns* what happened, because
+ * this one has a surface waiting: somebody pressed a button and is owed a
+ * sentence. A server that is not running is the ordinary case rather than an
+ * error, and the sentence for it has to say so, or a user will go and debug a
+ * page that read perfectly well.
+ */
+export async function ingestArchitecture(
+  snapshot: ArchitectureSnapshot,
+): Promise<{ sent: boolean; error?: string }> {
+  const abort = new AbortController();
+  // Armed after the settings read, because the timeout is one of the settings —
+  // the shape `ingestComponentPick` and `deleteRemoteFlow` both have.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    const settings = await loadSettings();
+    if (!settings.mcpAutoSend) {
+      return {
+        sent: false,
+        error:
+          'Not sent: “Send recordings to Claude automatically” is off, which is also the switch that lets this browser talk to the local server without being asked. Turn it on in Settings → Claude, or read the map here.',
+      };
+    }
+
+    const url = new URL('/architecture', settings.mcpServerUrl);
+    timer = setTimeout(() => abort.abort(), settings['mcp.remoteTimeoutMs']);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(snapshot),
+      signal: abort.signal,
+    });
+
+    if (!response.ok) {
+      return { sent: false, error: `The local server answered ${response.status}.` };
+    }
+    return { sent: true };
+  } catch {
+    /*
+     * One sentence for three causes — a server that is not running, an address
+     * that is not a URL, a timeout — because the reader's next move is the same
+     * for all three and naming which would mean distinguishing them, which
+     * `fetch` does not let this side do reliably.
+     */
+    return {
+      sent: false,
+      error:
+        'The local DevFlow MCP server did not answer. It is started by Claude Code; the map above was still read from the page.',
+    };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
