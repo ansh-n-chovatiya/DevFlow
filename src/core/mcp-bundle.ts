@@ -351,6 +351,7 @@ export type {
   A11ySample,
   ContrastReading,
   NameSource,
+  RenderableFinding,
 } from './a11y/index.js';
 
 /*

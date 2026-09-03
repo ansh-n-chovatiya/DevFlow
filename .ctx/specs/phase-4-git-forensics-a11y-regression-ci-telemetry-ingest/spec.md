@@ -1,7 +1,7 @@
 ---
 ctx_schema: 1
 spec: phase-4-git-forensics-a11y-regression-ci-telemetry-ingest
-status: ready
+status: done
 created: 2026-09-03
 verify:
   - kind: cmd
@@ -227,3 +227,61 @@ onto data that is already correct, so the way it fails is not a wrong number —
 it is a *confident* number over a partial graph. Criteria 10 and 11 exist
 because a regression-bisect answer that does not state its coverage reads
 exactly like one that does.
+
+## Outcome (2026-09-03)
+
+Shipped and merged. `npm run verify` **EXIT=0** — 156 test files, 3437 tests, up
+from 147/3271 at the baseline. Four units built, three closures written, five
+branches merged into `main`.
+
+**Unit A — 4.3 git forensics** (`958f0db`, merge `8606515`). `get_commit_candidates`
+and `get_blast_radius`. Two roadmap promises did not survive: there is no PR
+number anywhere in this system, and `changed_in` alone answers "one commit" where
+git answers "thirty", because `arkg_git_commits` gains a row only when a recording
+arrives at that commit. **The ordering finding came from measurement**: this was
+built to compare commit dates and the first end-to-end run refuted it — `%ct` has
+one-second resolution, so the sighting and the change that followed it read one
+date and the tie resolved to the reassuring answer. The walk is `--topo-order` and
+position places a commit; dates are the fallback and the answer says which it used.
+`getBlastRadius` had been built, tested and reachable from nothing since Phase 0.
+
+**Unit B — 4.6 accessibility** (`d32c299`, merge `6566748`). Eight checks, six from
+the settled page and two from the sample pair. **Measured in real Chromium**: the
+settled walk is 4.9ms median on a 2107-element page at the 1500 cap, the in-gesture
+reading is under a microsecond, and 542 of 1500 elements had no resolvable backdrop
+— so the refusal to guess one is about a third of the page, not an edge case. Off
+by default from that measurement. "Continuously audit" and "generate a targeted
+fix" are both corrected in the roadmap.
+
+**Unit C — 4.4 regression watcher** (`bec7ff6`, merge `f3a98be`). **The mode design
+came from a measurement too**: `launchPersistentContext` with `--load-extension`
+registers DevFlow's service worker in a headed Chromium and registers nothing in
+Playwright's headless one, so re-render counts and state sequence are refused with
+a reason rather than faked. Mocked mode compares no wire at all — it would measure
+its own fixtures. A run it could not read is `inconclusive`, which outranks
+`regressed`.
+
+**Unit D — 4.1a crash ingest** (`2fdf26f`, merge `6556c5a`). **The fourth
+reachability finding**: Sentry cannot reach a loopback port, so this takes a
+relayed or replayed delivery and says so. It is the one piece of Phase 4 built
+against a documented shape rather than a measured one, and the roadmap names that
+risk. Almost nothing from a payload is kept, and the tests assert each absence.
+
+**Unit E — the closures.** ADR 0018 (Time Capsule → Phase 5), ADR 0019 (the VS Code
+extension, with its query shipped without it), ADR 0020 (holding ADR 0009 against
+the self-healing bot). Roadmap §4.2, §4.5 and the Phase 4 preamble carry all three
+in the roadmap's own voice.
+
+**Fifteen mutations were run across the four units and every one killed the suite.**
+
+**Two defects the criteria caught at the end, both real.** `normalisedFiles` shipped
+with no caller and is deleted. And the MCP server's a11y step part had grown its
+own copy of `renderA11y`'s grouping — the two-markdown-renderers mistake that
+`src/core/mcp-bundle.ts` exists because of. The server now owns only `where`
+(resolving a component id against the recording, which `core/` has no flow to do)
+and calls the one renderer; `tests/mcp-a11y.test.ts` kills the mutation that
+un-does it.
+
+**Left undone, deliberately and named in the roadmap:** Datadog and Bugsnag
+parsers (one provider done properly beats three unverified), an extension-observed
+CI run (needs a display), and the three closures above.

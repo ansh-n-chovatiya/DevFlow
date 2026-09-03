@@ -446,20 +446,42 @@ export function a11yNote(before: A11ySample | null, after: A11ySample): string |
 }
 
 /**
+ * One finding as a *reader* meets it: the judgement, plus where it lives.
+ *
+ * `where` is filled in by whoever holds the recording, because this module has
+ * no flow and cannot turn a component id into a name and a file. It is the one
+ * field the renderer takes and the audit does not produce.
+ */
+export interface RenderableFinding extends A11yFinding {
+  /** "in CartButton src/Cart.tsx:12", or absent when nothing resolved it. */
+  where?: string;
+}
+
+/**
  * The findings as a reader sees them, grouped by criterion.
  *
  * Grouped by WCAG criterion rather than by element because that is the unit a
  * fix is made in: eight buttons missing a name are one decision, and eight rows
  * saying "4.1.2" are eight readings of the same sentence.
+ *
+ * **This is the only place a finding is rendered.** The MCP server's `a11y`
+ * step part had its own copy of this grouping for one commit, which is the
+ * two-markdown-renderers mistake `src/core/mcp-bundle.ts` exists because of —
+ * two renderers over one shape drift, and the one a *model* reads is always the
+ * weaker of them. The server builds `where` and calls this.
  */
-export function renderA11y(findings: readonly A11yFinding[], note?: string, limit = 10): string {
+export function renderA11y(
+  findings: readonly RenderableFinding[],
+  note?: string,
+  limit = 10,
+): string {
   if (!findings.length) {
     return note
       ? `No accessibility violations were found in what was checked. ${note}.`
       : 'No accessibility violations were found in what was checked.';
   }
 
-  const groups = new Map<string, A11yFinding[]>();
+  const groups = new Map<string, RenderableFinding[]>();
   for (const finding of findings) {
     const list = groups.get(finding.wcag) ?? [];
     list.push(finding);
@@ -473,7 +495,7 @@ export function renderA11y(findings: readonly A11yFinding[], note?: string, limi
   for (const [wcag, list] of [...groups].sort((a, b) => b[1].length - a[1].length)) {
     lines.push('', `${wcag} (level ${list[0].level}) — ${list.length}`);
     for (const finding of list.slice(0, limit)) {
-      lines.push(`  ${finding.label}  ${finding.detail}`);
+      lines.push(`  ${finding.label}  ${finding.detail}${finding.where ? `  ${finding.where}` : ''}`);
       if (finding.caveat) lines.push(`      ${finding.caveat}`);
     }
     if (list.length > limit) lines.push(`  … and ${list.length - limit} more`);
