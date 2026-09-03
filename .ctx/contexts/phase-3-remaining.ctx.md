@@ -217,13 +217,24 @@ by assuming the caller could address something it cannot.
 - `ROADMAP_AND_PHASES.md` §3.3 and §3.5 carry both arguments in the roadmap's own
   voice.
 
-**What is still open, and is named in the roadmap rather than hidden here:** the
-animated *"show me everything that renders when I click checkout"* graph. Its
-**data** is shipped twice over — 1.3's causal graph and 1.4's render blame — so
-what is missing is a visualisation of a finished recording, in a panel that
-already has a component-tree view. That is a UI work stream, and building a
-second tree beside **Parent tree** and **Siblings** to host it is the mistake
-`src/core/mcp-bundle.ts` exists because of.
+**One item is still open and is a gap rather than a decision:** the animated
+*"show me everything that renders when I click checkout"* graph (§3.3). Its
+**data** ships twice over — 1.3's causal graph and 1.4's render blame — and
+`ui/viewer/review-view.ts` already reads `FlowRenders` per step and prints it. So
+what is missing is one visualisation, in the **viewer's flow review**, of a
+recording that has already finished.
+
+An earlier draft of this note, and of the roadmap line, argued it away as "a
+second component-tree view beside the panel's **Parent tree** and **Siblings**".
+That was the wrong surface — the panel is the locator and nothing proposed here
+belongs in it — and it dressed a gap as a refusal. Corrected in both places. It
+is the one thing in Phases 0–3 somebody could pick up tomorrow without a new
+mechanism.
+
+Two questions to settle before starting it: whether an animation earns itself
+over the step-ordered list that already exists, and that "real-time" here means
+replaying a finished recording, not watching a live page — §3.3 having settled
+that this product holds no live feed.
 
 **State at close:** `npm run verify` EXIT=0 on `main`, 146 test files, 3246
 tests. Eleven commits ahead of `origin/main` and **unpushed; pushing has not been
