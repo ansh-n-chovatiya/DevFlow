@@ -263,6 +263,38 @@ export const MAX_COMPONENT_CHAIN = 12;
 export const MAX_FIBER_WALK = 2000;
 
 /**
+ * Vnodes one Vue walk may visit before it gives up.
+ *
+ * `MAX_FIBER_WALK`'s counterpart, and it is two orders of magnitude larger for
+ * a measured reason rather than a guessed one. React is walked *upwards* from
+ * the element, so the budget bounds a chain. A Vue production build strips
+ * `__vueParentComponent` from every element, leaving no upward edge at all, so
+ * the walk goes *downwards* from `__vue_app__` looking for the vnode whose `el`
+ * is the target — it bounds a search over the page rather than a climb.
+ *
+ * This number has never been measured against a real application, only against
+ * fixtures. It is the per-click cost of the entire Vue production path, so it
+ * is the first thing to turn into a setting once there is a real page to time
+ * it on. Exhausting it reports `search-exhausted`, which is deliberately not
+ * the same answer as finding nothing.
+ */
+export const VUE_MAX_VNODE_WALK = 20_000;
+
+/**
+ * How many `__svelte_meta.parent` frames are read before the walk gives up.
+ *
+ * 64 is comfortably above the deepest measured chain — 5 frames, SvelteKit dev
+ * — and well below anything that costs a frame on the click path.
+ */
+export const MAX_META_PARENT_WALK = 64;
+
+/** Elements sampled when asking whether *anything* on the page carries a mark. */
+export const PAGE_SCAN_LIMIT = 400;
+
+/** Comment nodes sampled when looking for SSR hydration markers. */
+export const COMMENT_SCAN_LIMIT = 200;
+
+/**
  * How long the content script waits for the component chain before writing the
  * step without it.
  *

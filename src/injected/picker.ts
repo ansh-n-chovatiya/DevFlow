@@ -53,8 +53,8 @@ import {
   findNearestComponentFiber,
   getDebugSource,
   getDisplayName,
-  isElement,
 } from '../core/react/fiber.js';
+import { isElement } from '../core/dom/walk.js';
 import { destroyOverlay, drawOverlay, hideOverlay } from './overlay.js';
 
 const pageWindow = window as unknown as Record<string, unknown>;

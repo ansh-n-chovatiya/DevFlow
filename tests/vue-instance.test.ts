@@ -143,17 +143,21 @@ describe('a declared file', () => {
   });
 
   /*
-   * Vue records a file and never a line. `line` is required by the frozen
-   * contract, so it is the file's first line — where an editor opens a file it
-   * was given no position for — and it is not a number read off the runtime.
-   * Asserted so that the day the contract makes `line` optional, this is the
-   * test that says what to change.
+   * Vue records a file and never a line, so no position is reported at all.
+   *
+   * This test used to assert line 1. That was the contract's fault rather than
+   * Vue's: `Resolution.declared.line` was required, so a component resolved to
+   * a number no runtime had said, and nothing downstream could tell it from one
+   * a runtime had. Wave 3 made `line` optional and this is the assertion that
+   * says so — `undefined` is the whole point, and asserting it is what stops a
+   * later "helpful" default putting the 1 back.
    */
-  it('reports the first line, because Vue records no line anywhere', () => {
+  it('reports no line at all, because Vue records none anywhere', () => {
     const { instances } = plainVueApp(plainVueSentinels(), 'development');
     const resolution = resolveInstance(instances.leaf);
 
-    expect(resolution.kind === 'declared' && resolution.line).toBe(1);
+    expect(resolution.kind === 'declared' && resolution.source).toContain('.vue');
+    expect(resolution.kind === 'declared' && resolution.line).toBeUndefined();
     expect(resolution.kind === 'declared' && resolution.column).toBeUndefined();
   });
 });

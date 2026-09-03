@@ -58,6 +58,7 @@ import type {
   Resolution,
 } from '../core/locate/adapter.js';
 import { declaredFileOf, type VueApp, type VueInstance, type VueVNode } from '../core/vue/instance.js';
+import { climb } from '../core/dom/walk.js';
 import { chainFromInstance } from '../core/vue/chain.js';
 import { findOwnerOfElement, VUE_MAX_VNODE_WALK } from '../core/vue/tree.js';
 import { containerCandidates } from './roots.js';
@@ -76,22 +77,7 @@ function own<T>(el: Element, key: string): T | null {
   return value === undefined || value === null ? null : (value as T);
 }
 
-/**
- * The next element up, crossing out of a shadow root when it has to.
- *
- * `core/react/fiber.ts` carries the same three lines and the same reasoning, and
- * they should be one shared helper — see the integrator note. It is copied
- * rather than imported because an import that reads *"Vue depends on React"* is
- * how the second copy of something much larger gets written next.
- *
- * Vue inside a shadow root was **not** measured by the spike. The hop can only
- * lengthen the search, never redirect it, so it is taken.
- */
-function climb(node: Element): Element | null {
-  if (node.parentElement) return node.parentElement;
-  const host = (node.getRootNode() as ShadowRoot | null)?.host;
-  return host && host.nodeType === 1 ? host : null;
-}
+
 
 /** The mount container above `el`, with its app object, or null. */
 function findMountContainer(el: Element): { container: Element; app: VueApp } | null {

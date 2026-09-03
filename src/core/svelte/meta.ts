@@ -48,18 +48,8 @@
  * `src/injected/svelte.ts`; only the vocabulary and the narrowing are here.
  */
 
-/**
- * How many `parent` frames are read before the walk gives up.
- *
- * A budget, so it is a parameter with a default rather than a literal in the
- * loop. It lives in this module rather than `src/shared/constants.ts` because
- * this unit does not own that file — see the integrator queue in this unit's
- * report; the intended home is beside `MAX_COMPONENT_CHAIN`.
- *
- * 64 is comfortably above the deepest measured chain (5 frames, SvelteKit dev)
- * and well below anything that costs a frame on the click path.
- */
-export const MAX_META_PARENT_WALK = 64;
+export { MAX_META_PARENT_WALK } from '../../shared/constants.js';
+import { MAX_META_PARENT_WALK } from '../../shared/constants.js';
 
 /**
  * Where an element is written, as the compiler recorded it.

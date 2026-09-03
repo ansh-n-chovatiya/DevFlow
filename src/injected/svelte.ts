@@ -45,11 +45,8 @@ import type { FrameworkAdapter, ResolvedChain } from '../core/locate/adapter.js'
 import type { PageEvidence } from '../core/svelte/absence.js';
 import { detectSvelte, resolveSvelteElement, type ResolveOptions, type SvelteGlobals } from '../core/svelte/index.js';
 
-/** Elements sampled when asking whether *anything* on the page carries a mark. */
-export const PAGE_SCAN_LIMIT = 400;
-
-/** Comment nodes sampled when looking for SSR hydration markers. */
-export const COMMENT_SCAN_LIMIT = 200;
+export { COMMENT_SCAN_LIMIT, PAGE_SCAN_LIMIT } from '../shared/constants.js';
+import { COMMENT_SCAN_LIMIT, PAGE_SCAN_LIMIT } from '../shared/constants.js';
 
 /**
  * The property Svelte's dev build writes on every element a component rendered.

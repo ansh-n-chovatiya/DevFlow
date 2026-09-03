@@ -12,3 +12,4 @@ export type { DomChangeBudget, DomChangePlan, DomObservation, RankableChange } f
 export { planDomChanges, rankForBudget, rankOf } from './changes.js';
 export type { DomCollector } from './observe.js';
 export { collect, collectorFull, createCollector, describe, isDevFlowNode } from './observe.js';
+export { climb, interactionTarget, isElement } from './walk.js';

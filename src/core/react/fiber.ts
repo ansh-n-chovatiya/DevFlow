@@ -40,6 +40,7 @@
  */
 
 import { MAX_COMPONENT_CHAIN, MAX_FIBER_WALK } from '../../shared/constants.js';
+import { climb, isElement } from '../dom/walk.js';
 import { ANONYMOUS_NAME, UNSETTLED_LAZY_NAME } from '../locate/id.js';
 
 export interface DebugSource {
@@ -99,9 +100,7 @@ export interface LazyOptions {
 const FIBER_KEY_RE = /^__reactFiber\$|^__reactInternalInstance\$/;
 const CONTAINER_KEY_RE = /^__reactContainer\$|^_reactRootContainer$/;
 
-export function isElement(node: unknown): node is Element {
-  return !!node && (node as Node).nodeType === 1;
-}
+
 
 export function getFiber(el: Element): Fiber | null {
   for (const key of Object.keys(el)) {
@@ -220,37 +219,7 @@ export function hasReactRoot(doc: Document): boolean {
   return false;
 }
 
-/**
- * The next element up, crossing out of a shadow root when it has to.
- *
- * `parentElement` is null on the top node inside a shadow root, which would end
- * the walk one hop short of the component that rendered the host. Web components
- * wrapping React — and React rendering *into* a shadow root — are both real, and
- * in both cases the answer the reader wants is on the other side of the boundary.
- */
-function climb(node: Element): Element | null {
-  if (node.parentElement) return node.parentElement;
 
-  const root = node.getRootNode();
-  const host = (root as ShadowRoot | null)?.host;
-  return isElement(host) ? host : null;
-}
-
-/**
- * The element an interaction actually happened on.
- *
- * `event.target` is retargeted to the shadow *host* for anything inside a shadow
- * root, so it cannot see React mounted in there at all. `composedPath()[0]` is
- * the node that was really hit. Falls back to `target` where `composedPath` is
- * missing — an old browser, or a synthetic event dispatched without it.
- */
-export function interactionTarget(event: Event): Element | null {
-  const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
-  const first = path[0];
-  if (isElement(first)) return first;
-
-  return isElement(event.target) ? event.target : null;
-}
 
 /**
  * Walks up from a DOM element to the nearest fiber backed by a component.
@@ -452,3 +421,4 @@ export function collectChain(
   entries.reverse();
   return { entries, truncated };
 }
+

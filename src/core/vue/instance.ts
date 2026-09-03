@@ -61,7 +61,6 @@
 
 import type { Resolution } from '../locate/adapter.js';
 import { ANONYMOUS_NAME } from '../locate/id.js';
-import { pos1 } from '../locate/positions.js';
 
 /**
  * The component definition — `instance.type`. An object in every build.
@@ -193,18 +192,17 @@ export function resolveInstance(instance: VueInstance): Resolution {
       name: name ?? ANONYMOUS_NAME,
       source: file,
       /*
-       * Vue records a file and no line. There is nothing else on the instance
+       * No line, because Vue records none. There is nothing on the instance
        * that carries one — `__hmrId` is an opaque hash and `__source` was null
        * on every component in every build measured.
        *
-       * `pos1(1)` is the file's first line and stands for "this file, position
-       * unrecorded", which is also where an editor opens a file given no line.
-       * It is not a line read off the runtime, and the contract has no way to
-       * say that: `Resolution.declared.line` is required. That is a defect in
-       * the frozen contract rather than a fact about Vue, and it is written up
-       * for the integrator.
+       * This used to emit `pos1(1)` because `Resolution.declared.line` was
+       * required, which put a number no runtime had said into the output,
+       * indistinguishable from one it had. The contract was the defect and it
+       * was fixed in Wave 3: `line` is optional. An editor still opens the file
+       * at the top, and now does so because the line is absent rather than
+       * because it was invented.
        */
-      line: pos1(1),
     };
   }
 

@@ -52,15 +52,8 @@
 
 import type { VueInstance, VueVNode } from './instance.js';
 
-/**
- * Vnodes one walk may visit before it gives up.
- *
- * Belongs in `src/shared/constants.ts` beside `MAX_FIBER_WALK`, and should be a
- * setting rather than a constant once the walk has been measured on a real
- * application — see the integrator note. It lives here for now because
- * `shared/constants.ts` is owned by another package in this wave.
- */
-export const VUE_MAX_VNODE_WALK = 20_000;
+export { VUE_MAX_VNODE_WALK } from '../../shared/constants.js';
+import { VUE_MAX_VNODE_WALK } from '../../shared/constants.js';
 
 export interface VNodeWalkResult {
   /** The component that rendered the element, or null if it was never reached. */

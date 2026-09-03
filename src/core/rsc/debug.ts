@@ -270,7 +270,15 @@ export function generatedPositionOf(frame: RscStackFrame): { line: number; colum
  * RSC-side map resolved only to a generated `__nextjs-internal-proxy.mjs`.
  */
 export function resolveDeclaredThrough(resolution: Resolution, map: PreparedMap): Resolution {
-  if (resolution.kind !== 'declared' || resolution.column === undefined) return resolution;
+  // Both axes are required: a map lookup takes a position, and `line` became
+  // optional in Wave 3 for runtimes that record a file and nothing else.
+  if (
+    resolution.kind !== 'declared' ||
+    resolution.line === undefined ||
+    resolution.column === undefined
+  ) {
+    return resolution;
+  }
 
   const frame: RscStackFrame = {
     fn: resolution.name,
