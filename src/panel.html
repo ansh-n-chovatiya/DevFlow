@@ -423,6 +423,25 @@
         >
           <span data-icon="settings"></span>
         </button>
+        <!--
+          Read architecture — Work Stream 3.3, the Living Architecture Map.
+
+          Here rather than in the idle view, because it is the one action on this
+          panel that has nothing to do with a pick: it is about the page as a
+          whole, is available in every view, and must stay reachable while a long
+          parent tree is scrolled. It reads what is mounted *now* and hands it to
+          the local server, so `get_living_architecture` can answer from the page
+          the developer is actually looking at.
+        -->
+        <button
+          id="architecture-btn"
+          class="btn btn--ghost btn--icon btn--compact"
+          type="button"
+          title="Read architecture"
+          aria-label="Read the architecture of this page"
+        >
+          <span data-icon="network"></span>
+        </button>
         <span class="status-divider" aria-hidden="true"></span>
         <!--
           Kept in sync by main.ts; seeded here so there is no empty first paint.

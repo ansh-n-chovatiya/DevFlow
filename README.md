@@ -103,7 +103,7 @@ status key at the top of [`ROADMAP_AND_PHASES.md`](./ROADMAP_AND_PHASES.md).
 | **Phase 0** | Accumulating Runtime Knowledge Graph (ARKG) — the foundational data layer | In progress: the graph, its ingestion pipeline and its three MCP tools are in. `state_keys` and `git_commits` nodes wait on Phases 1 and 3 |
 | **Phase 1** | Runtime-to-Source Intelligence: source mapping with confidence scoring, causal threading, "Why did this render?" | Partly done: source mapping and the locator are the shipped product. Causal threading, state-store inspection and render blame are not started |
 | **Phase 2** | Autonomous bug reproduction, "Why is this value here?" provenance, Interaction-to-Test compiler, natural language app navigator | Started: the Interaction-to-Test compiler exports Playwright and Cypress. The rest is Months 4–6 |
-| **Phase 3** | Full-stack wire & DB lineage (OTel), Living Architecture Map, Temporal Diff & regression detection, Source → Browser live link | Mostly done: trace headers, OTel span ingest, value lineage to the backend, and cross-deploy comparison are in. The Living Architecture Map needs a live connection to an open page, which nothing here does yet, and the Vue/Svelte/RSC adapters are three Phase-1-sized work streams rather than one |
+| **Phase 3** | Full-stack wire & DB lineage (OTel), Living Architecture Map, Temporal Diff & regression detection, Source → Browser live link | Closed as scoped: trace headers, OTel span ingest, value lineage to the backend, cross-deploy comparison and the Living Architecture Map are all in. The map turned out not to need a live connection — it is a reading with an age on it, taken on demand, because a tool call is a moment and not a stream. The Vue/Svelte/RSC adapters are deferred to Phase 5 as the three separate work streams they are |
 | **Phase 4** | Production telemetry ingestion, autonomous regression watcher (CI), self-healing CI bot, Accessibility Autopilot | Months 10–12 |
 | **Phase 5** | Team intelligence, counterfactual replay, platform-level ambient intelligence | Year 2+ |
 
@@ -116,7 +116,7 @@ The ultimate experience: a developer right-clicks a broken button, types *"Why i
 | | Where | For |
 | --- | --- | --- |
 | **Popup** | the toolbar button | start, pause and stop a recording |
-| **Panel** | the DevTools panel, "React Locator" | locating: picking, the full component tree — **Parent tree**, **Siblings** — and **Recent** |
+| **Panel** | the DevTools panel, "React Locator" | locating: picking, the full component tree — **Parent tree**, **Siblings** — and **Recent**. Also **Read architecture**, which is about the page rather than about any pick |
 | **Library** | opens in a tab | every flow you have kept |
 | **Flow review** | a flow in that tab | one recording, step by step, with annotation, export and send |
 | **Settings** | the extension's options page | the whole table, grouped by concept |
@@ -173,7 +173,18 @@ part of one step, `get_source_snippet` for the lines the component was written o
 `compare_flows` for a working run beside a broken one, and
 `compare_flows_across_deploys` for two recordings of one flow made at two commits —
 which endpoints answered differently, what shipped in between, and which of the
-changed files DevFlow has actually watched code run in. Screenshots are written to disk
+changed files DevFlow has actually watched code run in.
+
+`get_living_architecture` is the one that is not about a recording at all. Press
+**Read architecture** in the panel and DevFlow reads the page in front of you —
+every component mounted right now, how many of each, and which React contexts
+they read — and Claude can ask for it. It is a reading with an age printed on it
+rather than a live feed, because a tool call is a moment: the answer says how long
+ago it was taken and, once that is more than a few minutes, says so in place of
+claiming the page still looks like that. It carries no prop, no state and no store
+value — structure only — because it is taken while you are reading code rather
+than while you are recording, and nothing about it is stored between server
+restarts. Screenshots are written to disk
 and referenced by absolute path, so a 500-step recording costs nothing in context until
 a specific image is opened.
 

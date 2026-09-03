@@ -62,6 +62,25 @@ Then record a flow in DevFlow and press **Send to Claude**. It lands in
 | `get_app_architecture` | What every recording together says about the app |
 | `get_component_history` | Everything observed about one component |
 | `get_anomalies` | What has started failing or slowing recently |
+| `get_living_architecture` | What is mounted on the open page, as of when it was read |
+
+`get_living_architecture` is the only one that is not about a recording, and it
+is the only one whose answer can go out of date while you read it. It is a
+**reading with an age**, not a feed: somebody presses **Read architecture** in the
+DevFlow panel, the extension takes one bounded walk of the page's component tree
+and posts it here, and the tool renders that with its age and its URL on the first
+line. Past ten minutes the answer stops saying *this is mounted* and starts saying
+*this was the last reading*. It carries structure and no values — component names,
+source paths where the page knows them, and which React contexts each component
+reads — and it is held in memory only, so a server restart loses it, which is
+correct: a saved map can only describe a page that is no longer open.
+
+`get_app_architecture` and `get_living_architecture` answer two different
+questions and each says so in its own output. One is the accumulation over every
+recording and pick, with frequencies and failure rates; the other is a census of
+one page at one moment, which never reaches the graph — a component mounted on a
+page nobody interacted with must not count as often "seen" as one somebody
+exercised.
 
 They are meant to be used in that order rather than all at once:
 `get_flow_summary` costs about a fiftieth of `get_flow`, so finding out whether a

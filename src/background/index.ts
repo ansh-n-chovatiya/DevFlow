@@ -67,7 +67,9 @@ import { flowHost, mergeTrailing, stepKey, type Pending } from '../core/flow/ind
 import { mergeComponents } from '../core/react/table.js';
 import { mergeScripts } from '../features/react/inventory.js';
 import { clearResolverCaches, resolvePending } from '../features/react/resolver.js';
-import { ingestComponentPick } from '../features/arkg/ingest.js';
+import { ingestArchitecture, ingestComponentPick } from '../features/arkg/ingest.js';
+import { buildArchitecture } from '../core/architecture/index.js';
+import type { ArchitectureReadingResponse } from '../shared/messages.js';
 import { buildPayload, pruneSteps } from '../features/mcp/send.js';
 import { sendDefaults } from '../features/export/defaults.js';
 import { readCurrentReact, readCurrentRenders, readCurrentState } from '../features/flows/store.js';
@@ -1763,6 +1765,46 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
       void relayToTab(tabId, { type: 'HIGHLIGHT_COMPONENT', group, index }).then((answer) =>
         sendResponse({ ok: answer.ok }),
       );
+      return true;
+    }
+
+    case 'SNAPSHOT_ARCHITECTURE': {
+      /*
+       * The whole round trip lives here — Work Stream 3.3.
+       *
+       * The page can walk its own fibers and nothing else; the two steps after
+       * that both need something a MAIN-world script and a DevTools page each
+       * lack. `buildArchitecture` needs a clock, because `core/` is pure and has
+       * none, and the reading's `takenAt` is the field the whole feature rests
+       * on: a map without an age is a map presenting a moment as the present.
+       * `ingestArchitecture` needs a socket to loopback, which no surface in this
+       * extension holds but the worker.
+       *
+       * The panel is answered whether or not the server took it, and the two
+       * outcomes are separate fields rather than one. A page that read perfectly
+       * well and a server nobody has started is the ordinary combination for
+       * anybody who has not wired up Claude Code yet, and collapsing it into a
+       * single failure would send them to debug the page.
+       */
+      void relayToTab<ArchitectureReadingResponse>(message.tabId, {
+        type: 'SNAPSHOT_ARCHITECTURE',
+      }).then(async (answer) => {
+        const reading = answer.ok ? (answer.value?.reading ?? null) : null;
+        if (!reading) {
+          sendResponse({
+            snapshot: null,
+            sent: false,
+            error: answer.ok
+              ? 'No React root was found on this page, so there is no mounted tree to map.'
+              : 'That page cannot be read. Reload it and try again.',
+          });
+          return;
+        }
+
+        const snapshot = buildArchitecture(reading, Date.now());
+        const outcome = await ingestArchitecture(snapshot);
+        sendResponse({ snapshot, sent: outcome.sent, ...(outcome.error ? { error: outcome.error } : {}) });
+      });
       return true;
     }
 

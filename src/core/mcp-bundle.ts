@@ -280,3 +280,34 @@ export {
   readTraceId,
   tracedCallsOf,
 } from './otel/index.js';
+
+/*
+ * The Living Architecture Map — Work Stream 3.3.
+ *
+ * The renderer is on this side for the reason every renderer in this file is:
+ * the extension's panel and the MCP tool show one reader the same map, and the
+ * moment there are two of them they disagree. This project has already paid for
+ * that once, which is what the header of this file is about.
+ *
+ * `renderArchitecture` takes `now` as an argument rather than reading a clock,
+ * because `core/` has none — and it needs one, because everything this feature
+ * claims is relative to when the reading was taken. The age is not decoration on
+ * the answer; it is the difference between a map and a lie about the present.
+ */
+export {
+  buildArchitecture,
+  describeAge,
+  isStale,
+  renderArchitecture,
+  DEFAULT_ARCHITECTURE_LIMITS,
+  STALE_AFTER_MS,
+} from './architecture/index.js';
+export type {
+  ArchitectureLimits,
+  ArchitectureSnapshot,
+  ComponentInstanceReading,
+  ContextReading,
+  MountedComponent,
+  MountedContext,
+  PageReading,
+} from './architecture/index.js';
