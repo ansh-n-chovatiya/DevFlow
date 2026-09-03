@@ -184,6 +184,15 @@ part of one step, `get_source_snippet` for the lines the component was written o
 which endpoints answered differently, what shipped in between, and which of the
 changed files DevFlow has actually watched code run in.
 
+Accessibility findings, when the audit was on for a recording, arrive on the step
+they were found in: `get_step_detail` with the `a11y` part gives each violation
+with its WCAG criterion, what was measured, and the component and file it lives
+in. It says nothing about a fix — that is ADR 0009's line, and the caller is the
+model. Where it could not measure something it says so rather than guessing:
+contrast behind a gradient is skipped, not compared against an assumed white, and
+whether focus is *trapped* in a dialog is not tested at all, because that would
+mean pressing Tab in somebody's application.
+
 `get_living_architecture` is the one that is not about a recording at all. Press
 **Read architecture** in the panel and DevFlow reads the page in front of you —
 every component mounted right now, how many of each, and which React contexts
@@ -239,6 +248,7 @@ The ones worth setting on day one:
 | **Read source maps when you locate one component** | the same, for one interactive locate. Deliberately a separate switch: you should be able to stop a slow pick without turning off the pass a recording depends on |
 | **Capture screenshots** | screenshots are most of a flow's size and most of its value; the quality dial sits beside this one |
 | **Capture request/response bodies** | the most useful thing in a flow and the most likely to hold something private. Headers are always stripped; bodies are not |
+| **Audit accessibility while recording** | off by default, and the only capture that is. On, each interaction is followed by a bounded read of the settled page: contrast against the colours the browser actually computed, missing accessible names, controls the keyboard cannot reach, and whether focus moved into a dialog that opened. Every violation names the WCAG criterion and the component it was found in |
 | **Theme** | System, Light or Dark. In the DevTools panel "System" means the theme DevTools itself is set to, which DevTools lets you choose independently of the OS — a panel obeying the OS sits inside a dark DevTools window wearing the light palette |
 
 Settings sync across your Chrome profile, sparsely: only what you have actually

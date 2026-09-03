@@ -94,5 +94,7 @@ export function toAgentConfig(settings: RecordingSettings): AgentConfig {
     stateMaxStores: settings['recording.stateMaxStores'],
     captureRenders: settings['recording.renders'],
     renderNodeCap: settings['recording.renderNodeCap'],
+    captureA11y: settings['recording.a11y'],
+    a11yNodeCap: settings['recording.a11yNodeCap'],
   };
 }

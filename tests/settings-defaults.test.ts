@@ -51,6 +51,8 @@ const SOURCE: Record<SettingKey, unknown> = {
   'recording.statePatchOps': constants.STATE_MAX_PATCH_OPS,
   'recording.renders': constants.CAPTURE_RENDERS,
   'recording.renderNodeCap': constants.RENDER_NODE_CAP,
+  'recording.a11y': constants.CAPTURE_A11Y,
+  'recording.a11yNodeCap': constants.A11Y_NODE_CAP,
   'recording.renderMaxComponents': constants.RENDER_MAX_COMPONENTS,
   'recording.renderMaxChanges': constants.RENDER_MAX_CHANGES,
   'recording.trailingStep': constants.CAPTURE_TRAILING_STEP,

@@ -66,6 +66,8 @@
   "react.useSourceMaps": true,
   "reactCapture": true,
   "reactResolve": true,
+  "recording.a11y": false,
+  "recording.a11yNodeCap": 1500,
   "recording.containerTextCap": 240,
   "recording.domDelta": true,
   "recording.domDeltaMs": 700,

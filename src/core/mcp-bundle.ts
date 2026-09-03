@@ -336,3 +336,19 @@ export type {
   ForensicSubject,
   RadiusComponent,
 } from './forensics/index.js';
+
+/*
+ * The accessibility audit's judgement, on this side for the reason every other
+ * entry here is: the rules are the whole of the feature and they are worth
+ * testing without a browser. The page-side walk in `injected/a11y.ts` measures;
+ * this decides, and both the extension and the MCP server read the same rules.
+ */
+export { auditA11y, a11yNote, contrastRatio, isLargeText, flowA11y, renderA11y } from './a11y/index.js';
+export type {
+  A11yCheck,
+  A11yFinding,
+  A11yNode,
+  A11ySample,
+  ContrastReading,
+  NameSource,
+} from './a11y/index.js';

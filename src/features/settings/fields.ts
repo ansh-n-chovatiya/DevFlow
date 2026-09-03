@@ -37,6 +37,8 @@ import {
   CAPTURE_SCREENSHOTS,
   CAPTURE_RENDERS,
   RENDER_NODE_CAP,
+  CAPTURE_A11Y,
+  A11Y_NODE_CAP,
   RENDER_MAX_COMPONENTS,
   RENDER_MAX_CHANGES,
   CAPTURE_STATE,
@@ -301,6 +303,7 @@ interface NumberField extends Common {
     | "stores"
     | "ops"
     | "fibers"
+    | "elements"
     | "components"
     | "changes"
     | "records";
@@ -724,6 +727,48 @@ export const FIELDS = [
     consequence:
       "The first walk of each pair runs inside the interaction, so raising this is latency the person recording feels. Past the cap components are never compared, and the recording says it was capped rather than that nothing re-rendered.",
     consequenceWhen: { above: RENDER_NODE_CAP },
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  // ── Accessibility ──────────────────────────────────────────────────────────
+  //
+  // Under `recording.` with the two blocks above it, for the reason they give:
+  // §3.6 of the frozen contract enumerates the prefixes this group owns.
+  {
+    key: "recording.a11y",
+    group: "recording",
+    tier: 1,
+    type: "boolean",
+    default: CAPTURE_A11Y,
+    title: "Audit accessibility while recording",
+    // No `consequence`, because no boolean in this table carries one — see the
+    // note on `recording.state`. This is the only recorder capture that is off
+    // by default, and the reason is a measurement rather than a policy: the
+    // settled walk asks the browser for a computed style per element, which is
+    // the one reading here that makes the engine do work rather than handing
+    // over something it already has. So the cost goes in the sentence somebody
+    // reads before switching it on.
+    description:
+      "Contrast against the colours the browser actually computed, missing accessible names, controls the keyboard cannot reach, and whether focus moved into a dialog that opened. Read off the page once it has settled — nothing is installed and nothing is simulated. Costs one extra walk of the page per interaction, which is why it is off until you ask for it.",
+    consumers: ["content"],
+    recorded: true,
+    wired: true,
+  },
+  {
+    key: "recording.a11yNodeCap",
+    group: "recording",
+    tier: 2,
+    type: "number",
+    default: A11Y_NODE_CAP,
+    min: 100,
+    max: 20000,
+    unit: "elements",
+    title: "Elements audited per interaction",
+    description: "How far the accessibility walk goes before it stops.",
+    consequence:
+      "Past the cap elements are never audited, and the step says it was capped rather than that the page is clean. This walk runs after the app has settled rather than inside the interaction, so raising it is not latency the person recording feels.",
+    consequenceWhen: { above: A11Y_NODE_CAP },
     consumers: ["content"],
     recorded: true,
     wired: true,

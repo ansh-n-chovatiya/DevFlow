@@ -57,6 +57,7 @@ import {
   formatSource,
   sourceProvenance,
   MACHINE_KEYS,
+  flowA11y,
   planActions,
   planReplay,
   projectRelative,
@@ -2644,6 +2645,30 @@ function flowSummary(flow) {
    * component and its file cannot be got anywhere cheaper, so on a recording
    * where only one of the two fits, this is the one that goes.
    */
+  /*
+   * Whether the accessibility audit ran, and only when it did.
+   *
+   * Deliberately silent when it did not, which is the default — a summary that
+   * announced "accessibility was not audited" on every flow would be a line
+   * nobody reads by the third recording, and `get_step_detail`'s a11y part is
+   * where somebody who asked the question is told. When it *did* run, the count
+   * is worth the line: a recording that audited and found nothing is a real
+   * result and is otherwise indistinguishable from one that never looked.
+   */
+  const audit = flowA11y(flow.steps ?? [], Boolean(flow.settings?.['recording.a11y']));
+  if (audit.read) {
+    const violations = (flow.steps ?? []).reduce(
+      (total, step) => total + (Array.isArray(step.a11y?.findings) ? step.a11y.findings.length : 0),
+      0,
+    );
+    optional.push(
+      violations
+        ? `Accessibility: ${violations} violation${violations === 1 ? '' : 's'} across the recording` +
+            `${audit.capped ? ', and at least one walk was capped' : ''} — get_step_detail part "a11y".`
+        : `Accessibility: audited, nothing found${audit.capped ? ' in what was reached — a walk was capped' : ''}.`,
+    );
+  }
+
   const stamp = describeStamp(flow.settings);
   if (stamp.length) optional.push(`Recorded with non-default settings: ${stamp.join(' · ')}`);
 
@@ -2672,7 +2697,7 @@ function flowSummary(flow) {
  * what the sections come back in, so moving an existing part renumbers a list
  * readers have already learned, to buy nothing.
  */
-const STEP_PARTS = ['component', 'network', 'console', 'element', 'dom', 'screenshot', 'render'];
+const STEP_PARTS = ['component', 'network', 'console', 'element', 'dom', 'screenshot', 'render', 'a11y'];
 
 /**
  * How much of one changed value is worth printing before it stops being
@@ -3153,6 +3178,80 @@ function stepParts(flow, dir, step, render) {
         have:
           `${entries.length} component${entries.length === 1 ? '' : 's'} re-rendered` +
           (wasted ? `, ${wasted} wasted` : ''),
+        lines,
+      };
+    }
+  }
+
+  // ── a11y ──
+  //
+  // Always present, like every other part, because the index prices all of
+  // them and a missing key is a crash rather than an empty row — which is
+  // precisely how this first shipped and what `tests/mcp-step-detail.test.ts`
+  // caught. The `have` sentence carries the distinction that matters most in
+  // this part and in no other: "audited and clean" and "never looked at" are
+  // different answers, and only the recording's own settings can tell them
+  // apart, so the row says which one it is rather than printing a reassuring
+  // blank.
+  {
+    const audit = step.a11y;
+    const findings = Array.isArray(audit?.findings) ? audit.findings : [];
+    const enabled = Boolean(flow.settings?.['recording.a11y']);
+
+    if (!enabled) {
+      parts.a11y = {
+        have: 'not audited — the accessibility audit was off for this recording',
+        lines: [
+          'Accessibility was not audited while this flow was recorded. “Audit accessibility while ' +
+            'recording” is off by default, so this says nothing about whether the page has ' +
+            'violations — only that nobody looked.',
+        ],
+      };
+    } else if (!findings.length && !audit?.note) {
+      parts.a11y = {
+        have: 'audited, nothing found',
+        lines: ['The page as this step left it was audited and no violation was found in what was checked.'],
+      };
+    } else {
+      const lines = [];
+
+      // Grouped by criterion rather than by element: eight buttons missing a
+      // name are one decision, and eight rows saying "4.1.2" are eight readings
+      // of the same sentence.
+      const groups = new Map();
+      for (const finding of findings) {
+        const key = typeof finding?.wcag === 'string' ? finding.wcag : 'unclassified';
+        const list = groups.get(key) ?? [];
+        list.push(finding);
+        groups.set(key, list);
+      }
+
+      for (const [wcag, list] of [...groups].sort((a, b) => b[1].length - a[1].length)) {
+        lines.push(`${wcag} (level ${list[0]?.level ?? 'A'}) — ${list.length}`);
+        for (const finding of list) {
+          const component = typeof finding.component === 'string'
+            ? flow.react?.components?.[finding.component]
+            : null;
+          const where = component ? formatSource(component) : null;
+          lines.push(
+            `  ${finding.label}  ${finding.detail}` +
+              (component ? `  in ${component.name}${where ? ` ${where}` : ''}` : ''),
+          );
+          if (finding.caveat) lines.push(`      ${finding.caveat}`);
+        }
+        lines.push('');
+      }
+
+      if (audit?.note) lines.push(`What was not checked: ${audit.note}.`);
+      lines.push(
+        'No fix is generated. The criterion, the measurement and the component each violation was ' +
+          'found in are what this reports; writing the change is yours.',
+      );
+
+      parts.a11y = {
+        have: findings.length
+          ? `${findings.length} accessibility violation${findings.length === 1 ? '' : 's'}`
+          : 'nothing found, and something limited the audit',
         lines,
       };
     }
@@ -4289,7 +4388,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: 'get_step_detail',
       description:
-        'One part of one step, rather than all of it. Omit "include" and it lists the parts this step has — its component, network calls, console output, element, text change, screenshot, and which components re-rendered — with what each would cost, so the next call asks for the one that answers the question. The "render" part answers "why did this render?": the components that re-rendered across the step and the props, state and contexts that changed value, marking the ones that re-rendered with nothing changed. It is sampled from two readings of the fiber tree, so it says which components re-rendered and never how many times, and it says which of "renders were never sampled", "the walk hit its cap" and "nothing re-rendered" it is. get_flow_step returns every part at once and is the right call when the step is already known to be the answer; this is for the move before that, on a step whose network alone runs to thousands of tokens.',
+        'One part of one step, rather than all of it. Omit "include" and it lists the parts this step has — its component, network calls, console output, element, text change, screenshot, and which components re-rendered — with what each would cost, so the next call asks for the one that answers the question. The "render" part answers "why did this render?": the components that re-rendered across the step and the props, state and contexts that changed value, marking the ones that re-rendered with nothing changed. It is sampled from two readings of the fiber tree, so it says which components re-rendered and never how many times, and it says which of "renders were never sampled", "the walk hit its cap" and "nothing re-rendered" it is. The "a11y" part is the accessibility audit of the page as the step left it: each violation with the WCAG success criterion it fails, what was actually measured, and the component it was found in. It appears only on a flow recorded with the audit switched on, which is not the default — so its absence means nothing was looked at, never that the page is clean. get_flow_step returns every part at once and is the right call when the step is already known to be the answer; this is for the move before that, on a step whose network alone runs to thousands of tokens.',
       inputSchema: {
         type: 'object',
         properties: {

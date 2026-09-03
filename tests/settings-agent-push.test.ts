@@ -27,6 +27,8 @@ import {
   CAPTURE_RENDERS,
   CAPTURE_STATE,
   RENDER_NODE_CAP,
+  CAPTURE_A11Y,
+  A11Y_NODE_CAP,
   STATE_MAX_DEPTH,
   STATE_MAX_ENTRIES,
   STATE_MAX_KEYS,
@@ -124,6 +126,8 @@ describe('what the content script sends', () => {
       // evaluation, which happens on the isolated side.
       captureRenders: CAPTURE_RENDERS,
       renderNodeCap: RENDER_NODE_CAP,
+      captureA11y: CAPTURE_A11Y,
+      a11yNodeCap: A11Y_NODE_CAP,
     });
   });
 
@@ -133,7 +137,9 @@ describe('what the content script sends', () => {
     // added to the interface but not to `toAgentConfig` compiles fine and
     // arrives as `undefined`, which `applyConfig` then ignores forever.
     expect(sent).toEqual([
+      'a11yNodeCap',
       'bodyCap',
+      'captureA11y',
       'captureBodies',
       'captureRenders',
       'captureState',
