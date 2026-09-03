@@ -59,13 +59,19 @@ import {
   MACHINE_KEYS,
   planActions,
   planReplay,
+  projectRelative,
+  rankCandidates,
   readRun,
   renderArchitecture,
   renderComponents,
+  renderBlastRadius,
   renderDeployDiff,
+  renderForensics,
   renderStep,
   resolve as resolveSettings,
   shaMatches,
+  shortSha,
+  matchSourceFile,
   isShaPrefix,
   joinTrace,
   joinableSha,
@@ -4631,6 +4637,45 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'get_commit_candidates',
+      description:
+        'Which commits changed the file a component was written in, and — the part git cannot tell you — which of them landed after the last time DevFlow actually watched that component run. Use it when something is misbehaving and you want the shortlist of changes the runtime graph has never seen exercised. It names no cause: it compares dates, not behaviour, and says so on every answer. get_component_history is what the component has done; this is what happened to its code.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          componentId: {
+            type: 'string',
+            description: 'A component name, or an id from get_app_architecture (the leading # is optional).',
+          },
+          file: {
+            type: 'string',
+            description: 'A source file, instead of a component. Matched against the files the graph has observed.',
+          },
+          limit: {
+            type: 'number',
+            description: 'How many commits of history to walk. Default 200, maximum 1000.',
+          },
+        },
+      },
+    },
+    {
+      name: 'get_blast_radius',
+      description:
+        'What the runtime has observed depending on one source file: the components seen to have been written in it, how often each was exercised, how often each failed, and what each was seen calling and reading. Read it before changing a file, to know what the running application actually put through that code. It is observation and not static analysis — it does not find files that import this one, and a component never exercised while DevFlow was watching does not appear.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          file: {
+            type: 'string',
+            description: 'A source file path as the graph holds it — get_app_architecture names them.',
+          },
+          lineStart: { type: 'number', description: 'Only components resolved to a line at or after this.' },
+          lineEnd: { type: 'number', description: 'Only components resolved to a line at or before this.' },
+        },
+        required: ['file'],
+      },
+    },
+    {
       name: 'get_anomalies',
       description:
         'Components and endpoints failing or slowing beyond their own history — the graph saying what has changed, rather than what is true. Needs 30 observations of an entity before it will call anything unusual about it, so it reports nothing on a young graph rather than guessing. Defaults to the last 24 hours.',
@@ -7037,6 +7082,230 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       renderEdges(lines, component);
       lines.push('', 'get_flow with one of those ids opens the recording itself.');
       return text(lines.join('\n'));
+    }
+
+    case 'get_commit_candidates': {
+      if (!arkg) return failure(NO_GRAPH);
+
+      const askedComponent = typeof args.componentId === 'string' ? args.componentId.trim() : '';
+      const askedFile = typeof args.file === 'string' ? args.file.trim() : '';
+      if (!askedComponent && !askedFile) {
+        return failure(
+          'get_commit_candidates needs a componentId (a name, or an id from get_app_architecture) or a file.',
+        );
+      }
+
+      const observedFiles = arkgTry('observed files', (graph) => graph.getObservedFiles(), {}) ?? {};
+      const known = Object.keys(observedFiles);
+
+      /*
+       * A component or a file, and the component is resolved to its file rather
+       * than answered separately: git changes files, so the file is the only
+       * thing the walk can be matched against. What the component adds is the
+       * anchor — its `git_sha`, the last commit it was observed at with a clean
+       * tree — which is the entire reason this answer is worth more than a
+       * `git log`.
+       */
+      let subject;
+      if (askedComponent) {
+        const wanted = askedComponent.replace(/^#/, '');
+        const component =
+          arkgTry('component', (graph) => graph.getComponent(wanted)) ??
+          arkgTry('component by name', (graph) => graph.getComponentByName(wanted));
+
+        if (!component) {
+          return text(
+            `Nothing is recorded against "${askedComponent}". get_app_architecture lists the components ` +
+              'the graph has seen, each with the id it is keyed by.',
+          );
+        }
+        if (!component.source_file) {
+          return text(
+            `${component.display_name} has been observed ${component.frequency}x but never resolved to a ` +
+              'source file, so there is no file to ask git about. That is a source-mapping failure rather ' +
+              'than a missing commit — the flow’s component table says which way it failed, and ' +
+              'get_component_history is the whole of what the graph holds about it.',
+          );
+        }
+        subject = {
+          kind: 'component',
+          name: component.display_name,
+          file: component.source_file,
+          line: component.source_line ?? null,
+          observedSha: component.git_sha ?? null,
+          frequency: component.frequency ?? null,
+          failureRate: component.failure_rate ?? null,
+          lastObservedAt: component.last_observed_at ?? null,
+        };
+      } else {
+        const node = matchSourceFile(known, askedFile);
+        if (!node) {
+          return text(
+            `The graph has no source file matching "${askedFile}". It knows a file only once a component ` +
+              'has been resolved into it — by recording a flow that rendered one, or picking one in the ' +
+              'DevTools panel. get_app_architecture names the files it does hold.',
+          );
+        }
+        const row = arkgTry('source file', (graph) => graph.getSourceFile(node));
+        subject = {
+          kind: 'source_file',
+          name: node,
+          file: node,
+          line: null,
+          observedSha: row?.git_sha ?? null,
+          frequency: row?.frequency ?? null,
+          failureRate: null,
+          lastObservedAt: row?.last_observed_at ?? null,
+        };
+      }
+
+      const askedLimit = Number(args.limit);
+      const walkLimit = Number.isFinite(askedLimit) && askedLimit > 0 ? Math.min(1000, Math.trunc(askedLimit)) : 200;
+
+      const root = gitRoot();
+      const walk = await gitTry('recent commits', (g) => g.recentCommits(root, walkLimit), null);
+      if (!walk) {
+        return text(
+          renderForensics(
+            rankCandidates({
+              subject,
+              commits: [],
+              anchorCommittedAt: null,
+              walked: 0,
+              capped: false,
+              gitProblem:
+                'git could not be read here — it is switched off with DEVFLOW_GIT=0, is not on the PATH, ' +
+                'or this server is not running inside a repository',
+            }),
+          ),
+        );
+      }
+
+      /*
+       * The prefix, because git prints repository-relative paths and a source
+       * map names project-relative ones. Without it the two never meet in a
+       * monorepo, which is the shape most likely to have history worth reading.
+       */
+      const checkout = await readStamp();
+      const prefix = checkout?.prefix ?? '';
+      const graphShas = arkgTry('commit shas', (graph) => graph.getCommitShas(), new Set()) ?? new Set();
+
+      const commits = [];
+      walk.forEach((change, walkIndex) => {
+        const touched = change.files.some((file) => {
+          const relative = projectRelative(prefix, file);
+          return relative !== null && matchSourceFile(known, relative) === subject.file;
+        });
+        if (!touched) return;
+        commits.push({
+          sha: change.commit.sha,
+          shortSha: shortSha(change.commit.sha),
+          subject: change.commit.subject,
+          author: change.commit.author,
+          committedAt: change.commit.committedAt,
+          inGraph: graphShas.has(change.commit.sha),
+          // Its place in the whole walk, not among the commits that touched
+          // this file: ancestry is a fact about the history, and an index into
+          // a filtered list would compare two different sequences.
+          walkIndex,
+        });
+      });
+
+      /*
+       * The anchoring commit's date, from the walk when it is inside the window
+       * and from the graph's own commit node when it is not. A sighting six
+       * months old is exactly the case this tool exists for, so failing to date
+       * it would lose the answer precisely when it matters most.
+       */
+      let anchorCommittedAt = null;
+      let anchorIndex = null;
+      if (subject.observedSha) {
+        const at = walk.findIndex((change) => change.commit.sha === subject.observedSha);
+        anchorIndex = at === -1 ? null : at;
+        anchorCommittedAt =
+          (at === -1 ? null : walk[at].commit.committedAt) ??
+          arkgTry('commit node', (graph) => graph.getCommit(subject.observedSha))?.committed_at ??
+          null;
+      }
+
+      return text(
+        renderForensics(
+          rankCandidates({
+            subject,
+            commits,
+            anchorIndex,
+            anchorCommittedAt,
+            walked: walk.length,
+            capped: walk.length >= walkLimit,
+          }),
+        ),
+      );
+    }
+
+    case 'get_blast_radius': {
+      if (!arkg) return failure(NO_GRAPH);
+
+      const askedFile = typeof args.file === 'string' ? args.file.trim() : '';
+      if (!askedFile) {
+        return failure('get_blast_radius needs a file — get_app_architecture names the ones the graph holds.');
+      }
+
+      const start = Number(args.lineStart);
+      const end = Number(args.lineEnd);
+      const hasStart = Number.isFinite(start);
+      const hasEnd = Number.isFinite(end);
+      /*
+       * One bound alone is refused rather than treated as the whole file. A
+       * caller who asked for lines 40 upward and silently got every component
+       * in the file would read a wider answer as a narrower one, which is the
+       * failure this whole tool's closing paragraph is about.
+       */
+      if (hasStart !== hasEnd) {
+        return failure(
+          'get_blast_radius takes lineStart and lineEnd together or neither. One bound alone would be ' +
+            'answered as the whole file, which reads like a narrower answer than it is.',
+        );
+      }
+
+      const observedFiles = arkgTry('observed files', (graph) => graph.getObservedFiles(), {}) ?? {};
+      const node = matchSourceFile(Object.keys(observedFiles), askedFile);
+      if (!node) {
+        return text(
+          renderBlastRadius({
+            file: askedFile,
+            lineStart: null,
+            lineEnd: null,
+            components: [],
+            fileKnown: false,
+          }),
+        );
+      }
+
+      const lineStart = hasStart ? Math.trunc(start) : null;
+      const lineEnd = hasEnd ? Math.trunc(end) : null;
+      const rows =
+        (lineStart !== null && lineEnd !== null
+          ? arkgTry('blast radius', (graph) => graph.getBlastRadius(node, lineStart, lineEnd), [])
+          : arkgTry('blast radius', (graph) => graph.getBlastRadius(node), [])) ?? [];
+
+      const components = rows.map((row) => ({
+        id: row.id,
+        name: row.display_name,
+        line: row.source_line ?? null,
+        frequency: row.frequency ?? 1,
+        failureRate: row.failure_rate ?? 0,
+        /*
+         * One hop, and only the two edge kinds that say what this component
+         * *did* — what it called and what it read. `maps_to` would print the
+         * file the caller just named back at them, and `renders` is the DOM
+         * rather than the application.
+         */
+        reaches: (arkgTry('neighbours', (graph) => graph.getNeighbours('component', row.id, 12), []) ?? [])
+          .filter((edge) => edge.edge === 'calls' || edge.edge === 'subscribes_to')
+          .map((edge) => ({ edge: edge.edge, label: edge.label ?? edge.id, frequency: edge.frequency ?? 1 })),
+      }));
+
+      return text(renderBlastRadius({ file: node, lineStart, lineEnd, components, fileKnown: true }));
     }
 
     case 'get_anomalies': {

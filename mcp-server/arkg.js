@@ -2587,6 +2587,40 @@ export function getAnomalies(sinceMs = Date.now() - 24 * 60 * 60 * 1000) {
  * All components with a maps_to edge to sourceFile, optionally filtered to a
  * line range [lineStart, lineEnd] (inclusive, 1-based).
  */
+/**
+ * One commit node, or null.
+ *
+ * The graph holds a commit only because a recording or a pick arrived while it
+ * was checked out, so this answers a narrower question than `git cat-file`:
+ * *was DevFlow running at this commit?* That is exactly what the forensics
+ * walk needs it for — a component's `git_sha` names a sighting, and the
+ * sighting's date is what every candidate is measured against. When the
+ * sighting predates the walk's window this is the only place its date exists.
+ */
+export function getCommit(sha) {
+  if (!db || !core.isSha?.(sha)) return null;
+  return sql('SELECT * FROM arkg_git_commits WHERE id = ?').get(sha) ?? null;
+}
+
+/**
+ * One source file node, or null.
+ *
+ * It carries a `git_sha` on the same terms every other node does — the last
+ * commit it was observed at with a clean tree — so a file asked about directly
+ * anchors the same way a component does, rather than being the one subject the
+ * walk cannot divide.
+ */
+export function getSourceFile(id) {
+  if (!db || typeof id !== 'string') return null;
+  return sql('SELECT * FROM arkg_source_files WHERE id = ?').get(id) ?? null;
+}
+
+/** Every commit node the graph holds, as a set of SHAs, for marking a walk. */
+export function getCommitShas() {
+  if (!db) return new Set();
+  return new Set(sql('SELECT id FROM arkg_git_commits').all().map((row) => row.id));
+}
+
 export function getBlastRadius(sourceFile, lineStart, lineEnd) {
   if (!db) return [];
 

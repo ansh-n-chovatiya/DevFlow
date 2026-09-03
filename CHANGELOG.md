@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+**Which commits changed this, and which of them has never been watched running.**
+`get_commit_candidates` takes a component or a source file and answers with the
+commits that changed the code it was written in — author, subject, date and SHA
+— sorted so that the ones which landed *after the last moment DevFlow saw that
+component run* come first. That crossing is the point: git knows your history and
+the graph knows what it has actually watched execute, and neither knows the
+other's half. A component last observed three commits ago, with two of those
+commits touching its file, is a component the graph's knowledge is stale about,
+and those two changes are the ones to read first.
+
+**It names no cause, and says so on every answer.** A commit that changed the
+file is a commit worth reading first and is not thereby the reason anything
+broke. The mechanism compares where commits sit in the history against one
+observation date; it cannot tell a coincidence from a culprit, and the closing
+paragraph saying that is printed unconditionally rather than only when the tool
+is unsure. The roadmap's "determine the exact commit **and PR**" is narrowed in
+the roadmap too: nothing DevFlow observes carries a pull-request number, and a
+tool that printed one would be printing something it invented.
+
+**The answer states its own coverage.** How many commits were walked, whether the
+walk stopped at its limit, how many touched the file, how many of those the graph
+itself holds — and, when the component has never been observed on a clean working
+tree, that there is no sighting to measure against at all rather than an ordering
+built on nothing.
+
+**`get_blast_radius`: a query that had been built, tested and reachable from
+nothing.** Given a source file, it answers with the components the runtime has
+observed in it, how often each was exercised, how often each failed, and what
+each was seen calling and reading. It makes its claim at the size it is true at:
+these are components observed to have been *written in* that file, not files that
+import it — an import is a static fact and nothing in a runtime graph observes
+one — and a component your app has never exercised while DevFlow was watching
+does not appear at all.
+
 **"Show me everything that renders when I click checkout" — the cascade.** Every
 step in Flow review now has a **What this caused** button. It opens a graph of
 the interaction and what followed it: the stores that moved, the components that
