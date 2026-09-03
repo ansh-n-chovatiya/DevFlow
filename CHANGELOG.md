@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+**What a component is when it is not a fiber.** `src/core/locate/adapter.ts` is
+the shape React, Vue, Svelte and React Server Components all agree on, written
+after the three runtimes were measured rather than before. A component resolves
+to one of three things, not to a function: `declared` (the runtime already knows
+the file and line and simply hands it over), `searchable` (a compiled source
+string for the existing needle path), or `absent` with a reason.
+
+**`declared` exists because every one of these runtimes already knows the
+answer in a development build.** Svelte writes `__svelte_meta` with the file,
+line and column onto the element — strictly more than React's own
+`_debugSource`. Vue puts `type.__file` on the component. Next.js dev puts
+`_debugInfo` on the fiber. A contract insisting on a function would search the
+bundle for an answer the page was holding out. `ComponentSource.via` was already
+this union in disguise.
+
+**`absent` carries a reason because in production these runtimes stop
+cooperating, and one stops entirely.** A Svelte production element has zero own
+properties; an RSC production server component leaves no name, no module id and
+no file anywhere. Reporting silence there would read as "this element has no
+component", which is false; the reason reads as "this build removed the
+evidence", which is true and is something the reader can act on. The three
+reasons are deliberately not duplicates of `ComponentStatus` — `no-map` and
+`not-found` are outcomes of a search that ran, and these are the cases where
+there is nothing to search for.
+
 **The source-map engine is framework-neutral, and now lives somewhere that says
 so.** Nine modules moved from `src/core/react/` to `src/core/locate/`: needle
 building, bundle search, source-map decode, editor URLs, `Pos0`/`Pos1`, component
