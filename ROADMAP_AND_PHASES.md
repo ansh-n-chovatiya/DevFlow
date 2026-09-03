@@ -595,8 +595,15 @@ which is a correction in 0017's favour rather than against it.
 protocol to read — `core/otel`'s kind of work.* Wrong in both directions. In
 `next dev` there **is** a runtime tree and it is the richest route: `_debugInfo`
 on the fiber carries the name, `env: "Server"`, the owner chain, props and a
-stack that resolved end to end to `ServerOnlyWidget.tsx:7:5` — while the wire
-*lacks* that identity. In `next build` there is no protocol to read either: a
+resolvable stack — while the wire *lacks* that identity. **This paragraph
+overstated it when first written, and the correction came from building the
+adapter rather than from the spike:** `_debugInfo.stack[0]` is the *call site*,
+not the declaration. `ServerOnlyWidget`'s reachable frame is named `Page` and
+resolves to `app/page.tsx:13:7`; the declaration frame reaching
+`ServerOnlyWidget.tsx:7:5` arrives only on the dev HMR websocket, which
+`src/injected/` may not subscribe to. The call site is what ships, it is
+labelled `at: 'call-site'` rather than passed off as a declaration, and it is
+the same answer `core/react/owner.ts` already leads with. In `next build` there is no protocol to read either: a
 server component leaves no name, no module id and no file anywhere on the wire.
 And `core/otel` is not where the case starts — `@vercel/otel` produced 30 real
 spans carrying zero component or file identity in any attribute. ADR 0027.
@@ -604,7 +611,7 @@ spans carrying zero component or file identity in any attribute. ADR 0027.
 **What each adapter can honestly deliver differs by build mode**, and is written
 out here rather than hidden behind one checkbox. All three work in development.
 
-- [ ] **Vue 3 / Nuxt:** Reactivity proxy inspector and template mapper.
+- [~] **Vue 3 / Nuxt:** Reactivity proxy inspector and template mapper. Built, tested and merged — `src/core/vue/`, `src/injected/vue.ts`, 86 tests. **Not yet reachable from a recording:** see *What is not wired* below.
   *Dev:* `__vueParentComponent` on every element, `type.__file` on the component.
   *Production:* element links are stripped and installing the devtools hook does
   not restore them, but an O(tree) walk from `__vue_app__` still resolves —
@@ -612,7 +619,7 @@ out here rather than hidden behind one checkbox. All three work in development.
   needle comes from `instance.render` and never from `type.setup`: through the
   real source map, `setup` resolved to the **wrong file** in 3 of 4 production
   cases, once landing inside `runtime-dom.esm-bundler.js`.
-- [ ] **Svelte 5 / SvelteKit:** Runes and signals inspector.
+- [~] **Svelte 5 / SvelteKit:** Runes and signals inspector. Built, tested and merged — `src/core/svelte/`, `src/injected/svelte.ts`, 72 tests. **Not yet reachable from a recording:** see *What is not wired* below.
   *Dev:* `__svelte_meta` carries `{loc: {file, line, column}, parent}` — strictly
   richer than React's own `_debugSource`.
   *Production:* **honestly nothing.** Elements have zero own properties; the only
@@ -623,12 +630,40 @@ out here rather than hidden behind one checkbox. All three work in development.
   `sourceMappingURL` until `build.sourcemap: true`. The right answer here is to
   report *absent*, naming the one line of the user's own config that would fix
   it, rather than to guess a file.
-- [ ] **Next.js App Router & RSC:** the wire protocol *and* the dev fiber.
+- [~] **Next.js App Router & RSC:** the wire protocol *and* the dev fiber. Built, tested and merged — `src/core/rsc/`, `mcp-server/rsc.js`, 71 tests. **Not yet reachable from a recording:** see *What is not wired* below.
   *Dev:* `_debugInfo`, as above.
   *Production:* client components only, and their numeric module ids resolve
   through `.next/server/*-manifest.js`, which 404s on every served path — so this
   half is forced into `mcp-server/`, the only one of the two with a filesystem.
   Server components are unreachable at any price.
+
+#### What is not wired, and why the boxes are `[~]`
+
+All three adapters implement the frozen contract, carry 229 tests between them
+and are on `main` behind a green gate. **Nothing calls them.** A recording still
+reads React and only React, so a Vue page records exactly as it did before.
+Three things stand between here and `[x]`, and they are one chain rather than
+three independent gaps:
+
+1. **An adapter registry in `src/injected/agent.ts` and `src/content/index.ts`**,
+   trying each adapter in order and merging with `preferResolution` where two
+   runtimes claim one element — which is a real case, not a hypothetical: a React
+   island inside a Vue page, and every Next.js App Router page, which is
+   genuinely React *and* RSC at once.
+2. **Additive sibling keys on the persisted flow** — `vue?`, `svelte?`, `rsc?`
+   beside `react?`, on exactly the terms `react`, `state` and `settings` were
+   each added: absent entirely when the page was not that framework, and not a
+   `schemaVersion` bump, because a server that predates them ignores what it does
+   not know.
+3. **The MCP join.** `mcp-server/rsc.js` reads a production module id back to a
+   file, and cannot be called until a flow carries the id for it to resolve —
+   which is (2). It is loaded by nothing today and is deliberately left that way
+   rather than wired to a caller that has no data: an import with no caller is
+   how `componentTable` became dead code for six sessions.
+
+The ordering is forced. Ticking any of these three boxes before that chain is
+closed would be the precise defect the `v3.2.0` audit found — items ticked for
+code that exists and does not run.
 
 Angular is **not** a fourth adapter, and was removed rather than left listed.
 ADR 0017's rule is that these are taken together or not at all; adding a fourth

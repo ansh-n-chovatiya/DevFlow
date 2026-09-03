@@ -15,6 +15,7 @@
     "replay.js",
     "git.js",
     "otel.js",
+    "rsc.js",
     "README.md",
     "regression.js",
     "regression-cli.js"

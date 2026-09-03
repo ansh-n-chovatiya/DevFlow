@@ -22,6 +22,15 @@ export { exportToMarkdown, renderComponents, renderStep, flowHost, urlPath } fro
 export { compactBody } from './schema/index.js';
 export { callFailed, statusClass, stepFailed, worstLevel } from './flow/index.js';
 export { stepEnclosing, stepOwner, formatSource, sourceProvenance } from './react/attribution.js';
+
+/*
+ * `mcp-server/rsc.js` maps a production module id to a file, and the ids it
+ * reads out of a Next.js manifest carry annotations — `[project]/app/page.tsx
+ * [app-client] (ecmascript)`. Stripping them is one rule, and this is the
+ * export that stops there being two copies of it: without this the server ships
+ * raw keys and reports `normalizedPaths: false` rather than quietly guessing.
+ */
+export { normalizeModulePath } from './rsc/flight.js';
 export { snippet } from './source/snippet.js';
 
 /*
