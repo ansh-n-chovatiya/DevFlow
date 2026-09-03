@@ -63,6 +63,8 @@ Then record a flow in DevFlow and press **Send to Claude**. It lands in
 | `get_component_history` | Everything observed about one component |
 | `get_anomalies` | What has started failing or slowing recently |
 | `get_living_architecture` | What is mounted on the open page, as of when it was read |
+| `get_commit_candidates` | Which commits changed a component's file, and which of them has never been watched running |
+| `get_blast_radius` | What the runtime has observed in one source file, and what it was seen calling |
 
 `get_living_architecture` is the only one that is not about a recording, and it
 is the only one whose answer can go out of date while you read it. It is a
@@ -74,6 +76,28 @@ line. Past ten minutes the answer stops saying *this is mounted* and starts sayi
 source paths where the page knows them, and which React contexts each component
 reads — and it is held in memory only, so a server restart loses it, which is
 correct: a saved map can only describe a page that is no longer open.
+
+`get_commit_candidates` is the one that reads your repository as well as the
+graph, and it exists because neither half can answer alone. Git knows every
+commit that touched a file; the graph knows the last moment DevFlow actually
+watched the component in that file run. Crossed, they give the commits whose
+effect has never been observed — which is a bounded, checkable statement about
+what the graph does not know, and the shortlist worth reading first.
+
+It names no cause and says so on every answer. A commit that changed the file is
+worth reading first and is not thereby the reason anything broke; the mechanism
+compares where commits sit in the history against one observation date, and it
+cannot tell a coincidence from a culprit. The ordering is ancestry rather than
+dates — git records a commit date only to the second, so two commits made inside
+one second cannot be separated by it — and when the sighting is older than the
+walk, the answer says it fell back to dates instead.
+
+`get_blast_radius` makes its claim at the size it is true at. A `maps_to` edge
+points from a component to the file it was **written in**, so this answers which
+components the runtime has observed in a file, not which files import it: an
+import is a static fact and nothing in a runtime graph observes one. A component
+your application has never exercised while DevFlow was watching does not appear
+at all, and the answer says so rather than reading as a complete dependency list.
 
 `get_app_architecture` and `get_living_architecture` answer two different
 questions and each says so in its own output. One is the accumulation over every

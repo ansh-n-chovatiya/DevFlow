@@ -311,3 +311,28 @@ export type {
   MountedContext,
   PageReading,
 } from './architecture/index.js';
+
+/*
+ * Which commits changed the code a component was seen in, and which of them the
+ * graph has never watched run.
+ *
+ * Here rather than in the server for the reason every other entry on this list
+ * is: the judgement is the whole of the feature and it is worth testing without
+ * a database or a subprocess. The server supplies two things this cannot reach
+ * — a `git log` and a SQLite read — and makes no decision about either.
+ */
+export {
+  rankCandidates,
+  describeCoverage,
+  renderForensics,
+  renderBlastRadius,
+} from './forensics/index.js';
+export type {
+  Candidate,
+  CommitStanding,
+  ForensicCommit,
+  ForensicCoverage,
+  Forensics,
+  ForensicSubject,
+  RadiusComponent,
+} from './forensics/index.js';

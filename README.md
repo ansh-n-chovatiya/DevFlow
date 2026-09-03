@@ -197,6 +197,19 @@ restarts. Screenshots are written to disk
 and referenced by absolute path, so a 500-step recording costs nothing in context until
 a specific image is opened.
 
+`get_commit_candidates` reads your repository beside the graph, because neither
+half answers alone. Git knows every commit that touched a file; DevFlow knows the
+last moment it actually watched the component in that file run. Crossed, they give
+the commits whose effect has never been observed — the shortlist worth reading
+first when something is misbehaving. It names no cause and says so on every
+answer: a commit that changed the file is not thereby the reason anything broke,
+and the tool compares where commits sit in the history, not behaviour.
+`get_blast_radius` is the other direction — what the runtime has seen in one
+source file, and what those components were seen calling — and it is careful to
+claim only that: components observed to have been *written in* the file, never the
+files that import it, because an import is a static fact and nothing in a runtime
+graph observes one.
+
 The server reads the commit of the project it runs in and stamps each recording with
 it, which is what makes the cross-build comparison possible. It only ever reads the
 repository, and a directory that is not one simply means no stamp — see

@@ -268,3 +268,46 @@ export async function rangeSize(root, from, to) {
   const count = Number(raw.trim());
   return Number.isFinite(count) ? count : null;
 }
+
+/**
+ * The last `limit` commits of this checkout, newest first, with the files each
+ * touched.
+ *
+ * `--topo-order` because the caller ranks by *position in this walk* and not by
+ * date, and it is the flag that makes that legal: git's default ordering is a
+ * priority queue on commit date, and `%ct` has one-second resolution, so a
+ * rebase — or simply a fast afternoon — produces runs of commits a date cannot
+ * separate at all. Topological order guarantees no parent is listed before its
+ * children, which is the question actually being asked: did this change land
+ * after the one we watched running?
+ *
+ * Deliberately *not* `git log -- <path>`, and the difference is a security
+ * property rather than a preference. A path argument is the one string a caller
+ * could steer into this file's argv — the graph's source-file ids are strings a
+ * bundler chose, and mapping one back to a repository path is guesswork in the
+ * direction `matchSourceFile` refuses to guess. Walking a bounded window with a
+ * fully literal argv and filtering the result in memory answers the same
+ * question, reuses `projectRelative` + `matchSourceFile` in the direction
+ * `ingestCommit` already proved, and leaves nothing for a caller to influence
+ * but a clamped integer.
+ *
+ * The cost is that history older than the window is not looked at, which is why
+ * `capped` is carried all the way to the reader rather than absorbed here: a
+ * list that ends at its limit looks exactly like one that ended because there
+ * was nothing older.
+ */
+export async function recentCommits(root, limit = 200) {
+  if (!gitEnabled()) return null;
+
+  const raw = await run(root, [
+    '-c',
+    'core.quotePath=false',
+    'log',
+    '--topo-order',
+    `--max-count=${Math.max(1, Math.min(1000, limit | 0))}`,
+    '--name-only',
+    `--format=${core.COMMIT_FORMAT}`,
+  ]);
+  if (raw === null) return null;
+  return core.parseLog(raw);
+}
