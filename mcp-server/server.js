@@ -57,7 +57,9 @@ import {
   formatSource,
   sourceProvenance,
   MACHINE_KEYS,
+  describeProductionError,
   flowA11y,
+  parseSentryDelivery,
   planActions,
   planReplay,
   projectRelative,
@@ -251,6 +253,17 @@ function rememberArchitecture(snapshot) {
  * for it, which is the whole reason there is a number here at all.
  */
 const MAX_SPAN_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The ceiling on one relayed crash report.
+ *
+ * Far below `MAX_SPAN_BYTES`, because the two are different shapes: a span
+ * delivery is a batch and a crash report is one issue. A payload larger than
+ * this is a relay forwarding something other than what this reads, and
+ * accepting a megabyte of it into memory to find that out is the wrong trade
+ * on an endpoint that any local process can reach.
+ */
+const MAX_WEBHOOK_BYTES = 256 * 1024;
 
 /**
  * How long an observation stays in the knowledge graph.
@@ -2169,6 +2182,93 @@ const httpServer = http.createServer(async (req, res) => {
    * The response shape is OTLP's `ExportTraceServiceResponse`, because an
    * exporter parses the reply and retries on a shape it does not recognise.
    */
+  /*
+   * A production crash, relayed here.
+   *
+   * ## Sentry cannot reach this port, and the design says so rather than
+   * pretending otherwise
+   *
+   * This server binds to loopback. Sentry's servers can no more POST to it than
+   * to any other machine behind a router, so this is not a direct integration:
+   * it accepts a delivery somebody *relayed* (smee.io, an ngrok tunnel, a small
+   * forwarder) or *replayed* (an exported event, curled in). That is the fourth
+   * time a roadmap signature has assumed a caller could address something it
+   * cannot, and it is recorded in the roadmap as a habit rather than as an
+   * incident.
+   *
+   * ## Off unless asked for, and for a stronger reason than the span receiver
+   *
+   * DEVFLOW_WEBHOOKS=1, the shape DEVFLOW_OTEL uses. The argument is sharper
+   * here: a span is the user's own backend describing its own work, while this
+   * is a payload holding somebody else's *users'* data. Nothing is ingested by
+   * default and what is ingested is a narrow allow-list -- see
+   * `core/telemetry`, which reads the shape of the failure and its filenames
+   * and reads no user, request, cookie, breadcrumb, context or exception value
+   * at all.
+   *
+   * ## The guards are the receiver's own
+   *
+   * `extensionOrigin` as every other write here, so a page the browser has open
+   * cannot post a crash into the graph; its own byte ceiling, because the body
+   * is read into memory before anything has vouched for it; and the payload is
+   * never handed on as it arrived -- every field is read out by key.
+   */
+  if (req.method === 'POST' && req.url === '/webhooks/sentry') {
+    if (process.env.DEVFLOW_WEBHOOKS !== '1') {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error:
+            'Production error ingest is off. Start the DevFlow MCP server with DEVFLOW_WEBHOOKS=1 to ' +
+            'accept relayed crash reports.',
+        }),
+      );
+      return;
+    }
+    if (!extensionOrigin(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'This endpoint is not reachable from a web page.' }));
+      return;
+    }
+
+    try {
+      let body = '';
+      let bytes = 0;
+      for await (const chunk of req) {
+        bytes += chunk.length;
+        if (bytes > MAX_WEBHOOK_BYTES) {
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `A crash delivery may not exceed ${MAX_WEBHOOK_BYTES} bytes.` }));
+          req.destroy();
+          return;
+        }
+        body += chunk;
+      }
+
+      const parsed = parseSentryDelivery(body);
+      if (!parsed.ok) {
+        /*
+         * The reason travels. A relay that is working and a relay that is
+         * misconfigured both produce "nothing arrived in the graph", and the
+         * only thing that tells them apart is this sentence.
+         */
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: parsed.detail, reason: parsed.reason }));
+        return;
+      }
+
+      const edges = arkgTry('production error', (graph) => graph.ingestProductionError(parsed.error), 0) ?? 0;
+      log(`production error ${parsed.error.id} (${parsed.error.type}), ${edges} file edge(s)`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, id: parsed.error.id, files: edges }));
+    } catch (error) {
+      log(`error receiving crash: ${error.message}`);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
   if (req.method === 'POST' && req.url === '/v1/traces') {
     if (!otelmod || !otelmod.OTEL_ENABLED) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -7413,7 +7513,44 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
           .map((edge) => ({ edge: edge.edge, label: edge.label ?? edge.id, frequency: edge.frequency ?? 1 })),
       }));
 
-      return text(renderBlastRadius({ file: node, lineStart, lineEnd, components, fileKnown: true }));
+      /*
+       * What production says about this file, under the same answer.
+       *
+       * Not a second tool, and the boundary is what makes that right rather
+       * than merely tidy: `get_blast_radius` is the "what should I know before
+       * I change this file" question, and a crash somebody's users are hitting
+       * in it is the most important possible answer to that. The two counts are
+       * kept visibly apart — DevFlow's observations and a provider's production
+       * events are different units and are never added.
+       */
+      const production = arkgTry('production errors', (graph) => graph.getProductionErrors(node), []) ?? [];
+      const rendered = renderBlastRadius({ file: node, lineStart, lineEnd, components, fileKnown: true });
+
+      if (!production.length) return text(rendered);
+
+      const lines = [
+        rendered,
+        '',
+        `${production.length} production issue${production.length === 1 ? '' : 's'} reach this file:`,
+      ];
+      for (const issue of production) {
+        lines.push(
+          `  ${describeProductionError({
+            type: issue.error_type,
+            culprit: issue.culprit,
+            count: issue.event_count,
+            level: issue.level,
+            lastSeenMs: issue.last_seen_at,
+          })}`,
+        );
+        if (issue.url) lines.push(`      ${issue.url}`);
+      }
+      lines.push(
+        '',
+        'Those counts are events a provider saw in production. The observation counts above are ' +
+          'recordings DevFlow made. They are different units and are never added.',
+      );
+      return text(lines.join('\n'));
     }
 
     case 'get_anomalies': {

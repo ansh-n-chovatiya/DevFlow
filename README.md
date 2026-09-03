@@ -219,6 +219,15 @@ claim only that: components observed to have been *written in* the file, never t
 files that import it, because an import is a static fact and nothing in a runtime
 graph observes one.
 
+With `DEVFLOW_WEBHOOKS=1` the server also accepts a relayed production crash and
+joins it to the files its stack reaches, so `get_blast_radius` answers "what does
+the runtime know about this file" and "what are users hitting in it" together.
+Sentry cannot reach a loopback port, so that delivery is one you relay or replay —
+see [`mcp-server/README.md`](mcp-server/README.md) — and almost nothing from the
+payload is kept: the exception type but never its message, the culprit and the
+count, and each frame's filename and line. No user, request, cookies, body or
+breadcrumbs are read at all.
+
 The server reads the commit of the project it runs in and stamps each recording with
 it, which is what makes the cross-build comparison possible. It only ever reads the
 repository, and a directory that is not one simply means no stamp — see
