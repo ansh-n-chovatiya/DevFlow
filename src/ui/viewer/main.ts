@@ -16,6 +16,7 @@ import {
   CURRENT_FLOW_NAME,
   listFlows,
   readCurrent,
+  readCurrentFrameworks,
   readCurrentReact,
   readFlow,
   saveAsFlow,
@@ -161,6 +162,9 @@ async function reload(): Promise<void> {
       // Re-read on every reload rather than held: the resolver writes to this
       // key while the recording runs, so a cached copy would go stale on screen.
       react: await readCurrentReact(state.current.steps),
+      // The other adapters' tables, re-read on the same terms and for the same
+      // reason: the resolver fills these in while the recording runs too.
+      ...(await readCurrentFrameworks(state.current.steps)),
       // Read at send time instead, like the stamp below it: the recording may
       // still be running, and a store discovered after this tab opened belongs
       // to the flow whether or not the review screen has heard of it.
@@ -189,6 +193,7 @@ async function reload(): Promise<void> {
       steps: flow.value.steps,
       createdAt: flow.value.meta?.createdAt ?? null,
       react: flow.value.react,
+      ...flow.value.frameworks,
       state: flow.value.state,
       renders: flow.value.renders,
       settings: flow.value.meta?.settings ?? null,

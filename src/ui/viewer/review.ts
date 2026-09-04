@@ -197,6 +197,17 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
         // The live recording's table is re-read at send time, after the last
         // resolve pass; an archived one is already frozen, so it travels here.
         react: flow.id === null ? undefined : flow.react,
+        // The same split again. An archived flow's framework tables are frozen
+        // and travel here; the live recording's are re-read at send time after
+        // the resolver's last pass, exactly as its React table is.
+        frameworks:
+          flow.id === null
+            ? undefined
+            : {
+                ...(flow.vue ? { vue: flow.vue } : {}),
+                ...(flow.svelte ? { svelte: flow.svelte } : {}),
+                ...(flow.rsc ? { rsc: flow.rsc } : {}),
+              },
         // So a flow recorded last week is not filed under today.
         recordedAt: flow.createdAt,
         // The same split as `react`: an archived flow's stamp travels here; the

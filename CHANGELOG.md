@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+**The review panel shows Vue, Svelte and RSC components.** It showed nothing
+for them until now: the card started at `stepOwner`, which reads
+`step.element.react`, so a recording whose components all came from an adapter
+had a component table, a chain on every step and a correct answer in the MCP
+server — and an empty card in the panel the person recording was actually
+looking at.
+
+**A fallback, not a second renderer.** A Vue component is a `ComponentSource`
+exactly as a React one is, so it reads through the same card, the same status
+words, the same editor link and the same detail sentence; only *which* component
+to show had to be decided. React still wins where both apply, because its answer
+is richer — an owner chosen by four preference tiers, an enclosing feature
+component, and the `alsoOn` join across the recording — and on a Next.js page,
+which is genuinely both, that is the better of two true answers rather than the
+only one.
+
+**No `within`, deliberately.** That is `core/react/owner.ts`'s preference tiers,
+derived from how React's chains are shaped, and nothing equivalent has been
+measured for these runtimes. Showing one would be a confident attribution by a
+rule nobody checked.
+
+Archived flows carry their framework tables through the viewer and the send
+dialog on exactly the terms their React table travels on.
+
 **A production Vue recording now resolves its components to their own files.**
 The same resolver React has always used — `resolvePending` takes components,
 needles and a script list and has never known anything about React — now runs
