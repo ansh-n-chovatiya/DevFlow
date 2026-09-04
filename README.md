@@ -98,7 +98,7 @@ A DevFlow icon appears in your toolbar. Pin it — you will use it constantly.
 ### 3. Connect it to Claude Code
 
 ```sh
-npx devflow-mcp-server install
+npx devflow-server install
 ```
 
 This registers DevFlow once for every project on your machine. You do not repeat
@@ -207,7 +207,7 @@ with a Sources window to reveal a position in.
 
 ## When something is wrong
 
-**Claude Code cannot find DevFlow.** Run `npx devflow-mcp-server install` again,
+**Claude Code cannot find DevFlow.** Run `npx devflow-server install` again,
 then fully restart Claude Code.
 
 **The recording has steps but no component names.** Usually the framework or

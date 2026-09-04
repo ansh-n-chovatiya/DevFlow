@@ -55,7 +55,7 @@ runs:
         # reports the *last* command's status, which is how a red gate reads as
         # a green one.
         set +e
-        npx --yes devflow-mcp-server regression "${args[@]}"
+        npx --yes devflow-server regression "${args[@]}"
         code=$?
         set -e
 

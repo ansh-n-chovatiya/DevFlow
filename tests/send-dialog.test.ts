@@ -34,7 +34,7 @@ const LOCAL = 'http://127.0.0.1:4321/flows';
 /** What the next `checkMcp` answers. Set per test. */
 let health: Result<McpHealth> = {
   ok: true,
-  value: { service: 'devflow-mcp-server', mode: 'local' },
+  value: { service: 'devflow-server', mode: 'local' },
 };
 // Typed on the generic rather than by naming parameters the stub does not read:
 // `vi.fn` records the call either way, and asserting the dialog probed the right
@@ -105,7 +105,7 @@ let openSend: (options: { steps: Step[]; name: string }) => void;
 beforeEach(async () => {
   document.body.innerHTML = body;
   address = LOCAL;
-  health = { ok: true, value: { service: 'devflow-mcp-server', mode: 'local' } };
+  health = { ok: true, value: { service: 'devflow-server', mode: 'local' } };
   sent = { ok: false, error: flowError('MCP_UNREACHABLE', 'Failed to fetch') };
   checkMcp.mockClear();
 
@@ -146,7 +146,7 @@ describe('the destination is visible before the send', () => {
   it('reports the server that answered, and raises nothing', async () => {
     await open();
     expect(el('send-target-status').textContent).toBe(
-      'Connected · devflow-mcp-server (local)',
+      'Connected · devflow-server (local)',
     );
     expect(hidden('send-target-problem')).toBe(true);
   });
@@ -185,7 +185,7 @@ describe('a failed check says which failure it was', () => {
     await open();
     expect(hidden('send-target-problem')).toBe(false);
 
-    health = { ok: true, value: { service: 'devflow-mcp-server', mode: 'local' } };
+    health = { ok: true, value: { service: 'devflow-server', mode: 'local' } };
     el<HTMLButtonElement>('send-recheck').click();
     await flush();
 

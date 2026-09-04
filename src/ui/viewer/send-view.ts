@@ -294,7 +294,7 @@ function problemFor(url: string, detail: string | undefined): { title: string; t
 
   return {
     title: 'Nothing is listening on that port',
-    text: `${host} refused the connection, so no MCP server is running there. Open Claude Code, or run npx devflow-mcp-server install if this machine has never been set up, then check again. Sending now will fail.`,
+    text: `${host} refused the connection, so no MCP server is running there. Open Claude Code, or run npx devflow-server install if this machine has never been set up, then check again. Sending now will fail.`,
   };
 }
 

@@ -44,7 +44,7 @@ import { isAbsolute, relative, sep } from 'node:path';
 /**
  * The property name.
  *
- * Lowercase and prefixed, matching the `~/.devflow` and `devflow-mcp-server`
+ * Lowercase and prefixed, matching the `~/.devflow` and `devflow-server`
  * identifiers the rest of the product already answers to. It is read back by
  * `readStamp` in `src/core/react/stamp.ts`, and the two must agree — that pair
  * is the whole contract between this package and the extension.

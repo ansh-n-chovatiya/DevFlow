@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+**The MCP server publishes as `devflow-server`.** The npm account that owned
+`devflow-mcp-server` was lost and cannot be recovered, so that package is frozen
+at 3.0.0 forever — as `flowsnap-mcp` is at 2.7.1. Neither breaks; neither will
+ever update again, and npm has no way to say so. The obvious alternative,
+`devflow-mcp`, has belonged to an unrelated package since before this one
+existed.
+
+**If you installed either old package, move across with one command:**
+
+```sh
+npx -y devflow-server install --force
+```
+
+`--force` is what replaces a user-scope registration pointing at the old name.
+
+**The command you type is unchanged.** `bin` stays `devflow-mcp`, because npm
+exec falls back to a package's only bin when the requested name matches none —
+which is the whole reason `tests/versions.test.ts` asserts there is exactly one.
+Add a second and every install instruction breaks at once.
+
+**Historical entries in this changelog keep the old name**, as does the saved
+`.ctx` bundle. They describe releases that really were published under it, and
+rewriting them would be editing the record to match the present.
+
 **Phase 5 §5.1 is closed.** The two items the roadmap still carried are done.
 
 **`mcp-server/rsc.js` has a caller.** Two call sites in the MCP server, both

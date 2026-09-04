@@ -1,9 +1,9 @@
 /**
- * `devflow-mcp-server install` — register this server once, for every project.
+ * `devflow-server install` — register this server once, for every project.
  *
  * The setup was always one line and the line was always right:
  *
- *   claude mcp add devflow --scope user -- npx -y devflow-mcp-server
+ *   claude mcp add devflow --scope user -- npx -y devflow-server
  *
  * `--scope user` is the whole of it, and it is also the whole of the problem:
  * `claude mcp add` defaults to `local` scope, which means *this directory*. Drop
@@ -42,7 +42,7 @@ const NAME = 'devflow';
  * pointing into a clone stops working the day the clone moves — which is the
  * single most common way a DevFlow setup breaks, and it breaks silently.
  */
-const ARGS = ['npx', '-y', 'devflow-mcp-server'];
+const ARGS = ['npx', '-y', 'devflow-server'];
 
 /* Windows resolves a bare command name through the shell; POSIX does not, and
  * running the shell there would mean quoting every argument. */
@@ -198,7 +198,7 @@ export function install({ force = false } = {}) {
       warn(`${NAME} is already registered at user scope, pointing somewhere else`);
       detail(describe(user.entry));
       detail('leave it, or replace it with the published package:');
-      detail('  npx devflow-mcp-server install --force');
+      detail('  npx devflow-server install --force');
       reportShadows(found);
       blank();
       return 1;
@@ -265,13 +265,13 @@ export function uninstall() {
 }
 
 export function usage() {
-  out(`devflow-mcp-server — recorded browser flows, as tools Claude can call.
+  out(`devflow-server — recorded browser flows, as tools Claude can call.
 
-  npx devflow-mcp-server install      register globally for every project you open
-  npx devflow-mcp-server install --force
+  npx devflow-server install      register globally for every project you open
+  npx devflow-server install --force
                                 replace a user-scope registration that points elsewhere
-  npx devflow-mcp-server uninstall    remove the user-scope registration
-  npx devflow-mcp-server              run the server (what Claude Code does)
+  npx devflow-server uninstall    remove the user-scope registration
+  npx devflow-server              run the server (what Claude Code does)
 
 Flows are read from ~/.devflow/flows. DEVFLOW_DIR moves them.`);
 }
