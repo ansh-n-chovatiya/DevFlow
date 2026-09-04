@@ -41,6 +41,17 @@ permissions:
   # npm provenance — signs the published package against this workflow run.
   id-token: write
 
+# Releases run one at a time, never cancelled.
+#
+# Two concurrent runs both cut a version, and the second one's push is rejected
+# because the first moved main — which is how this repository acquired a `v4.0.1`
+# tag on origin pointing at a commit reachable from nothing. Cancelling instead
+# of queueing would be worse: a run killed between its push and its publish
+# leaves a tagged version that never reached npm.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -80,9 +91,37 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Cut from what main actually is, not from what the checkout captured
+          # when this run was queued. A release that ships the commit that
+          # triggered it while main has moved on publishes a version whose
+          # contents nobody can find by looking at the branch.
+          BEFORE=$(git rev-parse HEAD)
+          git fetch origin main
+          git reset --hard origin/main
+
+          # `npm ci` ran above, against the tree this run checked out. If the
+          # reset moved us, that install is for a different lockfile, and the
+          # verify below would gate the new code against the old dependencies.
+          if [ "$BEFORE" != "$(git rev-parse HEAD)" ]; then
+            echo "::notice::main moved while this run was queued — reinstalling."
+            npm ci
+          fi
+
           node scripts/cut-release.mjs ${{ inputs.bump }}
-          git push origin HEAD:main --tags
           VERSION=$(node -p "require('./package.json').version")
+
+          # `--atomic`, and the tag named rather than `--tags`.
+          #
+          # Without `--atomic` git updates each ref independently, so a rejected
+          # branch push still lets the tag through — leaving a version tagged on
+          # origin, pointing at a commit reachable from nothing, that was never
+          # published and that blocks every later attempt to release that number.
+          # That is not hypothetical: it is what happened to v4.0.1.
+          #
+          # `--tags` would also push every stale tag the runner happens to hold.
+          git push --atomic origin HEAD:main "v$VERSION"
+
           echo "TAG_NAME=v$VERSION" >> "$GITHUB_ENV"
 
       - name: Set tag name for push event
