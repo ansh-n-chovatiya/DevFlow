@@ -85,7 +85,7 @@ beforeEach(() => {
 describe('viaLabel', () => {
   /*
    * §1.1 rule 3: every attribution says which path answered it, so no recording
-   * can depend on `@devflow/compiler-plugin` without a reader being able to
+   * can depend on `devflow-compiler-plugin` without a reader being able to
    * tell. A stamped answer that read as `dev build` would be exactly that
    * silent dependency.
    */

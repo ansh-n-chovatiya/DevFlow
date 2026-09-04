@@ -1,5 +1,5 @@
 /**
- * `@devflow/compiler-plugin`: source in, transformed source out.
+ * `devflow-compiler-plugin`: source in, transformed source out.
  *
  * Run through real Babel rather than against a hand-built AST, because every
  * failure mode this plugin has is a failure to agree with Babel about

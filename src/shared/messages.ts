@@ -63,7 +63,7 @@ export interface CapturedComponent {
    */
   debugSource?: { source: string; line: Pos1; column: Pos1 } | null;
   /**
-   * `@devflow/compiler-plugin`'s stamp, read straight off the component
+   * `devflow-compiler-plugin`'s stamp, read straight off the component
    * function. Absent on every build that does not use the plugin, which is
    * every build by default.
    *

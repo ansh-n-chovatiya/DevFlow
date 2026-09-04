@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 interface PackageFile {
+  /** The published name. Asserted for the two packages that have one. */
+  name?: string;
   version: string;
   private?: boolean;
   bin?: Record<string, string>;
@@ -38,17 +40,22 @@ describe('versions', () => {
   });
 
   /*
-   * The third package, and the reason it is watched while it is still private.
+   * The third package. It was watched for four releases while it was still
+   * private, on the grounds that the day it is published is not the day to
+   * discover its version had sat at 3.1.1 the whole time — and that day has now
+   * come, at 4.0.0. It has no lockfile of its own: no dependencies, only a
+   * `@babel/core` peer.
    *
-   * `compiler-plugin/` is not published yet — it has never been run against a
-   * real application's build. The day that changes is not the day to discover
-   * its version has been 3.1.1 through four releases, so `sync-version.mjs`
-   * writes it now and this notices if it stops. It has no lockfile of its own:
-   * it has no dependencies, only a `@babel/core` peer.
+   * It is published having only ever been run against this repository's own
+   * fixtures, never a real application's build. That is a real risk and it is
+   * recorded here rather than anywhere it can be missed, because this is a
+   * *Babel plugin*: a defect in it breaks somebody else's compile, not their
+   * DevFlow experience.
    */
-  it('agree in the compiler plugin, which is versioned before it is published', () => {
+  it('agree in the compiler plugin', () => {
     expect(plugin.version).toBe(pkg.version);
   });
+
 
   /**
    * The fourth and fifth places, and the two nothing was watching.
@@ -165,14 +172,25 @@ describe('the published MCP server', () => {
 
 describe('the compiler plugin', () => {
   /*
-   * `private: true` is a decision, recorded in `ROADMAP_AND_PHASES.md` §1.1 and
-   * asserted here so that publishing it is a deliberate edit to a test rather
-   * than a side effect of running `npm publish` in the wrong directory. It has
-   * never been run against a real application's build, and an npm package is a
-   * thing people install and cannot un-install.
+   * `private: true` was a decision, and removing it was meant to be a
+   * deliberate edit to this test rather than a side effect of running
+   * `npm publish` in the wrong directory. That edit has now been made, at
+   * 4.0.0, and this is what it turned into.
+   *
+   * The caveat the old assertion existed for has not gone away and is written
+   * down instead: the plugin has only ever been run against this repository's
+   * own fixtures, never a real application's build. An npm package is a thing
+   * people install and cannot un-install, and this one is a *Babel plugin* — a
+   * defect in it breaks somebody else's compile rather than their DevFlow
+   * experience. `compiler-plugin/README.md` says so where an installer reads.
+   *
+   * What is asserted now is the other direction: that `private` cannot come
+   * back by accident, which would make a release a silent no-op for this
+   * package while the server beside it published normally.
    */
-  it('is private until it has been used on a real application', () => {
-    expect(plugin.private).toBe(true);
+  it('is publishable, and says which package it is', () => {
+    expect(plugin.private).toBeUndefined();
+    expect(plugin.name).toBe('devflow-compiler-plugin');
   });
 
   /*

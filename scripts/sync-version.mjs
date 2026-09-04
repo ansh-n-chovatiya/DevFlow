@@ -16,10 +16,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { version } = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
 
 /*
- * `compiler-plugin/package.json` is here while it is still `private: true`, and
- * that is the point: the day it is published is not the day to discover its
- * version has been 3.1.1 through four releases. It has no lockfile of its own —
- * it has no dependencies, only a `@babel/core` peer.
+ * `compiler-plugin/package.json` was here through four releases while it was
+ * still `private: true`, on the grounds that the day it is published is not the
+ * day to discover its version had sat at 3.1.1 the whole time. That day was
+ * 4.0.0, and the reason it was already correct is this line. It has no lockfile
+ * of its own — no dependencies, only a `@babel/core` peer.
  */
 for (const file of [
   'public/manifest.json',

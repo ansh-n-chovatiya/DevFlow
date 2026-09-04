@@ -75,7 +75,7 @@ describe('collectChain, over a tree with host elements in it', () => {
 
   /*
    * `ChainEntry.type` is the raw `fiber.type`, and it exists for exactly one
-   * reason: `@devflow/compiler-plugin` stamps the value a module bound, and for
+   * reason: `devflow-compiler-plugin` stamps the value a module bound, and for
    * `forwardRef(fn)` and `memo(fn)` that is the wrapper object rather than the
    * function `getComponentFn` unwraps to. Dropping it here would leave every
    * wrapped component in an app unstamped with nothing going red — the entry

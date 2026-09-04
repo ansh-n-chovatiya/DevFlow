@@ -1,5 +1,5 @@
 /**
- * Reading the build stamp `@devflow/compiler-plugin` leaves on a component.
+ * Reading the build stamp `devflow-compiler-plugin` leaves on a component.
  *
  * The plugin writes `Cart.__devflow = { f: "src/Cart.tsx", l: 12 }` — a static
  * property on the component function itself, chosen over a JSX attribute
