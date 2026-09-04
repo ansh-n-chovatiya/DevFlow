@@ -202,6 +202,20 @@ export interface FrameworkComponentTable {
   framework: Framework;
   build?: 'development' | 'production' | 'unknown';
   components: Record<string, ComponentSource>;
+  /**
+   * Needles for the components the runtime exposed as functions but did not
+   * place, keyed by the same ids as `components`.
+   *
+   * Without `pageUrl`, exactly like `CapturedComponent.needle`: the page is one
+   * fact about the step rather than one per component, and it rides on
+   * `CaptureAndSaveStep.componentsPageUrl`.
+   *
+   * A separate map rather than a field on `ComponentSource`, because that is
+   * what reaches the flow and a needle is 200 characters of somebody's compiled
+   * source that no reader of a recording wants. `reactNeedles` is kept apart
+   * from `reactComponents` for the same reason.
+   */
+  needles: Record<string, Omit<ComponentNeedle, 'pageUrl'>>;
 }
 
 export interface CaptureAndSaveStep {

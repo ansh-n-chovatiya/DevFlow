@@ -7,6 +7,8 @@
  * a Svelte `declared` from `__svelte_meta.loc`, a Vue `declared` with no line,
  * an RSC `absent` for a production server component.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { FrameworkAdapter, Resolution } from '../src/core/locate/adapter.js';
 import { resolutionId, resolutionSource } from '../src/core/locate/resolution.js';
@@ -53,7 +55,7 @@ describe('resolutionSource', () => {
     const source = resolutionSource(searchable);
     expect(source.status).toBe('pending');
     expect(source.source).toBeUndefined();
-    expect(source.detail).toMatch(/bundle search/);
+    expect(source.detail).toMatch(/searched for in the page/);
   });
 
   it('carries the adapter’s own sentence for an absence', () => {
@@ -266,5 +268,58 @@ describe('the build Svelte reports from its walk', () => {
     });
     expect(chain?.chain[0]).toMatchObject({ kind: 'absent', reason: 'not-hydrated' });
     expect(chain?.build).toBe('unknown');
+  });
+});
+
+/*
+ * The whole class of mistake, not the two instances of it that shipped.
+ *
+ * `getLocal` answers with `Partial<LocalStorageShape>` whatever it is asked
+ * for, so reading a key that was never requested typechecks perfectly and is
+ * `undefined` forever. `captureAndSave` read `frameworkComponents` and
+ * `frameworkMeta` without asking for either: the merge was unioning against
+ * nothing and *replacing* the component table on every step, losing the best
+ * answer in a real recording. It was found by driving the built extension
+ * against a real Next.js application, because every fixture passed.
+ *
+ * Nothing in the type system can catch this and the next person to add a read
+ * will do it again — the resolver pass added right after the fix needed two
+ * more keys and would have had the same bug. So the invariant is asserted over
+ * every `getLocal` block in the file rather than the one that was wrong.
+ */
+describe('every storage key the worker reads is a key it asked for', () => {
+  it('names each key somewhere in the function that reads it', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'src/background/index.ts'),
+      'utf8',
+    );
+
+    /* Scoped per top-level function: a read belongs to the function it is in. */
+    const starts = [...source.matchAll(/^(?:async )?function (\w+)/gm)];
+    expect(starts.length).toBeGreaterThan(5);
+
+    const offenders: string[] = [];
+    for (const [index, start] of starts.entries()) {
+      const from = start.index ?? 0;
+      const to = starts[index + 1]?.index ?? source.length;
+      const body = source.slice(from, to);
+
+      const read = new Set(
+        [...body.matchAll(/stored\.value\.([A-Za-z]\w*)/g)].map((m) => m[1]),
+      );
+      if (read.size === 0) continue;
+
+      const asked = new Set<string>();
+      for (const call of body.matchAll(/getLocal\(\[([\s\S]*?)\]\)/g)) {
+        for (const key of call[1].matchAll(/'([A-Za-z]\w*)'/g)) asked.add(key[1]);
+      }
+      for (const one of body.matchAll(/getLocal\('([A-Za-z]\w*)'\)/g)) asked.add(one[1]);
+
+      for (const key of read) {
+        if (!asked.has(key)) offenders.push(`${start[1]} reads ${key} without asking`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
   });
 });

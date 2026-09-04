@@ -824,59 +824,6 @@ describe('what a dev recording says about one click', () => {
   });
 });
 
-describe('every storage key captureAndSave reads is a key it asked for', () => {
-  /*
-   * FIXED — `src/background/index.ts`, and generalised rather than patched.
-   *
-   * `captureAndSave` merged the step's framework tables into
-   * `stored.value.frameworkComponents` and wrote the union. The `getLocal` key
-   * list two hundred lines above it did not ask for `frameworkComponents`, and
-   * `getLocal` is typed `Partial<LocalStorageShape>` whatever it is asked for —
-   * so the read compiled, always yielded `undefined`, and every step's write
-   * replaced the whole table with its own. Only the last step's components
-   * survived a recording; the best answer in the run was dropped. React escaped
-   * only because its two keys happened to be in the list already.
-   *
-   * Measured on a real Next.js recording: the table held eight ids after the
-   * first click and a different eight after the third.
-   *
-   * The fix was two strings. This test is not about those two strings — it is
-   * about the shape of the mistake, which no type can catch and which the next
-   * reader added to this function will make again. So it reads the source and
-   * asserts the invariant: everything the function reads, it asked for.
-   */
-  it('asks getLocal for every key it later reads off stored.value', () => {
-    const source = fs.readFileSync(
-      path.join(process.cwd(), 'src/background/index.ts'),
-      'utf8',
-    );
-
-    const start = source.indexOf('async function captureAndSave(');
-    expect(start).toBeGreaterThan(-1);
-
-    const listStart = source.indexOf('await getLocal([', start);
-    const listEnd = source.indexOf(']);', listStart);
-    expect(listStart).toBeGreaterThan(-1);
-    expect(listEnd).toBeGreaterThan(listStart);
-
-    const asked = new Set(
-      [...source.slice(listStart, listEnd).matchAll(/'([A-Za-z]\w*)'/g)].map((m) => m[1]),
-    );
-
-    // The function ends where the next top-level declaration begins.
-    const bodyEnd = source.indexOf('\nasync function ', listEnd) > -1
-      ? source.indexOf('\nasync function ', listEnd)
-      : source.indexOf('\nfunction ', listEnd);
-    const body = source.slice(listEnd, bodyEnd > -1 ? bodyEnd : undefined);
-
-    const read = [...body.matchAll(/stored\.value\.([A-Za-z]\w*)/g)].map((m) => m[1]);
-    expect(read.length).toBeGreaterThan(0);
-
-    const unasked = [...new Set(read)].filter((key) => !asked.has(key));
-    expect(unasked).toEqual([]);
-  });
-});
-
 describe('production, where the honest answer is that there is no answer', () => {
   /*
    * The mechanism works. Handed the flight payload `next start` actually served

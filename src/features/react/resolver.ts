@@ -58,7 +58,7 @@ import { searchBundle, countOccurrences } from '../../core/locate/search.js';
 import {
   extractSourceMappingURL,
   decodeDataUrl,
-  lookupOriginal,
+  lookupFunctionStart,
   parseSourceMap,
   SourceMapError,
   type PreparedMap,
@@ -551,9 +551,17 @@ async function resolveOne(
     };
   }
 
-  let original: ReturnType<typeof lookupOriginal>;
+  let original: ReturnType<typeof lookupFunctionStart>;
   try {
-    original = lookupOriginal(map, found.line, found.column);
+    /*
+     * `lookupFunctionStart`, not `lookupOriginal`: `found` is the start of a
+     * function, and a map need not emit a mapping there. Bounded by the text
+     * that matched, so the segment accepted belongs to this function's own
+     * compiled source rather than to whatever the bundler emitted before it.
+     * See the header on `lookupFunctionStart` for what that cost on a real Vue
+     * production build before it existed.
+     */
+    original = lookupFunctionStart(map, found.line, found.column, found.needleText.length);
   } catch (error) {
     const reason = error instanceof SourceMapError ? error.message : 'the source map is unusable';
     return {

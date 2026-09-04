@@ -1178,6 +1178,26 @@ function startScriptInventory(): void {
   reportScripts(fromDom);
 }
 
+/*
+ * The script inventory is shared, and so is the decision to stop it.
+ *
+ * It collects the page's bundle URLs and knows nothing about frameworks — the
+ * resolver searches those bundles for React's needles and, since Phase 5, for
+ * every other adapter's too. `abandonReact` used to stop it outright, which is
+ * exactly wrong on a Vue or Svelte page: React is abandoned there by design,
+ * three clicks in, and stopping the inventory would take the bundle list away
+ * from the adapter that still needs it.
+ */
+function scriptInventoryWanted(): boolean {
+  const reactWants = reactActive && !reactGaveUp && reactFound;
+  const frameworkWants = frameworkActive && !frameworkGaveUp && frameworkFound;
+  return reactWants || frameworkWants;
+}
+
+function releaseScriptInventory(): void {
+  if (!scriptInventoryWanted()) stopScriptInventory();
+}
+
 function stopScriptInventory(): void {
   scriptsObserver?.disconnect();
   scriptsObserver = null;
@@ -1234,7 +1254,7 @@ function abandonReact(): void {
   cancelPendingState();
   forgetStores();
   detachReactListeners();
-  stopScriptInventory();
+  releaseScriptInventory();
   sendReactMeta(false);
 }
 
@@ -1553,6 +1573,7 @@ let frameworkActive = false;
 let frameworkGaveUp = false;
 let frameworkProbes = 0;
 let frameworkMetaSent = false;
+let frameworkFound = false;
 
 /** Built once and lazily: `createSvelteAdapter` closes over the window. */
 function adapters(): readonly FrameworkAdapter[] {
@@ -1577,6 +1598,7 @@ function abandonFrameworks(): void {
   frameworkGaveUp = true;
   frameworkAdapters = null;
   detachFrameworkListeners();
+  releaseScriptInventory();
   sendFrameworkMeta();
 }
 
@@ -1595,7 +1617,11 @@ function onFrameworkInteraction(event: Event): void {
     return;
   }
 
+  frameworkFound = true;
   sendFrameworkMeta();
+  // Only once something resolved: on a page with no adapter's runtime the
+  // observer would report bundles nobody will ever search.
+  startScriptInventory();
   emit({
     kind: 'framework',
     // The same number React's path claims by: one dispatch, one timeStamp,
@@ -1663,7 +1689,7 @@ function applyRecording(wanted: boolean): void {
     if (reactFound) startScriptInventory();
   } else {
     detachReactListeners();
-    stopScriptInventory();
+    releaseScriptInventory();
     prewarm = null;
     // Nothing here is restoring the page — there is nothing to restore, see
     // `state.ts`. It is dropping a timer whose result no step can claim, and
