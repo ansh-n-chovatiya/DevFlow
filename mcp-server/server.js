@@ -1531,6 +1531,20 @@ async function saveFlow(flow, git = null) {
     ...(flow.react ? { react: flow.react } : {}),
     ...(flow.state ? { state: flow.state } : {}),
     ...(flow.renders ? { renders: flow.renders } : {}),
+    /*
+     * The other three framework tables, on `react`'s terms exactly.
+     *
+     * These are the paragraph above's warning coming true rather than an
+     * illustration of it: `stepParts` was taught to render them, this line was
+     * not written, and every real recording arrived with its Vue components and
+     * lost them here. A fixture written straight onto disk passed the whole
+     * time. It was caught by driving the built extension against a real Vue
+     * application and asking the server what it saw, which is the only place
+     * the two halves meet.
+     */
+    ...(flow.vue ? { vue: flow.vue } : {}),
+    ...(flow.svelte ? { svelte: flow.svelte } : {}),
+    ...(flow.rsc ? { rsc: flow.rsc } : {}),
   };
 
   // Awaited, not fired and forgotten: the POST response tells the extension the

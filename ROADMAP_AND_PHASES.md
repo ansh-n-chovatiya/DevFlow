@@ -611,7 +611,7 @@ spans carrying zero component or file identity in any attribute. ADR 0027.
 **What each adapter can honestly deliver differs by build mode**, and is written
 out here rather than hidden behind one checkbox. All three work in development.
 
-- [~] **Vue 3 / Nuxt:** Reactivity proxy inspector and template mapper. Built, wired and merged — `src/core/vue/`, `src/injected/vue.ts`, 86 tests. Reaches a recording and the MCP server; **never run against a real application** — see below.
+- [~] **Vue 3 / Nuxt:** Reactivity proxy inspector and template mapper. Built, wired, merged and **run against a real Vue application** — the inspector half is done, the mapper half is not. See *What a real run proved* below.
   *Dev:* `__vueParentComponent` on every element, `type.__file` on the component.
   *Production:* element links are stripped and installing the devtools hook does
   not restore them, but an O(tree) walk from `__vue_app__` still resolves —
@@ -636,6 +636,51 @@ out here rather than hidden behind one checkbox. All three work in development.
   through `.next/server/*-manifest.js`, which 404s on every served path — so this
   half is forced into `mcp-server/`, the only one of the two with a filesystem.
   Server components are unreachable at any price.
+
+#### What a real run proved, and what it found
+
+A Vue 3 application was built, the extension was built, and Chromium was driven
+headed with the extension loaded — headed because this repository already knows
+the MV3 service worker does not register in Playwright's headless. A recording
+was started the way the popup starts one, three clicks were made on a nested
+component, and storage was read back.
+
+**It works, in both builds, and the production path is the interesting one.**
+
+- *Development:* `frameworkMeta` reported `vue`, `3.5.42`, `development`. Each
+  step carried a three-component chain, and all three resolved `status:
+  resolved`, `via: debug-source`, with real `.vue` paths — outermost first,
+  `App › CartPanel › CheckoutButton`, the true nesting.
+- *Production:* the element's own properties came back **`[]`** — the build
+  strips every link, exactly as the spike measured — and only the mount
+  container kept `_vnode` and `__vue_app__`. The chain still resolved, through
+  the O(tree) walk, and the names survived minification because
+  `@vitejs/plugin-vue` injects `__name`. The components are `status: pending`,
+  saying in words that finding their files needs a bundle search that is not
+  wired. **That is the mapper half of this bullet, and it is why the box is
+  still `[~]`:** in production Vue gives names and not files.
+
+**The run found a shipped bug that no fixture could have.** `saveFlow` in
+`mcp-server/server.js` copies a posted payload's flow-level fields **by name**,
+and `vue` was not one of them — so a real recording arrived with its component
+table and lost it on the way to disk, while every fixture written straight onto
+disk kept it and passed. The comment on that very line already warned that *"a
+reader added without its line here is the same bug again"*, having been bitten
+once by `state`. It was right. `tests/framework-end-to-end.test.ts` now starts
+at a `POST /flows` and ends at the tool output; removing the line again turns
+four of its five assertions red.
+
+With that fixed, `get_step_detail` answers a real Vue recording:
+
+```
+vue: CheckoutButton  src/components/CheckoutButton.vue
+vue chain, outermost first: App › CartPanel › CheckoutButton
+```
+
+rendered through the same `formatSource` React uses, with no new tool.
+
+**Svelte and RSC have had no such run.** Their adapters are gated on fixtures
+only, and the Vue run is now direct evidence that fixtures are not enough here.
 
 #### What is wired, and what the `[~]` still stands for
 
@@ -662,12 +707,11 @@ to the MCP server:
 
 **The boxes stay `[~]`, and this is what they now stand for:**
 
-- **Nothing here has been run against a real application.** Every test is a
-  fixture mirroring output the Wave 1 spikes printed. The spikes ran real Vue,
-  Svelte and Next.js apps, but against measurement scripts rather than against
-  the built extension, so "a real Vue page produces a real flow" is asserted by
-  nobody. That is the single remaining acceptance step, and it is the one this
-  project has historically been wrong about most cheaply.
+- **Svelte and RSC have not been run against a real application.** Vue has, and
+  it immediately found a bug every fixture had passed over — so this is a
+  measured risk rather than a theoretical one. Their tests are fixtures
+  mirroring what the Wave 1 spikes printed, and the spikes drove measurement
+  scripts rather than the built extension.
 - **A `searchable` resolution is never resolved to a path.** It is stored
   `pending`, saying so in words. React's resolver — bundle fetch, needle search,
   source-map decode — is not wired for these three, so a component the runtime
