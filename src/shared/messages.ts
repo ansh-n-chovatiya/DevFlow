@@ -1076,6 +1076,14 @@ export interface AgentConfig {
   maxFiberWalk: number;
   /** `react.prewarmTtlMs` — how long a chain walked on pointerdown stays usable. */
   prewarmTtlMs: number;
+  /**
+   * `vue.maxVNodeWalk` — vnodes searched before the Vue production walk gives up.
+   *
+   * The Vue counterpart of `maxFiberWalk`, and not the same kind of number: a
+   * production build leaves no upward edge, so this bounds a search over the
+   * whole page rather than a climb from the element.
+   */
+  vueMaxVNodeWalk: number;
   /** `recording.state` — whether the app's stores are sampled around interactions. */
   captureState: boolean;
   /** `recording.stateSettleMs` — how long after an interaction the second sample is taken. */

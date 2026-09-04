@@ -103,5 +103,6 @@
   "thumbnails.quality": 0.5,
   "thumbnails.width": 128,
   "ui.errorTtlMs": 60000,
-  "ui.launcherTimeoutMs": 20000
+  "ui.launcherTimeoutMs": 20000,
+  "vue.maxVNodeWalk": 20000
 }

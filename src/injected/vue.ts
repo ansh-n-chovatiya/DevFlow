@@ -41,14 +41,21 @@
  *    been stripped bare. See `core/vue/tree.ts` for the two rules that walk has
  *    to obey.
  *
- * ## The budget is a parameter with a default
+ * ## The budget is now `vue.maxVNodeWalk`, and it arrives as a function
  *
- * `VUE_MAX_VNODE_WALK` should be a setting — the walk's cost on a real
- * application was never measured, and it is the per-click cost of the whole
- * production path. It cannot be one yet: `src/features/settings/fields.ts` is
- * owned elsewhere in this wave. So the number is threaded through as an argument
- * with the compiled-in default, which is the shape it will keep once the setting
- * exists.
+ * The walk has been measured — see `VUE_MAX_VNODE_WALK` in `shared/constants.ts`
+ * for the numbers — and it is a setting. `createVueAdapter` takes a **reader**
+ * rather than a number, and that is the whole of the design here.
+ *
+ * `buildAdapters` runs once per page, lazily, and is memoised; `applyConfig`
+ * receives the user's settings whenever the content script gets round to
+ * pushing them, which is routinely after the first adapter has been built. An
+ * adapter that closed over a number at construction would therefore capture the
+ * compiled-in default and keep using it for the life of the page — a setting
+ * that appears on screen, saves, reloads, and silently does nothing, which is
+ * the exact failure `agent.ts` forbids by reading every field at the point of
+ * use. A getter is that same rule expressed across a module boundary: the
+ * number is fetched when the click happens, not when the adapter was made.
  */
 
 import type {
@@ -238,12 +245,24 @@ export function vueChainFromElement(el: Element, budget = VUE_MAX_VNODE_WALK): R
 /**
  * Vue's reader, as the frozen contract asks for it.
  *
- * The budget cannot be passed through `fromElement` — the interface takes an
- * element and nothing else — so it is the compiled-in default here and an
- * argument on `vueChainFromElement` for anything that has a number in hand.
+ * The budget cannot be passed *through* `fromElement` — the interface takes an
+ * element and nothing else — so it is closed over here instead, as the getter
+ * described at the top of this file. `createSvelteAdapter(win)` set the
+ * precedent: an adapter that needs something from outside is constructed with
+ * it rather than reaching for a global.
+ *
+ * `budget` defaults to the compiled-in constant so an adapter built with no
+ * settings in hand — a test, or a page whose config never arrived — still gets
+ * the shipped answer.
  */
-export const vueAdapter: FrameworkAdapter = {
-  framework: 'vue',
-  detect: detectVue,
-  fromElement: (el: Element) => vueChainFromElement(el),
-};
+export function createVueAdapter(
+  budget: () => number = () => VUE_MAX_VNODE_WALK,
+): FrameworkAdapter {
+  return {
+    framework: 'vue',
+    detect: detectVue,
+    // Read per call, never hoisted: see the header. A number captured here
+    // would be the default for the life of the page.
+    fromElement: (el: Element) => vueChainFromElement(el, budget()),
+  };
+}

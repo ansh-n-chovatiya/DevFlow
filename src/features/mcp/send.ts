@@ -117,10 +117,35 @@ const DIAGNOSTIC_HEADERS = new Set([
   'location',
 ]);
 
-function keepHeaders(headers: Record<string, string> | undefined): Record<string, string> {
+/**
+ * Headers kept on *every* call, not only a failed one.
+ *
+ * `DIAGNOSTIC_HEADERS` above answers "what went wrong", so it rides only on
+ * failures and everything else is dropped to nothing. This set answers a
+ * different question — *which code ran* — and a server action that worked is
+ * exactly the case where that matters.
+ *
+ * `next-action` is Next.js's id for the server action a request invoked, and
+ * `mcp-server/rsc.js` maps it to the file and export it came from through
+ * `server-reference-manifest.json`. Without it here the manifest reader is
+ * reachable only for actions that failed, which is the opposite of useful. It
+ * is an opaque hash naming a function in the user's own code — not a
+ * credential, and not a body — so keeping it costs a few tokens and no privacy.
+ * Widening `DIAGNOSTIC_HEADERS` instead would have made one set mean two
+ * things, and the next reader would have had to guess which.
+ */
+const ATTRIBUTION_HEADERS = new Set(['next-action']);
+
+function keepHeaders(
+  headers: Record<string, string> | undefined,
+  failed: boolean,
+): Record<string, string> {
   const kept: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers ?? {})) {
-    if (DIAGNOSTIC_HEADERS.has(key.toLowerCase())) kept[key] = value;
+    const name = key.toLowerCase();
+    if (ATTRIBUTION_HEADERS.has(name) || (failed && DIAGNOSTIC_HEADERS.has(name))) {
+      kept[key] = value;
+    }
   }
   return kept;
 }
@@ -154,8 +179,8 @@ export function leanCalls(step: Step, bodies?: BodyLimits): Step {
       const failed = callFailed(call);
       return {
         ...call,
-        requestHeaders: failed ? keepHeaders(call.requestHeaders) : {},
-        responseHeaders: failed ? keepHeaders(call.responseHeaders) : {},
+        requestHeaders: keepHeaders(call.requestHeaders, failed),
+        responseHeaders: keepHeaders(call.responseHeaders, failed),
         // The truncation flags travel with the body, so a body the capture cut
         // short is read as truncated JSON rather than mislabelled non-JSON.
         requestBody: call.requestBody

@@ -803,19 +803,54 @@ to the MCP server:
   component named its child's file, confidently. `lookupFunctionStart` scans
   forward within the matched text instead. Svelte is unaffected, because its
   production build exposes no function to search for.
-- **`mcp-server/rsc.js` still has no caller**, and it is blocked rather than
-  forgotten. It maps a production client-component module id to a file, and the
-  RSC adapter records no such id — a production server component resolves to
-  `absent`, which is the measured truth. Wiring it needs the adapter to carry
-  the `I`-row module id first.
+- ~~`mcp-server/rsc.js` has no caller.~~ **Wired.** Two call sites in
+  `mcp-server/server.js`, both through an `rscTry` guard mirroring `git.js`, both
+  inside answers that already existed — **no new tool.** A client component's
+  `I`-row module id is joined to the element by matching its `id`/`data-*`
+  against the flight tuple's props, `Resolution` carries it in one optional
+  field, and the server maps it to a file through
+  `page_client-reference-manifest.js`. Proven end to end by a test that drives a
+  spawned MCP server against a real `.next/server` tree.
+
+  **It is still reachable only when the server passes an `id` or `data-*` prop
+  through to the client component**, and that limit is measured rather than
+  assumed: the spike's own production payload is
+  `["$","$L4",null,{"title":"Cart"}]`, and `title` is not an attribute the
+  browser can match on, so that page gets nothing. There is no measured
+  browser-side join for a client component whose props are all non-attribute —
+  the fiber is anonymous and the chunk urls are shared.
 - ~~The viewer does not show framework components.~~ **Done.** The review card
   falls back to the innermost component of the step's framework chain when no
   React component claimed it, through the same card and status words rather than
   a second renderer. No `within`, because no owner rule has been measured for
   these runtimes.
-- **`VUE_MAX_VNODE_WALK` is a constant, not a setting.** It is the per-click cost
-  of Vue's entire production path and has never been measured on a real page —
-  which is the same missing acceptance step as the first bullet.
+- ~~`VUE_MAX_VNODE_WALK` is a constant, not a setting.~~ **Measured, then made
+  one.** Timed in a headed browser against real Vue 3 production builds at four
+  sizes, with `__vueParentComponent` confirmed absent on every target:
+
+  | app | DOM elements | vnodes visited | one walk |
+  | --- | ---: | ---: | ---: |
+  | 3 components | 13 | 8 | 0.0005 ms |
+  | 500 components | 3,571 | 4,106 | 0.037 ms |
+  | 2,000 components | 14,131 | 16,206 | 0.134 ms |
+  | 8,000 components | 56,251 | 64,406 | 0.439 ms |
+
+  Two facts neither of which was guessable. **The cost does not depend on where
+  the click landed** — deepest-match-wins means the walk cannot stop at the first
+  hit, so it drains the stack every time, and clicking the first card and the
+  last card both visited 16,206 vnodes. And **time is not the binding
+  constraint**: a flat ~8ns per vnode, so 20,000 costs ~0.16ms. The number is a
+  *coverage* line — roughly 17,000 elements — not a time budget, which is the
+  opposite of what its own comment used to imply.
+
+  So 20,000 stands as the default and `vue.maxVNodeWalk` is now a settings row
+  whose ceiling was raised to 1,000,000: a genuinely enormous page can spend
+  ~8ms and get an answer. Threaded as a **getter**, not a number — `adapters()`
+  is memoised and `applyConfig` lands after it, so a value captured at
+  construction would have pinned the compiled-in default for the life of the
+  page. That is a setting that saves, reloads and silently does nothing, and it
+  is the bug the agent's own first mutation check failed to catch until it wrote
+  a test that drives the real agent through a control push.
 
 Angular is **not** a fourth adapter, and was removed rather than left listed.
 ADR 0017's rule is that these are taken together or not at all; adding a fourth

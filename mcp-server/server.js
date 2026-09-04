@@ -695,6 +695,69 @@ async function gitTry(what, run, fallback = null) {
 }
 
 /*
+ * `rsc.js`, on the same terms as `git.js` above it.
+ *
+ * It reads `.next/server/*-manifest.js` off this machine, which is the only
+ * place a production Next.js module id becomes a source file — the browser gets
+ * a 404 on every served path (`.ctx/spike-rsc.md` §4). An installation missing
+ * the module, or missing the built `core.js` it imports, loses that one line of
+ * attribution and keeps every other tool, which is the degradation `arkgTry`
+ * and `gitTry` were both written for.
+ */
+let rscmod = null;
+try {
+  rscmod = await import('./rsc.js');
+} catch (error) {
+  rscmod = null;
+  log(`no RSC attribution (${error.message}) — flows and every other tool are unaffected`);
+}
+
+/**
+ * The project whose build output is read, or null when there is not one.
+ *
+ * `gitRoot()`'s answer and `gitRoot()`'s reason, one step further: a remote
+ * deployment's working directory is a container somebody built, and its
+ * `.next/server` — if it has one — belongs to a different application than the
+ * caller's. A module id resolved against it would name a real file that is the
+ * wrong file, which is the failure this whole feature is written to avoid.
+ *
+ * Never a root off a request. `get_source_snippet` refuses one because the value
+ * would ultimately have come from a web page, and this reads files under it on
+ * exactly the same terms.
+ */
+function rscRoot() {
+  return REMOTE ? PROJECT_ROOT_ENV : (PROJECT_ROOT_ENV ?? process.cwd());
+}
+
+/**
+ * One header off a captured call, by name, whatever case it was recorded in.
+ *
+ * The two capture paths disagree: `fetch`'s `Headers` lower-cases on the way in
+ * and the XHR path splits raw response lines, so the case is whatever the page
+ * or the server sent. A lookup by exact key therefore misses on one of the two
+ * paths at random, which reads as "this request had no such header".
+ */
+function headerValue(headers, name) {
+  if (!headers || typeof headers !== 'object') return null;
+  const wanted = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === wanted && typeof value === 'string' && value !== '') return value;
+  }
+  return null;
+}
+
+/** `gitTry`'s shape for a module whose every function is synchronous. */
+function rscTry(what, run, fallback = null) {
+  if (!rscmod || !rscmod.rscEnabled()) return fallback;
+  try {
+    return run(rscmod);
+  } catch (error) {
+    log(`rsc: ${what} failed (${error.message})`);
+    return fallback;
+  }
+}
+
+/*
  * `otel.js`, on the same terms as `git.js` above it.
  *
  * It holds the spans a backend exported and nothing else this server needs to
@@ -2971,6 +3034,36 @@ function stepParts(flow, dir, step, render) {
       lines.push(
         `${ref.framework}: ${innermost.name}${where ? `  ${where}` : ''}`,
       );
+      /*
+       * The half of the answer only this machine has.
+       *
+       * A production RSC client component reaches here with a module id and no
+       * path, because the manifest that maps the two is on disk and 404s on
+       * every served path a browser could ask for. So the recording carries the
+       * id and the lookup happens here — the same split `readStamp` makes for a
+       * commit, and the reason `mcp-server/rsc.js` exists at all.
+       *
+       * `rscRoot()` and never a root off the request, for `get_source_snippet`'s
+       * reason: the argument would have come from a web page, and a path read
+       * from one is how a question turns into a file reader for the whole disk.
+       *
+       * Only when there is no source. A component that already resolved has its
+       * answer, and a second one derived from a build that may not be the build
+       * the recording was made against would be a contradiction printed as fact.
+       */
+      const moduleRoot = innermost.source ? null : innermost.moduleId ? rscRoot() : null;
+      if (moduleRoot) {
+        const hit = rscTry('module id lookup', (m) =>
+          m.fileForModuleId(moduleRoot, innermost.moduleId),
+        );
+        if (hit?.found) {
+          lines.push(
+            `  module ${innermost.moduleId} → ${hit.file}` +
+              `${hit.exportName ? ` (${hit.exportName})` : ''}` +
+              `  — read from ${hit.manifest} in this project's build output`,
+          );
+        }
+      }
       if (innermost.detail) lines.push(`  ${innermost.detail}`);
       if (named.length > 1) {
         lines.push(
@@ -3024,6 +3117,34 @@ function stepParts(flow, dir, step, render) {
           `(${call.durationMs || 0}ms)${at(call.timestamp)}` +
           (call.traceId ? ` — trace ${call.traceId}` : ''),
       );
+      /*
+       * A Next.js server action, when the request still carries its id.
+       *
+       * `next-action: 40f43782738bb9c45a0870d2dcbb114f82c8acb929` is a hash, and
+       * `server-reference-manifest.json` in this project's build output is the
+       * only place it becomes `app/actions.ts` / `echoAction` — the same
+       * on-disk-only mapping as a client module id, read by the same module.
+       *
+       * The header is the carrier and it is not invented here: `NetworkCall`
+       * has always had `requestHeaders`. It is read case-insensitively because
+       * the XHR capture path splits raw header lines and keeps whatever case
+       * the page sent, while the `fetch` path has already lower-cased them.
+       *
+       * The id is build-specific — the same function hashes differently in dev
+       * and prod — so a miss is reported as nothing rather than as a guess, and
+       * `not-in-manifest` is left to say what it means where it is asked for.
+       */
+      const actionId = headerValue(call.requestHeaders, 'next-action');
+      const actionRoot = actionId ? rscRoot() : null;
+      if (actionRoot) {
+        const hit = rscTry('action id lookup', (m) => m.fileForActionId(actionRoot, actionId));
+        if (hit?.found) {
+          lines.push(
+            `  server action ${hit.exportName || actionId} — ${hit.file}` +
+              `  (${hit.runtime} runtime, read from this project's build output)`,
+          );
+        }
+      }
       const request = compactCall(
         call.requestBody,
         bodyMeta(call, 'request'),

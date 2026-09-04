@@ -323,3 +323,57 @@ describe('every storage key the worker reads is a key it asked for', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/*
+ * A server action that *worked* is the case that matters, and it was the case
+ * being thrown away.
+ *
+ * `leanCalls` keeps request headers only on a failed call — `DIAGNOSTIC_HEADERS`
+ * answers "what went wrong", so a successful call is stripped to `{}`. Next.js
+ * names the server action a request invoked in `next-action`, and
+ * `mcp-server/rsc.js` maps that id to the file and export it came from. Under
+ * the old rule the manifest reader was reachable only for actions that failed,
+ * which is the opposite of useful.
+ */
+describe('the headers a send keeps', () => {
+  it('keeps next-action on a call that succeeded', async () => {
+    const { leanCalls } = await import('../src/features/mcp/send.js');
+    const step = {
+      networkCalls: [
+        {
+          status: 200,
+          requestHeaders: { 'next-action': '40f4378abc', cookie: 'secret', accept: 'text/x-component' },
+          responseHeaders: { 'content-type': 'text/x-component' },
+          requestBody: null,
+          responseBody: null,
+        },
+      ],
+    } as never;
+
+    const [call] = leanCalls(step).networkCalls!;
+    expect(call.requestHeaders?.['next-action']).toBe('40f4378abc');
+    // Everything else still goes: this widened one header, not the rule.
+    expect(call.requestHeaders?.cookie).toBeUndefined();
+    expect(call.requestHeaders?.accept).toBeUndefined();
+    expect(call.responseHeaders?.['content-type']).toBeUndefined();
+  });
+
+  it('still keeps the diagnostic headers when the call failed', async () => {
+    const { leanCalls } = await import('../src/features/mcp/send.js');
+    const step = {
+      networkCalls: [
+        {
+          status: 500,
+          requestHeaders: { cookie: 'secret' },
+          responseHeaders: { 'content-type': 'application/json', 'retry-after': '30' },
+          requestBody: null,
+          responseBody: null,
+        },
+      ],
+    } as never;
+
+    const [call] = leanCalls(step).networkCalls!;
+    expect(call.responseHeaders?.['retry-after']).toBe('30');
+    expect(call.requestHeaders?.cookie).toBeUndefined();
+  });
+});
