@@ -953,6 +953,8 @@ import {
   getDisplayName,
 } from '../core/react/fiber.js';
 import { interactionTarget } from '../core/dom/walk.js';
+import type { FrameworkAdapter } from '../core/locate/adapter.js';
+import { buildAdapters, chainsFor, detectFrameworks } from './registry.js';
 import { componentId, nameOnlyId } from '../core/locate/id.js';
 import { buildNeedle } from '../core/locate/needle.js';
 import { readStamp } from '../core/react/stamp.js';
@@ -1536,6 +1538,89 @@ function onReactPointerDown(event: Event): void {
   if (target) chainFor(target);
 }
 
+// ── The other frameworks ─────────────────────────────────────────────────────
+/*
+ * A lifecycle of its own, deliberately not React's.
+ *
+ * `abandonReact` detaches React's listeners once the probes run out, and on a
+ * Vue or Svelte page that is exactly what happens — which means anything hung
+ * off React's listener would stop working precisely on the pages these adapters
+ * exist for. So this attaches, probes and gives up on its own terms.
+ */
+
+let frameworkAdapters: readonly FrameworkAdapter[] | null = null;
+let frameworkActive = false;
+let frameworkGaveUp = false;
+let frameworkProbes = 0;
+let frameworkMetaSent = false;
+
+/** Built once and lazily: `createSvelteAdapter` closes over the window. */
+function adapters(): readonly FrameworkAdapter[] {
+  frameworkAdapters ??= buildAdapters(window);
+  return frameworkAdapters;
+}
+
+function sendFrameworkMeta(): void {
+  if (frameworkMetaSent) return;
+  frameworkMetaSent = true;
+  emit({ kind: 'framework-meta', frameworks: detectFrameworks(adapters()) });
+}
+
+/*
+ * Gives up only when the probes have run out *and* no adapter says its runtime
+ * is on the page. `detect()` is the cheap global read, so a Vue app whose first
+ * three clicks landed on plain markup is not abandoned — it is simply a page
+ * where nothing has been clicked inside the app yet, which is the same
+ * distinction `abandonReact` draws with `hasReactRoot`.
+ */
+function abandonFrameworks(): void {
+  frameworkGaveUp = true;
+  frameworkAdapters = null;
+  detachFrameworkListeners();
+  sendFrameworkMeta();
+}
+
+function onFrameworkInteraction(event: Event): void {
+  if (!frameworkActive || frameworkGaveUp) return;
+
+  const target = interactionTarget(event);
+  if (!target) return;
+
+  const chains = chainsFor(target, adapters());
+  if (chains.length === 0) {
+    frameworkProbes += 1;
+    if (frameworkProbes >= REACT_PROBE_ATTEMPTS && detectFrameworks(adapters()).length === 0) {
+      abandonFrameworks();
+    }
+    return;
+  }
+
+  sendFrameworkMeta();
+  emit({
+    kind: 'framework',
+    // The same number React's path claims by: one dispatch, one timeStamp,
+    // identical in both worlds.
+    eventTime: event.timeStamp,
+    chains,
+  });
+}
+
+function attachFrameworkListeners(): void {
+  for (const type of REACT_EVENTS) document.addEventListener(type, onFrameworkInteraction, true);
+}
+
+function detachFrameworkListeners(): void {
+  for (const type of REACT_EVENTS) document.removeEventListener(type, onFrameworkInteraction, true);
+}
+
+function applyFrameworkRecording(wanted: boolean): void {
+  if (frameworkGaveUp) return;
+  if (wanted === frameworkActive) return;
+  frameworkActive = wanted;
+  if (wanted) attachFrameworkListeners();
+  else detachFrameworkListeners();
+}
+
 const REACT_EVENTS = ['click', 'input', 'change'] as const;
 
 function attachReactListeners(): void {
@@ -1558,6 +1643,13 @@ function applyRecording(wanted: boolean): void {
    * would mean a plain page recorded a flow and silently traced nothing.
    */
   recordingNow = wanted;
+
+  /*
+   * Before the `reactGaveUp` return below, and that ordering is the whole point.
+   * A Vue page abandons React after three probes, so anything placed after that
+   * return would never attach on the pages the adapters are for.
+   */
+  applyFrameworkRecording(wanted);
 
   // The recorder's half, and only the recorder's half. Once the probes have run
   // out there is nothing to attach or detach for this document ever again.

@@ -17,6 +17,7 @@
 import type {
   BoundingBox,
   ComponentNeedle,
+  ComponentSource,
   DomChange,
   DraftStep,
   FlowReact,
@@ -31,6 +32,11 @@ import type {
   StepA11yFinding,
 } from './types.js';
 import type { Pos1 } from '../core/locate/positions.js';
+import type {
+  Framework,
+  FrameworkPresence,
+  ResolvedChain,
+} from '../core/locate/adapter.js';
 import type { ComponentStamp } from '../core/react/stamp.js';
 import type { ArchitectureSnapshot, PageReading } from '../core/architecture/index.js';
 
@@ -180,6 +186,24 @@ export interface StepA11yMessage {
   note?: string;
 }
 
+/**
+ * One framework's components for one step, keyed by the ids its chain names.
+ *
+ * Sent with the step for `components`' reason: the worker is the single writer
+ * of every table on a flow, so nothing here can race the capture queue's
+ * rewrite of `recordedSteps`.
+ *
+ * Already `ComponentSource`, converted in the content script by
+ * `core/locate/resolution.ts`, so the worker merges these into
+ * `Flow.vue`/`Flow.svelte`/`Flow.rsc` without knowing anything about
+ * frameworks — it is the same merge it already does for React.
+ */
+export interface FrameworkComponentTable {
+  framework: Framework;
+  build?: 'development' | 'production' | 'unknown';
+  components: Record<string, ComponentSource>;
+}
+
 export interface CaptureAndSaveStep {
   type: 'CAPTURE_AND_SAVE_STEP';
   step: DraftStep;
@@ -195,6 +219,8 @@ export interface CaptureAndSaveStep {
   components?: CapturedComponent[];
   /** The page the components were seen on; its bundles are what gets searched. */
   componentsPageUrl?: string;
+  /** The same, for every non-React framework that claimed the element. */
+  frameworkComponents?: FrameworkComponentTable[];
   /**
    * Where the page was scrolled when `elementBox` was measured.
    *
@@ -260,6 +286,19 @@ export interface ReactPurge {
 export interface ReactMeta {
   type: 'REACT_META';
   meta: Omit<FlowReact, 'components'>;
+}
+
+/**
+ * Which non-React runtimes the page turned out to be, recorded once.
+ *
+ * `FrameworkPresence` already carries `framework`, `detected`, `version` and
+ * `build`, so this is the list as the adapters produced it. The worker keys it
+ * into `Flow.vue` / `Flow.svelte` / `Flow.rsc` by the `framework` field, which
+ * is why one message carries all three rather than three carrying one each.
+ */
+export interface FrameworkMeta {
+  type: 'FRAMEWORK_META';
+  frameworks: FrameworkPresence[];
 }
 
 export interface AnnotateScreenshot {
@@ -421,6 +460,7 @@ export type WorkerRequest =
   | Precapture
   | AnnotateScreenshot
   | ReactMeta
+  | FrameworkMeta
   | ReactPurge
   | ReactScripts
   | ResolveComponents
@@ -524,6 +564,7 @@ export interface ResponseByType {
   PRECAPTURE: OkResponse;
   ANNOTATE_SCREENSHOT: AnnotateScreenshotResponse;
   REACT_META: OkResponse;
+  FRAMEWORK_META: OkResponse;
   REACT_PURGE: OkResponse;
   REACT_SCRIPTS: OkResponse;
   RESOLVE_COMPONENTS: OkResponse;
@@ -874,12 +915,56 @@ export interface AgentQueryReply {
   architecture?: PageReading | null;
 }
 
+/**
+ * One non-React framework's reading of the element an interaction landed on.
+ *
+ * A separate kind from `AgentReactMessage` rather than a widening of it, and
+ * the reason is that they carry different things: React's chain has needles,
+ * ids, stamps and `_debugSource` because its path resolves source itself, while
+ * this carries `Resolution`s, which may already *be* the answer (`declared`) or
+ * may be an explained absence. Folding them together would mean a union inside
+ * a union, and every consumer discriminating twice.
+ *
+ * One kind covers all three frameworks, keyed by `framework`, because the
+ * payload genuinely is identical between them — which is the test for whether
+ * one shape or three is right.
+ *
+ * This union is `window.postMessage` between two halves of one build. It is
+ * never persisted and never leaves the page, so unlike `Flow` it carries no
+ * compatibility debt and could be changed freely.
+ */
+export interface AgentFrameworkMessage {
+  __devflow_source__: string;
+  kind: 'framework';
+  /** The recorder claims this by the same number `AgentReactMessage` uses. */
+  eventTime: number;
+  /**
+   * Every framework that claimed the element, in one message.
+   *
+   * One message rather than one per framework, because the receiving buffer is
+   * keyed by `eventTime` and holds one value per key — so three messages for one
+   * click would need a merge, and a merge needs a read-modify-write on a buffer
+   * that deliberately has no read. `ResolvedChain` already names its framework,
+   * so the list costs nothing the separate messages would not have.
+   */
+  chains: ResolvedChain[];
+}
+
+/** Which non-React runtimes the page turned out to be. Sent once. */
+export interface AgentFrameworkMetaMessage {
+  __devflow_source__: string;
+  kind: 'framework-meta';
+  frameworks: FrameworkPresence[];
+}
+
 export type AgentMessage =
   | AgentLogMessage
   | AgentPickMessage
   | AgentNetworkMessage
   | AgentReactMessage
   | AgentReactMetaMessage
+  | AgentFrameworkMessage
+  | AgentFrameworkMetaMessage
   | AgentStateMessage
   | AgentRenderMessage
   | AgentA11yMessage

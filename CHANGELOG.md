@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+**A recording on a Vue, Svelte or Next.js page now carries that framework's
+components all the way to the MCP server.** The page agent runs all three
+adapters, their chains reach the step as `element.frameworks`, the flow gains
+`vue` / `svelte` / `rsc` beside `react`, and `get_flow_step` prints them.
+
+**The adapters get their own listener lifecycle, and that is the whole trick.**
+`abandonReact` detaches React's listeners after three fruitless probes — which
+is exactly what happens on a Vue page. Anything hung off React's listener would
+have stopped working precisely on the pages these adapters exist for, so the
+framework half attaches, probes and gives up on its own terms, and it runs
+*before* `applyRecording`'s `reactGaveUp` return rather than after it.
+
+**They produce `ComponentSource`, not a shape of their own** — the conversion is
+`src/core/locate/resolution.ts`, and it is why the MCP server needed no second
+renderer, no new tool, and no knowledge of which runtime it is looking at. It
+prints a Svelte component through the same `formatSource` it has always used.
+
+**A component the runtime did not declare is stored `pending`, not `resolved`.**
+It is a needle and nothing more: no bundle fetched, no map decoded. Calling it
+resolved would put a row in the table claiming a path it does not have. The
+status says `pending` and the detail says why, which is the same thing React's
+own table does while its resolver is still working.
+
+**Nothing here has been run against a real application.** Every test is a
+fixture mirroring output the Wave 1 spikes printed from real Vue, Svelte and
+Next.js apps — but those spikes drove measurement scripts, not the built
+extension. `ROADMAP_AND_PHASES.md` §5.1 keeps the boxes at `[~]` and says so,
+along with the three other things that are not wired: the bundle-search pipeline
+for these frameworks, `mcp-server/rsc.js`'s caller, and the viewer's own UI.
+
 **Three framework adapters, built against measured runtimes.** Vue 3 / Nuxt
 (`src/core/vue/`, `src/injected/vue.ts`), Svelte 5 / SvelteKit
 (`src/core/svelte/`, `src/injected/svelte.ts`) and Next.js App Router / RSC
