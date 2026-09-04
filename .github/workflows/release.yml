@@ -25,6 +25,16 @@ on:
           - patch
           - minor
           - major
+  # Called by auto-release.yml when a push to main changes something that
+  # ships. One publishing mechanism, two ways in — a second workflow that
+  # published on its own would be a second thing to keep correct, and the two
+  # would drift the first time one of them learned something.
+  workflow_call:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -60,8 +70,13 @@ jobs:
       # it, which is what keeps a fresh clone working for humans too.
       - run: npm ci
 
+      # Keyed on the input, not on `github.event_name`. Inside a reusable
+      # workflow `event_name` reports the *caller's* event, which for
+      # auto-release.yml is `push` — indistinguishable from a tag push, which
+      # must not cut a second release of a version that already exists. A bump
+      # input is present for a dispatch and for a call, and absent for a tag.
       - name: Cut release and push tag
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.bump != ''
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

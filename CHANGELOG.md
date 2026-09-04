@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+**Every push to main that changes something you install now publishes it.**
+`.github/workflows/auto-release.yml` decides whether a push should become a
+release and how big the bump is, then calls `release.yml` — which still does all
+the cutting, tagging, verifying and publishing. One publishing mechanism, two
+ways in; a second workflow with its own `npm publish` would be a second thing to
+keep correct and the two would drift.
+
+**`src/` counts as something you install**, which is the one that surprises
+people: it is bundled into `mcp-server/core.js`, so a change there really does
+change the published server. `docs/`, `tests/`, `.ctx/` and the READMEs are
+deliberately absent — a typo fix should not mint a version.
+
+**Patch by default.** Put `[minor]` or `[major]` in the commit message to say
+otherwise. Patch is the default because it is right most often and wrong most
+cheaply: a release that should have been minor is a number nobody reads, while
+one that should have been patch and went out as major tells every consumer to
+expect breakage.
+
+**`[skip release]` anywhere in the commit message stops it**, for a change that
+touches a shipped path without changing behaviour.
+
 ## 4.0.0 — 2026-09-04
 
 **The compiler plugin is published, as `devflow-compiler-plugin`.** It was

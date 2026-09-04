@@ -1,0 +1,85 @@
+name: Auto release
+
+# Publishes on every push to main that changes something a user installs.
+#
+# The two npm packages — `devflow-server` and `devflow-compiler-plugin` — are
+# cut, tagged and published by `release.yml`. This file does not publish
+# anything itself: it decides *whether* a push should become a release and what
+# size the bump is, then calls that workflow. One publishing mechanism, two ways
+# in; a second workflow with its own `npm publish` would be a second thing to
+# keep correct, and the two would drift the first time one of them learned
+# something the other did not.
+#
+# ## What counts as "something that ships"
+#
+# `src/` is in the list, and it is the one that surprises people: it is bundled
+# into `mcp-server/core.js` by `npm run build:mcp`, so a change there really
+# does change the published server. Leaving it out would mean the npm package
+# silently falling behind the extension it is versioned with.
+#
+# `docs/`, `tests/`, `.ctx/`, the READMEs and this file are all absent on
+# purpose. A typo fix should not mint a version.
+#
+# ## Stopping it
+#
+# Put `[skip release]` anywhere in the commit message. Use it for a change that
+# touches a shipped path without changing behaviour — a comment, a rename, a
+# test-only helper that happens to live under `src/`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'mcp-server/**'
+      - 'compiler-plugin/**'
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    # `cut-release.mjs` pushes the version bump back to main with GITHUB_TOKEN,
+    # and GitHub does not start a new run for a push made with that token — so
+    # the loop is closed by the platform. The message check is belt and braces:
+    # it also covers a human pushing the release commit by hand.
+    if: >-
+      !contains(github.event.head_commit.message, '[skip release]') &&
+      !startsWith(github.event.head_commit.message, 'v')
+    outputs:
+      bump: ${{ steps.bump.outputs.bump }}
+    steps:
+      - name: Choose the bump from the commit message
+        id: bump
+        run: |
+          MESSAGE=$(cat <<'EOF'
+          ${{ github.event.head_commit.message }}
+          EOF
+          )
+
+          # Patch is the default because it is the answer that is right most
+          # often and wrong most cheaply. A release that should have been minor
+          # is a number nobody reads; a release that should have been patch and
+          # went out as major tells every consumer to expect breakage.
+          BUMP=patch
+          case "$MESSAGE" in
+            *'[major]'*) BUMP=major ;;
+            *'[minor]'*) BUMP=minor ;;
+          esac
+
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "::notice::Releasing a $BUMP bump for: $(echo "$MESSAGE" | head -1)"
+
+  release:
+    needs: decide
+    uses: ./.github/workflows/release.yml
+    with:
+      bump: ${{ needs.decide.outputs.bump }}
+    # The called workflow needs NPM_TOKEN, and a reusable workflow gets no
+    # secrets unless they are handed to it.
+    secrets: inherit
