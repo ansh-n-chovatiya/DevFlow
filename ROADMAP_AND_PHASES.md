@@ -740,6 +740,17 @@ a `next-action` hash. Neither exists anywhere in the pipeline: `ComponentSource`
 has no module-id field and the adapter never emits an `I`-row id. Giving it a
 caller means teaching the adapter to carry one first.
 
+**The RSC searchable path, run against the real Next.js application.** Next
+ships **zero** client source maps by default, exactly as SvelteKit does. Without
+them every component is found in the bundle and reported `compiled-only` — the
+search succeeded, the file is unknowable, and the sentence says so. With
+`productionBrowserSourceMaps: true` the same path resolves: the application's own
+`CheckoutButton` to `app/components/CheckoutButton.tsx:5`, and Next's four client
+boundaries to their files under `node_modules`, each correctly flagged
+`dependency: true` so the noise is labelled rather than offered as the answer.
+Names stay minified to single letters in both cases, because that is what the
+build left; the files are right.
+
 #### What is wired, and what the `[~]` still stands for
 
 The chain named here in the previous revision is closed. A recording made on a
