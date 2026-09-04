@@ -9,7 +9,7 @@ DevFlow is an AI-assisted developer platform and Chrome extension for understand
 
 ## 🧭 Platform Vision & Architecture
 
-- 🌟 **[Grand Vision & Architecture (`VISION.md`)](./VISION.md):** The core thesis, Accumulating Runtime Knowledge Graph (ARKG), unified runtime-to-source graph, 10 novel capabilities, 18-stage autonomous debugging loop, prioritization matrix, competitive moat analysis, and the ultimate 2–3 year vision.
+- 🗺️ **[Roadmap & Phases (`ROADMAP_AND_PHASES.md`)](./ROADMAP_AND_PHASES.md):** what is built, what was decided against and why. Every refusal keeps one line naming the ADR that carries its argument, in `.ctx/decisions/`. The separate vision document was removed once its capabilities had either shipped or been refused — ADR 0028 records what it held.
 - 🗺️ **[Implementation Roadmap & Phased Plan (`ROADMAP_AND_PHASES.md`)](./ROADMAP_AND_PHASES.md):** the six phases, what each one shipped, and — for everything that was decided against rather than built — one line naming the ADR that carries the argument. Phases 0 through 4 are closed; Phase 5 is the framework adapters and nothing else.
 
 ```
