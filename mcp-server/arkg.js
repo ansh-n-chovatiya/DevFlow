@@ -1746,7 +1746,7 @@ function causalNode(ref, flowJson, steps, positions, resolveComponent) {
  * Read the type as a sentence, the way every other edge in this table reads:
  * the `from` is the effect and the `to` is the cause, so `GET /api/cart
  * caused_by CartButton`. `CausalLink` runs the other way — its `from` is the
- * cause, as the DAG in VISION.md draws it — and it is turned round in the one
+ * cause, as the causal DAG was drawn — and it is turned round in the one
  * line at the bottom of this function.
  *
  * Both symbols are required, not just the builder. `parseEventRef` is the
