@@ -272,11 +272,37 @@ export const MAX_FIBER_WALK = 2000;
  * the walk goes *downwards* from `__vue_app__` looking for the vnode whose `el`
  * is the target — it bounds a search over the page rather than a climb.
  *
- * This number has never been measured against a real application, only against
- * fixtures. It is the per-click cost of the entire Vue production path, so it
- * is the first thing to turn into a setting once there is a real page to time
- * it on. Exhausting it reports `search-exhausted`, which is deliberately not
- * the same answer as finding nothing.
+ * It has now been measured, in headed Chrome, against Vue 3.5 production
+ * builds — the shipped `findOwnerOfElement`, injected into the real page and
+ * run against the real `_vnode`:
+ *
+ * | app                          | DOM elements | vnodes | one walk |
+ * | ---------------------------- | -----------: | -----: | -------: |
+ * | 3 components                 |           13 |      8 | 0.0005ms |
+ * | 500 components (20x25 board) |        3,571 |  4,106 |  0.037ms |
+ * | 2,000 components (40x50)     |       14,131 | 16,206 |  0.134ms |
+ * | 8,000 components (80x100)    |       56,251 | 64,406 |  0.439ms |
+ *
+ * Two facts came out of that, and both are why the number is what it is.
+ *
+ * **The walk always visits the whole tree**, wherever the click landed. It
+ * cannot stop at the first match, because the deepest match is the right one
+ * (`core/vue/tree.ts`), so the stack is drained every time: clicking the first
+ * card and clicking the last card both visited 16,206 vnodes on the 40x50 app.
+ * The cost is a function of page size alone, and nothing else.
+ *
+ * **Time is not the binding constraint.** It is a flat ~8ns per vnode, so this
+ * budget buys about 0.16ms — a sixth of a millisecond, once per click, on a
+ * path that already only runs on interaction. A budget ten times larger would
+ * still finish inside two milliseconds. What 20,000 actually buys is *coverage*:
+ * roughly 17,000 DOM elements, which is above every page worth naming and below
+ * the deliberately absurd 56,000-element one built to break it. That one
+ * exhausted the budget after 0.14ms and reported `search-exhausted` — the
+ * honest answer, and deliberately not the same answer as finding nothing.
+ *
+ * So this is a coverage line, not a time budget, which is exactly why it is now
+ * `vue.maxVNodeWalk` and can be raised: someone on a genuinely enormous page
+ * can spend a few more milliseconds and get their component named.
  */
 export const VUE_MAX_VNODE_WALK = 20_000;
 

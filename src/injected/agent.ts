@@ -66,6 +66,7 @@ import {
   STATE_MAX_STORES,
   STATE_SETTLE_MS,
   STATE_STRING_CAP,
+  VUE_MAX_VNODE_WALK,
 } from '../shared/constants.js';
 import type {
   AgentConfig,
@@ -110,6 +111,7 @@ const config: AgentConfig = {
   maxComponentChain: MAX_COMPONENT_CHAIN,
   maxFiberWalk: MAX_FIBER_WALK,
   prewarmTtlMs: REACT_PREWARM_TTL_MS,
+  vueMaxVNodeWalk: VUE_MAX_VNODE_WALK,
   captureState: CAPTURE_STATE,
   stateSettleMs: STATE_SETTLE_MS,
   stateMaxDepth: STATE_MAX_DEPTH,
@@ -187,6 +189,13 @@ function applyConfig(next: Partial<AgentConfig> | undefined): void {
     // walk ceiling of zero would end React capture for the session while
     // looking exactly like a page with no React on it.
     config.maxFiberWalk = Math.max(1, next.maxFiberWalk);
+  }
+  if (typeof next.vueMaxVNodeWalk === 'number' && Number.isFinite(next.vueMaxVNodeWalk)) {
+    // Floored at one for `maxFiberWalk`'s reason, and the floor bites harder
+    // here: a zeroed Vue budget reports `search-exhausted` on every click of a
+    // page that resolves perfectly well, which reads as a broken application
+    // rather than as a setting turned down.
+    config.vueMaxVNodeWalk = Math.max(1, next.vueMaxVNodeWalk);
   }
   if (typeof next.captureState === 'boolean') config.captureState = next.captureState;
   if (typeof next.stateSettleMs === 'number' && Number.isFinite(next.stateSettleMs)) {
@@ -1575,9 +1584,17 @@ let frameworkProbes = 0;
 let frameworkMetaSent = false;
 let frameworkFound = false;
 
-/** Built once and lazily: `createSvelteAdapter` closes over the window. */
+/**
+ * Built once and lazily: `createSvelteAdapter` closes over the window.
+ *
+ * The Vue budget goes in as a getter and not as `config.vueMaxVNodeWalk`,
+ * because this is memoised and `applyConfig` usually lands after it: a number
+ * read here would be the compiled-in default for the rest of the page's life,
+ * which is the module-level copy this file's `config` comment forbids, merely
+ * committed one call further out.
+ */
 function adapters(): readonly FrameworkAdapter[] {
-  frameworkAdapters ??= buildAdapters(window);
+  frameworkAdapters ??= buildAdapters(window, () => config.vueMaxVNodeWalk);
   return frameworkAdapters;
 }
 

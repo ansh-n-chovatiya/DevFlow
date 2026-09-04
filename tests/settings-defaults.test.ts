@@ -123,6 +123,8 @@ const SOURCE: Record<SettingKey, unknown> = {
   'react.maxMapBytes': constants.MAX_MAP_BYTES,
   'react.maxScriptsPerOrigin': constants.MAX_SCRIPTS_PER_ORIGIN,
 
+  'vue.maxVNodeWalk': constants.VUE_MAX_VNODE_WALK,
+
   mcpServerUrl: constants.DEFAULT_MCP_URL,
   mcpAutoSend: false,
   'mcp.port': constants.MCP_PORT,

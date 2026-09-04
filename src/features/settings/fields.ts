@@ -115,6 +115,7 @@ import {
   TRACE_ORIGINS,
   TRACEPARENT_ENABLED,
   USE_SOURCE_MAPS,
+  VUE_MAX_VNODE_WALK,
   WARN_STEPS,
 } from "../../shared/constants.js";
 import { EDITORS } from "../../core/locate/editor.js";
@@ -161,6 +162,7 @@ export type Group =
   | "annotation"
   | "export"
   | "react"
+  | "vue"
   | "mcp"
   | "thumbnails"
   | "ui";
@@ -1758,6 +1760,26 @@ export const FIELDS = [
     wired: true,
   },
 
+  // ── Vue ────────────────────────────────────────────────────────────────────
+  {
+    key: "vue.maxVNodeWalk",
+    group: "vue",
+    tier: 2,
+    type: "number",
+    default: VUE_MAX_VNODE_WALK,
+    min: 100,
+    max: 1_000_000,
+    title: "Vue tree search ceiling",
+    description:
+      "Vnodes one search may visit before it gives up. A production build deletes the link from an element to its component, so the whole tree is searched from the top on every click — and because the innermost match is the right one, the search always runs to the end. This is a size of page, not a length of walk: the shipped 20,000 covers about 17,000 elements at a sixth of a millisecond.",
+    consequence:
+      "Below about a thousand, any real page runs out before the element is reached and the step records no Vue component — reported as a search that gave up, not as a page without Vue. Every 100,000 raised costs about a millisecond per click on a page big enough to use it.",
+    consequenceWhen: { below: 1000, above: 200_000 },
+    consumers: ["agent"],
+    recorded: true,
+    wired: true,
+  },
+
   // ── MCP ────────────────────────────────────────────────────────────────────
   {
     key: "mcpServerUrl",
@@ -2258,11 +2280,11 @@ export function conceptInfo(concept: Concept): ConceptInfo {
  * The category rail, in the order the page renders it.
  *
  * The screen was specified as "seven entries, always visible", named from an earlier
- * grouping; the table below has eleven, because that is what `FIELDS` actually
+ * grouping; the table below has twelve, because that is what `FIELDS` actually
  * came out as. The rail is built from this list rather than from a number in
  * the plan, so it cannot describe a set of groups the settings are not in.
  *
- * Eleven groups under four concepts, and the eleven are kept rather than
+ * Twelve groups under four concepts, and the twelve are kept rather than
  * collapsed into the four: "Screenshots", "Network" and "Console" are each a
  * real subject with its own paragraph, and merging them would throw away three
  * headings and three paragraphs to buy a shorter list. The concept is what the
@@ -2279,6 +2301,13 @@ export const GROUPS = [
     title: "React & source resolution",
     description:
       "On a React page a component can be traced back to the file it was written in — for every step of a recording, and for any one component picked out of the page. These decide how far that goes, where the files are, and what the component trees leave out.",
+  },
+  {
+    id: "vue",
+    concept: "source",
+    title: "Vue",
+    description:
+      "A Vue page in development says outright which component drew an element. A production build deletes that, and the only way left to the answer is to search the whole component tree from the top on every click. This decides how far that search is allowed to go.",
   },
   {
     id: "recording",

@@ -12,7 +12,7 @@
  * `settings-page.test.ts` opens the Advanced disclosure on the real page and
  * counts what appears.
  *
- * This file holds the half that is not visible: that each of the forty-three is
+ * This file holds the half that is not visible: that each of the forty-four is
  * actually *read* by the process it names, and that each says what a bad value
  * costs. A Tier 2 control that does nothing would be worse here than anywhere
  * else on the screen — these are the settings whose symptom is a recording that
@@ -54,7 +54,7 @@ import {
 const tier2 = (FIELDS as readonly Field[]).filter((field) => field.tier === 2);
 
 describe('the table', () => {
-  it('wires all forty-three, so the disclosure holds no control that does nothing', () => {
+  it('wires all forty-four, so the disclosure holds no control that does nothing', () => {
     /*
      * the list reads as twenty-two because it pairs four of them off —
      * `BUNDLE_CACHE_ENTRIES / BUNDLE_CACHE_BYTES`, `REACT_BUFFER_SIZE / _TTL_MS`
@@ -96,8 +96,15 @@ describe('the table', () => {
      * rejecting, and Tier 3 — a constant with a paragraph next to it — is wrong
      * too, because whether a backend accepts a header is a fact about that
      * backend and only its owner knows it.
+     *
+     * The forty-fourth is `vue.maxVNodeWalk`, and it is Tier 2 for the render
+     * walk's reason with the volume turned up: it is paid *entirely* inside the
+     * user's own click, on every click, on every Vue production page — the
+     * build deletes the element-to-component link, so there is no cheap path to
+     * fall back to. Measured, the shipped value costs about a sixth of a
+     * millisecond, which is why it is on this shelf and not Tier 1.
      */
-    expect(tier2).toHaveLength(43);
+    expect(tier2).toHaveLength(44);
     expect(tier2.filter((field) => field.wired !== true)).toEqual([]);
     expect(WIRED).toHaveLength(FIELDS.length);
   });
@@ -156,7 +163,7 @@ describe('the table', () => {
     expect(consequenceApplies(field('react.bundleCacheBytes'), 400 * 1024 * 1024, true)).toBe(true);
   });
 
-  it('freezes the twenty-seven that shape a recording, and leaves the rest live', () => {
+  it('freezes the twenty-eight that shape a recording, and leaves the rest live', () => {
     /*
      * The freeze, applied to Tier 2. A setting the *recorder* reads while a recording
      * runs has to be frozen or the flow describes two rules at once; a setting
@@ -233,6 +240,7 @@ describe('the table', () => {
       'screenshots.minIntervalMs',
       'screenshots.paintTimeoutMs',
       'screenshots.precaptureTtlMs',
+      'vue.maxVNodeWalk',
     ]);
 
     // And they are in the stamp, so a recording made with a moved capture

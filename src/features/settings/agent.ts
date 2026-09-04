@@ -85,6 +85,7 @@ export function toAgentConfig(settings: RecordingSettings): AgentConfig {
     maxComponentChain: settings['react.maxComponentChain'],
     maxFiberWalk: settings['react.maxFiberWalk'],
     prewarmTtlMs: settings['react.prewarmTtlMs'],
+    vueMaxVNodeWalk: settings['vue.maxVNodeWalk'],
     captureState: settings['recording.state'],
     stateSettleMs: settings['recording.stateSettleMs'],
     stateMaxDepth: settings['recording.stateMaxDepth'],
