@@ -93,7 +93,11 @@ function evaluate<T>(literal: string): T {
 function typedValue(source: string): string {
   const match = /\.(?:fill|type)\((.*)\);$/m.exec(source);
   expect(match).not.toBeNull();
-  return evaluate<string>((match as RegExpExecArray)[1]);
+  // Read as an argument list, not as one expression: Playwright's `fill` now
+  // takes an options object after the value, and evaluating `a, b` as an
+  // expression yields `b` — the helper would silently start asserting about
+  // the timeout instead of the escaping it exists to check.
+  return evaluate<string[]>(`[${(match as RegExpExecArray)[1]}]`)[0];
 }
 
 describe('escaping page text into a script', () => {
@@ -397,7 +401,7 @@ describe('the shape of the script', () => {
     const steps = [click({ url: 'https://app.example.com/orders' })];
 
     expect(generatePlaywrightTest(steps)).toContain(
-      `await page.goto('https://app.example.com/orders');`,
+      `await page.goto('https://app.example.com/orders', { timeout: 30000 });`,
     );
     expect(generateCypressTest(steps)).toContain(`cy.visit('https://app.example.com/orders');`);
   });
@@ -689,5 +693,206 @@ describe('state comments on the steps that compile to something else', () => {
       parses(source);
       expect(source).toContain('redux:0  replace /route = "/orders"');
     }
+  });
+});
+
+/**
+ * The exporter used to throw the clock away.
+ *
+ * Every action was emitted back to back at Playwright's defaults — five seconds
+ * for an action, thirty for the whole test — so a recording of a real
+ * deployment, where a click starts a fetch and the next step needs its result,
+ * replayed as a race the spec usually lost. The steps carried `timestamp` the
+ * whole time; nothing read it.
+ */
+describe('replaying a flow at the speed it was recorded', () => {
+  /** Two steps `gapMs` apart, so the second one's budget is the one under test. */
+  const spaced = (gapMs: number, second: Partial<Step> = {}): Step[] => [
+    click({ timestamp: 1_000_000 }),
+    click({ timestamp: 1_000_000 + gapMs, stepNumber: 2, ...second }),
+  ];
+
+  it('sizes a step from the gap the recording actually observed', () => {
+    // Twenty seconds of fetching, doubled: the multiplier is headroom for a
+    // replay on a slower machine than the one that recorded it.
+    expect(generatePlaywrightTest(spaced(20_000))).toContain('.click({ timeout: 40000 })');
+  });
+
+  it('floors a fast step far above the five seconds Playwright would give it', () => {
+    // A 200ms gap does not mean the app is reliably ready in 200ms — it means
+    // the recorder happened to catch it warm once.
+    expect(generatePlaywrightTest(spaced(200))).toContain('.click({ timeout: 15000 })');
+  });
+
+  it('caps a step, because a long gap is usually somebody answering the door', () => {
+    // Human think time is in the gap too, so it over-estimates as freely as it
+    // under-estimates. Uncapped, one coffee break makes a failing step take ten
+    // minutes to report.
+    expect(generatePlaywrightTest(spaced(600_000))).toContain('.click({ timeout: 60000 })');
+  });
+
+  it('gives a navigation longer than an action, and its own floor', () => {
+    const source = generatePlaywrightTest(
+      spaced(1_000, { type: 'navigate', url: 'https://app.example.com/checkout' }),
+    );
+
+    expect(source).toContain(
+      `await page.goto('https://app.example.com/checkout', { timeout: 30000 });`,
+    );
+  });
+
+  it('leaves no action running on a default timeout', () => {
+    // The regression this guards is a new step type emitted without a budget,
+    // which looks fine in review and fails only against a slow deployment.
+    const source = generatePlaywrightTest([
+      click(),
+      input({ timestamp: 12_000 }),
+      { ...click(), type: 'navigate', url: 'https://app.example.com/done', stepNumber: 3 } as Step,
+    ]);
+
+    const actions = source
+      .split('\n')
+      .filter((line) => /await page\.(goto|locator|getBy)/.test(line));
+
+    // Four, not three: the flow opens on a click, so the compiler also emits
+    // the `goto` that puts the browser somewhere other than `about:blank`.
+    expect(actions.length).toBe(4);
+    for (const action of actions) expect(action).toMatch(/timeout: \d+/);
+  });
+
+  it('budgets the whole test for the sum of its steps', () => {
+    // Playwright's 30s test timeout kills the run while a step is still
+    // legitimately waiting inside its own budget, and blames the wrong step.
+    const source = generatePlaywrightTest(spaced(30_000));
+    const match = /test\.setTimeout\((\d+)\);/.exec(source);
+
+    expect(match).not.toBeNull();
+    // 15000 for the first step + 60000 for the second + 30000 of overhead.
+    expect(Number((match as RegExpExecArray)[1])).toBeGreaterThanOrEqual(15_000 + 60_000);
+  });
+
+  it('states the recorded gap beside the step, in seconds', () => {
+    expect(generatePlaywrightTest(spaced(2_400))).toContain(
+      '// 2.4s after the previous step when recorded.',
+    );
+  });
+
+  it('says nothing about a gap too short to be worth a line', () => {
+    expect(generatePlaywrightTest(spaced(80))).not.toContain('after the previous step');
+  });
+
+  it('survives a step with no timestamp without emitting NaN', () => {
+    // The gap is two recorded clocks subtracted, and a flow read back from
+    // storage is not guaranteed to carry both: an older extension version, a
+    // hand-edited flow file, a step assembled by something other than the
+    // recorder. `undefined - 1000` is `NaN`, and `{ timeout: NaN }` is a spec
+    // that fails every step for a reason nobody would guess from reading it.
+    const source = generatePlaywrightTest([
+      click(),
+      click({ timestamp: undefined as unknown as number, stepNumber: 2 }),
+    ]);
+
+    parses(source);
+    expect(source).not.toContain('NaN');
+    expect(source).toContain('.click({ timeout: 15000 })');
+  });
+
+  it('survives a clock that went backwards', () => {
+    // A machine that resynced mid-flow, or a tab restored from a session.
+    const source = generatePlaywrightTest([
+      click({ timestamp: 9_000_000 }),
+      click({ timestamp: 1_000, stepNumber: 2 }),
+    ]);
+
+    parses(source);
+    expect(source).toContain('.click({ timeout: 15000 })');
+  });
+});
+
+/**
+ * An exported spec leaves the browser and lands in a downloads folder, often on
+ * a machine with no Node, no Playwright and no browsers — a colleague
+ * reproducing a bug report. Everything between that file and a run is four
+ * commands, and none of them are guessable from a `.spec.ts`.
+ */
+describe('the setup instructions carried by an exported spec', () => {
+  const required = [
+    'https://nodejs.org',
+    'npm install --save-dev @playwright/test',
+    'npx playwright install',
+    'npx playwright test',
+    'npx playwright show-report',
+  ];
+
+  it('tells a reader with nothing installed how to run it', () => {
+    const source = generatePlaywrightTest([click(), input()]);
+    for (const command of required) expect(source).toContain(command);
+  });
+
+  it('carries them on an empty flow too, which is when they are least obvious', () => {
+    const source = generatePlaywrightTest([]);
+    for (const command of required) expect(source).toContain(command);
+    parses(source);
+  });
+
+  it('keeps the instructions in a comment rather than in the program', () => {
+    // They are prose full of `npx` and bare paths; loose in the body they are a
+    // syntax error, and the file stops being a test at all.
+    parses(generatePlaywrightTest([click(), input()]));
+  });
+});
+
+/**
+ * The Cypress generator is the Playwright one's mirror, so it had the same
+ * defect: actions emitted back to back at the runner's defaults, which for
+ * Cypress is four seconds to find an element. It differs only in where the
+ * wait goes — Cypress takes it as configuration, not per action, because
+ * `defaultCommandTimeout` governs the query that finds the element and an
+ * option on `.click()` does not extend it.
+ */
+describe('replaying a Cypress flow at the speed it was recorded', () => {
+  const spaced = (gapMs: number, second: Partial<Step> = {}): Step[] => [
+    click({ timestamp: 1_000_000 }),
+    click({ timestamp: 1_000_000 + gapMs, stepNumber: 2, ...second }),
+  ];
+
+  it('raises the command timeout to the widest action the flow earned', () => {
+    expect(generateCypressTest(spaced(20_000))).toContain(
+      `Cypress.config('defaultCommandTimeout', 40000);`,
+    );
+  });
+
+  it('counts page loads separately from actions', () => {
+    // `pageLoadTimeout` is spent per page load, not per test. Pooling the two
+    // lets one hung navigation consume the time the rest of the flow needed.
+    const source = generateCypressTest(
+      spaced(40_000, { type: 'navigate', url: 'https://app.example.com/checkout' }),
+    );
+
+    expect(source).toContain(`Cypress.config('defaultCommandTimeout', 15000);`);
+    expect(source).toContain(`Cypress.config('pageLoadTimeout', 80000);`);
+  });
+
+  it('states the recorded gap beside the step', () => {
+    expect(generateCypressTest(spaced(2_400))).toContain(
+      '// 2.4s after the previous step when recorded.',
+    );
+  });
+
+  it('tells a reader with nothing installed how to run it', () => {
+    const source = generateCypressTest([click(), input()]);
+
+    for (const command of ['https://nodejs.org', 'npm install --save-dev cypress', 'npx cypress run']) {
+      expect(source).toContain(command);
+    }
+    parses(source);
+  });
+
+  it('carries the instructions on an empty flow too', () => {
+    const source = generateCypressTest([]);
+
+    expect(source).toContain('npx cypress run');
+    expect(source).toContain('nothing to replay');
+    parses(source);
   });
 });

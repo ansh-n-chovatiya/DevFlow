@@ -15,13 +15,79 @@ import { commentText, exactUrlRegex, jsLiteral, jsonLiteral } from './literals.j
 import { planMocks } from './mocks.js';
 import { FRAGILE_WARNING, resilientSelector } from './selectors.js';
 import { STATE_PREAMBLE, hasState, stateComments } from './state.js';
+import {
+  ACTION_FLOOR_MS,
+  GAP_WORTH_STATING_MS,
+  NAVIGATION_FLOOR_MS,
+  budgetFor,
+  gapsBefore,
+  seconds,
+} from './timing.js';
 
 const DEFAULT_TEST_NAME = 'DevFlow recorded flow';
+
+/**
+ * How to run this file on a machine that has nothing on it.
+ *
+ * Playwright's generator carries the same block for the same reason: an
+ * exported spec leaves the browser and lands in a downloads folder, often on
+ * somebody else's laptop, and everything between that file and a run is a
+ * handful of commands none of which are guessable from a `.cy.ts` alone.
+ */
+function setupHeader(): string[] {
+  return [
+    `/*`,
+    ` * Recorded with DevFlow and compiled to a Cypress test.`,
+    ` *`,
+    ` * \u2500\u2500\u2500 RUNNING THIS, ON A COMPUTER WITH NOTHING SET UP \u2500\u2500\u2500`,
+    ` *`,
+    ` *  1. Install Node.js 20 or newer \u2014 the LTS download at https://nodejs.org`,
+    ` *     Then check it took:  node --version`,
+    ` *`,
+    ` *  2. Put this file in a folder of its own, and go there:`,
+    ` *`,
+    ` *         mkdir devflow-replay`,
+    ` *         cd devflow-replay`,
+    ` *         mkdir -p cypress/e2e`,
+    ` *`,
+    ` *     Move this spec into cypress/e2e/.`,
+    ` *`,
+    ` *  3. Install Cypress. Once, and most of it is the download:`,
+    ` *`,
+    ` *         npm init -y`,
+    ` *         npm install --save-dev cypress`,
+    ` *`,
+    ` *  4. Run it:`,
+    ` *`,
+    ` *         npx cypress run`,
+    ` *`,
+    ` *     Or watch it in a real browser, which is what to reach for when a`,
+    ` *     step fails and the reason is not obvious:`,
+    ` *`,
+    ` *         npx cypress open`,
+    ` *`,
+    ` *  Cypress writes cypress.config.js on first run, and screenshots of any`,
+    ` *  failure into cypress/screenshots/.`,
+    ` *`,
+    ` * \u2500\u2500\u2500 ABOUT THE WAITS \u2500\u2500\u2500`,
+    ` *`,
+    ` *  The timeouts below are sized from the time these steps actually took`,
+    ` *  when they were recorded. Cypress retries until the element is there,`,
+    ` *  then proceeds \u2014 so a generous timeout costs nothing on a step that`,
+    ` *  works, and is only spent on one that does not.`,
+    ` *`,
+    ` *  There are no cy.wait(number) calls here, deliberately. A sleep long`,
+    ` *  enough to be reliable is longer than the step needs every other time.`,
+    ` */`,
+    ``,
+  ];
+}
 
 export function generateCypressTest(steps: Step[], testName = DEFAULT_TEST_NAME): string {
   const name = jsLiteral(commentText(testName) || DEFAULT_TEST_NAME);
   const lines: string[] = [];
 
+  lines.push(...setupHeader());
   lines.push(`describe(${jsLiteral(DEFAULT_TEST_NAME)}, () => {`);
   lines.push(`  it(${name}, () => {`);
 
@@ -37,6 +103,35 @@ export function generateCypressTest(steps: Step[], testName = DEFAULT_TEST_NAME)
     lines.push(``);
     return lines.join('\n');
   }
+
+  const gaps = gapsBefore(steps);
+
+  /*
+   * Cypress takes its waits as configuration, not as an argument per action.
+   *
+   * `defaultCommandTimeout` governs the query that finds the element, which is
+   * the wait that matters and the one an option on `.click()` does not extend.
+   * There is one knob and it is spec-wide, so each gets the widest budget any
+   * step of its kind earned rather than a per-step number it has nowhere to
+   * put. Per-step timings are still stated in the comments below, and a longer
+   * setting is only ever spent on a step that fails.
+   *
+   * The two are counted separately because `pageLoadTimeout` is spent per page
+   * load, not per test: handing it the sum of every step would let one hung
+   * navigation consume the time the rest of the flow was going to need.
+   */
+  const widest = (kind: 'navigate' | 'action', floor: number): number =>
+    steps.reduce(
+      (most, step, index) =>
+        (step.type === 'navigate') === (kind === 'navigate')
+          ? Math.max(most, budgetFor(step, gaps[index]))
+          : most,
+      floor,
+    );
+
+  lines.push(`    Cypress.config('defaultCommandTimeout', ${widest('action', ACTION_FLOOR_MS)});`);
+  lines.push(`    Cypress.config('pageLoadTimeout', ${widest('navigate', NAVIGATION_FLOOR_MS)});`);
+  lines.push(``);
 
   const { mocks, omitted } = planMocks(steps);
 
@@ -78,19 +173,25 @@ export function generateCypressTest(steps: Step[], testName = DEFAULT_TEST_NAME)
     lines.push(`    cy.visit(${jsLiteral(steps[0].url)});`);
   }
 
-  for (const step of steps) {
+  steps.forEach((step, index) => {
     lines.push(`    // Step ${step.stepNumber ?? '?'}: ${commentText(step.action)}`);
+
+    // The one number a reader needs to judge whether the setting above is
+    // wrong, and the thing this generator used to throw away.
+    if (gaps[index] >= GAP_WORTH_STATING_MS) {
+      lines.push(`    // ${seconds(gaps[index])} after the previous step when recorded.`);
+    }
 
     if (step.type === 'navigate') {
       lines.push(`    cy.visit(${jsLiteral(step.url)});`);
       for (const line of stateComments(step)) lines.push(`    // ${line}`);
-      continue;
+      return;
     }
 
     if (step.type === 'note') {
       lines.push(`    // Note: ${commentText(step.value)}`);
       for (const line of stateComments(step)) lines.push(`    // ${line}`);
-      continue;
+      return;
     }
 
     const selector = resilientSelector(step.element);
@@ -109,7 +210,7 @@ export function generateCypressTest(steps: Step[], testName = DEFAULT_TEST_NAME)
 
     // After the action, for the Playwright generator's reason.
     for (const line of stateComments(step)) lines.push(`    // ${line}`);
-  }
+  });
 
   lines.push(`  });`);
   lines.push(`});`);

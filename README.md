@@ -244,8 +244,13 @@ npm install --save-dev devflow-compiler-plugin
 
 ```js
 // babel.config.js
-module.exports = { plugins: ['devflow-compiler-plugin'] };
+module.exports = { plugins: ['module:devflow-compiler-plugin'] };
 ```
+
+The `module:` prefix is required, not decoration. Babel expands a bare plugin
+name to `babel-plugin-<name>`, so `'devflow-compiler-plugin'` sends it looking
+for a package that does not exist; `module:` tells it to take the name as
+written.
 
 Every attribution says which path answered it — a stamped one reads
 `build stamp` on the card — so you can always tell the two apart.
