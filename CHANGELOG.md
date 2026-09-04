@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.0.0 — 2026-09-04
 
 **The MCP server publishes as `devflow-server`.** The npm account that owned
 `devflow-mcp-server` was lost and cannot be recovered, so that package is frozen
