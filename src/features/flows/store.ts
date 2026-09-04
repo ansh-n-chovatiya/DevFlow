@@ -61,6 +61,14 @@ export interface Flow {
   /** Absent when the flow was not recorded on a React page. */
   react: FlowReact | null;
   /**
+   * The other adapters' tables, keyed by framework and empty when none applied.
+   *
+   * Empty rather than null, unlike `react`: a page that was not Vue and a flow
+   * archived before these existed read the same way, and the caller spreads
+   * this object either way.
+   */
+  frameworks: Partial<Record<Framework, FlowComponents>>;
+  /**
    * What the recording could see of the app's state, including when the answer
    * is "nothing, and here is why". `null` only for a flow archived before state
    * capture existed, which says nothing about state either way.
@@ -399,10 +407,10 @@ export async function readFlow(id: string): Promise<Result<Flow | null>> {
   const record = await readFlowRecord(id);
   if (!record.ok) return record;
 
-  const { meta, steps, react, state, renders } = record.value;
+  const { meta, steps, react, frameworks, state, renders } = record.value;
   if (!meta || !steps) return ok(null);
 
-  return ok({ id, name: meta.name, steps, meta, react, state, renders });
+  return ok({ id, name: meta.name, steps, meta, react, frameworks, state, renders });
 }
 
 // ── Describing ───────────────────────────────────────────────────────────────

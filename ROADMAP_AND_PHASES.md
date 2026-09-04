@@ -808,8 +808,11 @@ to the MCP server:
   RSC adapter records no such id — a production server component resolves to
   `absent`, which is the measured truth. Wiring it needs the adapter to carry
   the `I`-row module id first.
-- **The viewer does not show framework components.** The MCP server does; the
-  extension's own review UI still renders React only.
+- ~~The viewer does not show framework components.~~ **Done.** The review card
+  falls back to the innermost component of the step's framework chain when no
+  React component claimed it, through the same card and status words rather than
+  a second renderer. No `within`, because no owner rule has been measured for
+  these runtimes.
 - **`VUE_MAX_VNODE_WALK` is a constant, not a setting.** It is the per-click cost
   of Vue's entire production path and has never been measured on a real page —
   which is the same missing acceptance step as the first bullet.

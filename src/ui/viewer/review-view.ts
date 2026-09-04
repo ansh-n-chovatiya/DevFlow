@@ -50,10 +50,12 @@ import { flowHost, formatDelta, stepFailed, worstLevel, worstStatus } from '../.
 import type { StatusClass } from '../../core/flow/index.js';
 import { stepEnclosing, stepOwner, summarizeComponents } from '../../core/react/attribution.js';
 import { componentEditorUrl, type EditorLink } from '../../core/locate/editor.js';
+import type { Framework } from '../../core/locate/adapter.js';
 import { detailText, pathText } from '../components/result-card.js';
 import type {
   ComponentSource,
   ComponentStatus,
+  FlowComponents,
   ConsoleLevel,
   FlowReact,
   FlowState,
@@ -78,6 +80,18 @@ export interface ReviewFlow {
   /** The component table, or `null` when the page was not React. For the live
    *  recording this is a snapshot: the resolver is still filling it in. */
   react: FlowReact | null;
+  /**
+   * The other adapters' component tables, on `react`'s terms exactly.
+   *
+   * Optional rather than nullable, unlike `react`: a page that was not Vue has
+   * no `vue` key at all, and so does a flow archived before these existed —
+   * which are the same thing to read and should not need two spellings. Three
+   * keys rather than one map, because that is the shape the flow itself has and
+   * a second shape here would be a translation with nothing to gain by it.
+   */
+  vue?: FlowComponents | null;
+  svelte?: FlowComponents | null;
+  rsc?: FlowComponents | null;
   /**
    * What the recording saw of the app's state, on the same split as `react`:
    * `null` for the live recording, which is read at send time, and for a flow
@@ -442,23 +456,70 @@ export function stepsForComponentName(
  */
 export const ALSO_ON_LIMIT = 6;
 
+/**
+ * The innermost component a non-React adapter claimed for this step.
+ *
+ * Innermost, because that is the one the click actually landed in — the same
+ * end of the chain `stepOwner` starts from. There is no owner rule here and
+ * deliberately so: `core/react/owner.ts`'s four preference tiers were derived
+ * from how React's chains are shaped, and nothing equivalent has been measured
+ * for Vue, Svelte or RSC. Picking a "better" component by a rule nobody checked
+ * would be a confident attribution, which is the thing this whole feature is
+ * careful not to be.
+ *
+ * A component the table does not hold is skipped rather than shown as a bare
+ * id: ids exist so a chain need not repeat a path, and one with nothing behind
+ * it is not an answer.
+ */
+function frameworkComponentFor(
+  step: Step,
+  frameworks: Partial<Record<Framework, FlowComponents>>,
+): ComponentSource | null {
+  for (const ref of step.element?.frameworks ?? []) {
+    const table = frameworks[ref.framework]?.components ?? {};
+    for (let at = ref.chain.length - 1; at >= 0; at -= 1) {
+      const found = table[ref.chain[at]];
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function componentView(
   step: Step,
   index: number,
   components: Record<string, ComponentSource>,
   editor: EditorLink | null,
   touched: Map<string, number[]>,
+  frameworks: Partial<Record<Framework, FlowComponents>> = {},
 ): StepComponentView | null {
   const owner = stepOwner(step, components);
-  if (!owner) return null;
 
-  const { component } = owner;
+  /*
+   * React first, then whichever other adapter claimed the element.
+   *
+   * React first because its answer is richer — an owner chosen by four
+   * preference tiers, an enclosing feature component, and the `alsoOn` join
+   * across the recording. On a page that is genuinely both (every Next.js App
+   * Router page) that is the better of two true answers rather than the only
+   * one, and the MCP server still prints both.
+   *
+   * The rest of this function is unchanged, which is the point: a Vue component
+   * is a `ComponentSource` exactly as a React one is, so it reads through the
+   * same card, the same status words and the same editor link. A second
+   * renderer for it would be this repository's most-repeated mistake.
+   */
+  const component = owner?.component ?? frameworkComponentFor(step, frameworks);
+  if (!component) return null;
+
   const number = index + 1;
-  const alsoOn = (touched.get(owner.id) ?? []).filter((other) => other !== number);
+  const alsoOn = owner
+    ? (touched.get(owner.id) ?? []).filter((other) => other !== number)
+    : [];
 
   return {
     name: component.name,
-    within: stepEnclosing(step, components)?.component.name ?? null,
+    within: owner ? (stepEnclosing(step, components)?.component.name ?? null) : null,
     record: component,
     // The card's own formatter, not a second one. It is also the only one that
     // crosses the Pos0 boundary on a compiled position (CONTRACTS §1).
@@ -484,6 +545,7 @@ function cardView(
   components: Record<string, ComponentSource>,
   editor: EditorLink | null,
   touched: Map<string, number[]>,
+  frameworks: Partial<Record<Framework, FlowComponents>>,
 ): StepCardView {
   const step = steps[index];
 
@@ -505,7 +567,7 @@ function cardView(
     selectors: step.element
       ? { css: step.element.cssSelector, xpath: step.element.xpath }
       : null,
-    component: componentView(step, index, components, editor, touched),
+    component: componentView(step, index, components, editor, touched, frameworks),
     network: detail(step.networkCalls, worstStatus(step.networkCalls)),
     console: detail(step.consoleLogs, worstLevel(step.consoleLogs)),
     notes: step.notes ?? '',
@@ -599,6 +661,16 @@ export function deriveReviewView(input: ReviewInput): ReviewView {
     .filter((index) => passes(steps[index], filter));
 
   const components = flow.react?.components ?? {};
+  /*
+   * The other adapters' tables, spread as the flow carries them. Absent keys
+   * simply do not appear, which is what a page that was not that framework
+   * produces and what a recording made before they existed reads as.
+   */
+  const frameworks: Partial<Record<Framework, FlowComponents>> = {
+    ...(flow.vue ? { vue: flow.vue } : {}),
+    ...(flow.svelte ? { svelte: flow.svelte } : {}),
+    ...(flow.rsc ? { rsc: flow.rsc } : {}),
+  };
   // Over the whole flow, not `shown`: which other steps touched a component is
   // a fact about the recording, and a filter is a way of looking at it.
   const touched = stepsByComponent(steps, components);
@@ -609,7 +681,7 @@ export function deriveReviewView(input: ReviewInput): ReviewView {
     live,
     rail: shown.map((index) => railRow(steps, index, activeIndex)),
     steps: shown.map((index) =>
-      cardView(steps, index, activeIndex, components, input.editor, touched),
+      cardView(steps, index, activeIndex, components, input.editor, touched, frameworks),
     ),
     filters,
     failures,

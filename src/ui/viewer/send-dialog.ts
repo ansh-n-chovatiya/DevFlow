@@ -1,3 +1,4 @@
+import type { Framework } from '../../core/locate/adapter.js';
 /**
  * One dialog in front of "Send to Claude".
  *
@@ -20,6 +21,7 @@ import { getLocal, setLocal } from '../../chrome/storage.js';
 import { banner } from '../settings/components.js';
 import { flowHost } from '../../core/flow/index.js';
 import type {
+  FlowComponents,
   ExportOptions,
   FlowReact,
   FlowRenders,
@@ -76,6 +78,8 @@ interface Session {
   state: FlowState | undefined;
   /** An archived flow's frozen render summary, on the same split again. */
   renders: FlowRenders | undefined;
+  /** An archived flow's frozen framework tables, on the same split again. */
+  frameworks: Partial<Record<Framework, FlowComponents>> | undefined;
   /** What `export.send*` says this dialog opens on — see the export dialog. */
   configured: ExportOptions;
   /** `mcpServerUrl`, read once at open: the address this POST goes to. */
@@ -315,6 +319,7 @@ async function run(): Promise<void> {
     session.settings,
     session.state,
     session.renders,
+    session.frameworks,
   );
 
   session.busy = false;
@@ -364,6 +369,8 @@ export interface OpenSendOptions {
   state?: FlowState | null;
   /** An archived flow's frozen render summary. Absent for the live recording. */
   renders?: FlowRenders | null;
+  /** An archived flow's frozen framework tables; absent for the live recording. */
+  frameworks?: Partial<Record<Framework, FlowComponents>>;
 }
 
 export function openSend({
@@ -371,6 +378,7 @@ export function openSend({
   name,
   id,
   react,
+  frameworks,
   recordedAt,
   settings,
   state,
@@ -404,6 +412,7 @@ export function openSend({
       settings: settings ?? undefined,
       state: state ?? undefined,
       renders: renders ?? undefined,
+      frameworks,
       // Read from the same `load()` the four switches came from, so the address
       // on screen and the defaults beside it describe one moment.
       target: settingsNow.mcpServerUrl,
