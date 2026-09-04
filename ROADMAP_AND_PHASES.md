@@ -771,11 +771,16 @@ to the MCP server:
   no webpack builder for Vue or Next, no server action or error path (which is
   the one production route `mcp-server/rsc.js` could actually serve), no
   client-side navigation, and no `{#each}`/`{#if}`/snippet constructs.
-- **A `searchable` resolution is never resolved to a path.** It is stored
-  `pending`, saying so in words. React's resolver — bundle fetch, needle search,
-  source-map decode — is not wired for these three, so a component the runtime
-  did not declare has a name and no file. This is why `pending` and not
-  `resolved`: the honest status, not the flattering one.
+- ~~A `searchable` resolution is never resolved to a path.~~ **Done.** The same
+  `resolvePending` React uses now runs for every framework with anything pending,
+  and a production Vue recording resolves `CheckoutButton`, `CartPanel` and `App`
+  to their own `.vue` files and lines — verified against a running application,
+  not a fixture. Doing it found a defect in the shared engine: a bundle search
+  returns a *function start*, a source map need not mark one, and looking it up
+  as an ordinary position returned the previous file's segment — so every
+  component named its child's file, confidently. `lookupFunctionStart` scans
+  forward within the matched text instead. Svelte is unaffected, because its
+  production build exposes no function to search for.
 - **`mcp-server/rsc.js` still has no caller**, and it is blocked rather than
   forgotten. It maps a production client-component module id to a file, and the
   RSC adapter records no such id — a production server component resolves to

@@ -24,12 +24,12 @@
  * and Vue's `__file`.
  *
  * `searchable` becomes `pending`, not `resolved`, and this is the honest half.
- * A searchable resolution is a needle and nothing more: no bundle has been
- * fetched, no map decoded. Calling it `resolved` would put a component in the
- * table with no path and a status claiming there is one. `pending` is what
- * React's own table uses for the same state, and the resolver pipeline that
- * fills it in for React is not yet wired for these three — which the `detail`
- * says in words rather than leaving the reader to infer from a blank column.
+ * At the moment this runs, a searchable resolution is a needle and nothing
+ * more: no bundle has been fetched, no map decoded. Calling it `resolved` would
+ * put a component in the table with no path and a status claiming there is one.
+ * `pending` is exactly what React's own table uses for the same state, and it
+ * is the same resolver that clears it — `resolvePending` takes components,
+ * needles and a script list and has never known anything about React.
  *
  * `absent` becomes `not-found` carrying the adapter's own sentence.
  */
@@ -93,8 +93,8 @@ export function resolutionSource(resolution: Resolution): ComponentSource {
       status: 'pending',
       detail:
         'The runtime exposed this component as a function but did not say where ' +
-        'it was written. Finding it needs a bundle search, which is not yet wired ' +
-        'for this framework.',
+        'it was written, so its compiled source is being searched for in the ' +
+        "page's bundles. This is the status before that search has run.",
     };
   }
 

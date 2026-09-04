@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+**A production Vue recording now resolves its components to their own files.**
+The same resolver React has always used — `resolvePending` takes components,
+needles and a script list and has never known anything about React — now runs
+for every framework that has anything pending. `searchable` resolutions carry a
+needle built in the content script, the worker merges them into
+`frameworkNeedles`, and the resolver writes paths back into
+`frameworkComponents`. No second resolver, no second queue, no second script
+inventory.
+
+**The script inventory now outlives React.** It collects the page's bundle URLs
+and knows nothing about frameworks, but `abandonReact` used to stop it — which
+is exactly wrong on a Vue page, where React is abandoned by design after three
+probes and used to take the bundle list down with it. It now runs while either
+path is live.
+
+**A source map does not have to mark the start of a function, and looking one up
+as though it does names the wrong file.** `lookupOriginal` answers the question
+a source map is specified to answer: which mapping *covers* this position, which
+is the segment at or before it. A bundle search returns the first character of a
+function, and Vue compiles a render to an arrow whose first mapping is on its
+body — so the covering segment belonged to whatever the bundler emitted before
+it. Measured on a real production build: every component in a three-deep chain
+resolved to its **child's** `.vue` file, with a plausible line and a `resolved`
+status. `CartPanel` was eight columns short of its own mapping; `App` was
+thirteen.
+
+`lookupFunctionStart` scans forward instead, bounded by the length of the text
+that matched, so a segment past the function's own compiled source is never
+accepted and a function the map is silent about falls back rather than naming
+the next file along. Where a map *does* mark the function start — most
+`function name(){}` output, which is why React never met this — both lookups
+return the same segment. `lookupOriginal` is unchanged and still spec-true.
+
 **Svelte and Next.js were recorded end to end against real applications, and
 between them the runs found five more defects.** All three adapters have now
 been driven headed, through the built extension, into the MCP server.

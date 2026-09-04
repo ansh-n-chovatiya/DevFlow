@@ -993,6 +993,15 @@ export interface LocalStorageShape {
    */
   frameworkComponents: Partial<Record<Framework, Record<string, ComponentSource>>>;
   /**
+   * Needles for those components, keyed by framework and then by component id.
+   *
+   * Its own key for `reactNeedles`' reason: a needle is 200 characters of
+   * compiled source per component, and it must not travel to the flow, which is
+   * read by a person and by a model. The resolver consumes these and writes
+   * paths back into `frameworkComponents`; nothing else reads them.
+   */
+  frameworkNeedles: Partial<Record<Framework, Record<string, ComponentNeedle>>>;
+  /**
    * The stores the live recording has read, described once each.
    *
    * Its own key for `reactComponents`' reason — `recordedSteps` is rewritten

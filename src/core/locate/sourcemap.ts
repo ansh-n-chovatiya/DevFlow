@@ -41,7 +41,7 @@
  */
 
 import { pos0, type Pos0 } from './positions.js';
-import { decodeLine, findSegmentInLine } from './vlq.js';
+import { decodeLine, findSegmentFrom, findSegmentInLine } from './vlq.js';
 
 export class SourceMapError extends Error {}
 
@@ -320,6 +320,63 @@ export function parseSourceMap(json: string, options: ParseOptions = {}): Prepar
  * `search.ts` computed, not a value read out of a map, and branding the input
  * would put an assertion on every caller without removing one from anywhere.
  */
+/**
+ * The original position of a **function start**, which is not the same question
+ * `lookupOriginal` answers.
+ *
+ * A source map segment covers from its own generated column until the next one,
+ * so looking up a position takes the segment at or before it. That is right for
+ * a position *inside* code and wrong for the position a bundle search returns,
+ * which is the first character of a function: a minifier need not emit a
+ * mapping there, and when it does not, the covering segment belongs to whatever
+ * was emitted before — a different function, and often a different file.
+ *
+ * Measured, on a real Vue production build: every component in a three-deep
+ * chain resolved to its *child's* `.vue` file, with a plausible line and a
+ * `resolved` status. Vue's compiled render is an arrow whose first mapping is
+ * on its body, eight characters past the start the search reports.
+ *
+ * So this scans forward instead, bounded by `span` — the length of the text
+ * that matched, so the segment accepted always belongs to the function's own
+ * compiled source. When the map says nothing within that span it falls back to
+ * `lookupOriginal`, because "the segment covering this" is still a better
+ * answer than none, and the caller can no longer be misled about which
+ * component it belongs to than it already was.
+ */
+export function lookupFunctionStart(
+  map: PreparedMap,
+  line: number,
+  column: number,
+  span: number,
+): OriginalPosition | null {
+  if (map.kind === 'index') {
+    const section = findSection(map.sections, line, column);
+    if (!section) return null;
+    return lookupFunctionStart(
+      section.map,
+      line - section.line,
+      line === section.line ? column - section.column : column,
+      span,
+    );
+  }
+
+  const segment = findSegmentFrom(decodeLine(map.mappings, line), column, span);
+  if (!segment || segment.sourceIndex === undefined) return lookupOriginal(map, line, column);
+
+  const rawSource = map.sources[segment.sourceIndex];
+  if (rawSource === undefined) {
+    throw new SourceMapError('Source map references a source index it does not define.');
+  }
+
+  return {
+    source: normalizeSourcePath(rawSource),
+    line: pos0(segment.originalLine ?? 0),
+    column: pos0(segment.originalColumn ?? 0),
+    name: segment.nameIndex === undefined ? null : (map.names[segment.nameIndex] ?? null),
+    content: map.sourcesContent[segment.sourceIndex] ?? null,
+  };
+}
+
 export function lookupOriginal(
   map: PreparedMap,
   line: number,

@@ -37,7 +37,9 @@ import {
 import { createChainBuffer } from '../core/locate/chains.js';
 import type { ResolvedChain } from '../core/locate/adapter.js';
 import type { FrameworkComponentTable } from '../shared/messages.js';
+import type { ComponentNeedle } from '../shared/types.js';
 import { resolutionId, resolutionSource } from '../core/locate/resolution.js';
+import { buildNeedle } from '../core/locate/needle.js';
 import { load, subscribe } from '../features/settings/index.js';
 import {
   RECORDING_DEFAULTS,
@@ -1329,13 +1331,34 @@ function requestScreenshotAndSave(step: DraftStep, eventTime?: number, el?: Elem
           chain: resolved.chain.map(resolutionId),
           ...(resolved.truncated ? { truncated: true } : {}),
         }));
-        frameworkComponents = chains.map((resolved) => ({
-          framework: resolved.framework,
-          build: resolved.build,
-          components: Object.fromEntries(
-            resolved.chain.map((r) => [resolutionId(r), resolutionSource(r)]),
-          ),
-        }));
+        frameworkComponents = chains.map((resolved) => {
+          const needles: Record<string, Omit<ComponentNeedle, 'pageUrl'>> = {};
+          for (const resolution of resolved.chain) {
+            if (resolution.kind !== 'searchable') continue;
+            /*
+             * Built here, in the isolated world, rather than in the page.
+             *
+             * The agent builds React's needles because it already holds the
+             * function; an adapter hands over `fnSource` as a string, so there
+             * is nothing left in the page to hold and this is simply where the
+             * string first stops moving. A rejection — native code, or a source
+             * too short to identify anything — is not an error: the component
+             * keeps the sentence `resolutionSource` already gave it and is
+             * never searched for.
+             */
+            const built = buildNeedle(resolution.fnSource);
+            if (built.ok) needles[resolutionId(resolution)] = built.needle;
+          }
+
+          return {
+            framework: resolved.framework,
+            build: resolved.build,
+            components: Object.fromEntries(
+              resolved.chain.map((r) => [resolutionId(r), resolutionSource(r)]),
+            ),
+            needles,
+          };
+        });
       }
     }
 
@@ -1350,7 +1373,8 @@ function requestScreenshotAndSave(step: DraftStep, eventTime?: number, el?: Elem
         // the picture and highlights the difference away.
         scroll: { x: window.scrollX, y: window.scrollY },
         components,
-        componentsPageUrl: components ? window.location.href : undefined,
+        componentsPageUrl:
+          components || frameworkComponents ? window.location.href : undefined,
         frameworkComponents,
       }),
     );

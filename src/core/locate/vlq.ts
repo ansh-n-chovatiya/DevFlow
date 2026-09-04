@@ -296,6 +296,60 @@ export function findSegmentInLine(
  * user's question goes through `decodeLine` + `findSegmentInLine` instead, for
  * the reason in the header.
  */
+/**
+ * The first segment at or after `column`, within `span` columns of it.
+ *
+ * `findSegmentInLine` answers the question a source map is *specified* to
+ * answer — which mapping covers this position — by taking the rightmost segment
+ * at or before it. That is correct, and it is the wrong question when the
+ * position in hand is the **start of a function** rather than a point inside
+ * one.
+ *
+ * Measured on a real Vue production build: a compiled SFC render arrow begins
+ * at `(t,s)=>` and the map emits no segment until the arrow's *body*, eight
+ * characters later. The backward answer therefore walks out of the component
+ * entirely and lands in whichever file the bundler happened to emit before it —
+ * so `CartPanel` resolved, confidently and with a plausible line, to
+ * `CheckoutButton.vue`. Every component in the chain named its neighbour's file.
+ *
+ * Scanning forward instead lands on the first mapping the function actually
+ * owns. `span` is what keeps that honest: it is the length of the matched text,
+ * so a segment beyond the function's own compiled source is never accepted, and
+ * a function the map says nothing about yields null rather than the next file
+ * along.
+ *
+ * On code where the map *does* emit a segment at the function start — which is
+ * most `function name(){}` output, and is why React never hit this — the first
+ * segment at or after the column is that same segment, so the answer is
+ * unchanged.
+ */
+export function findSegmentFrom(
+  segments: MappingSegment[] | null,
+  column: number,
+  span: number,
+): MappingSegment | null {
+  if (!segments || segments.length === 0 || span <= 0) return null;
+
+  // Binary search for the leftmost segment with generatedColumn >= column.
+  let lo = 0;
+  let hi = segments.length - 1;
+  let found = -1;
+
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (segments[mid].generatedColumn >= column) {
+      found = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+
+  if (found === -1) return null;
+  const segment = segments[found];
+  return segment.generatedColumn < column + span ? segment : null;
+}
+
 export function findSegment(
   decoded: DecodedMappings,
   line: number,

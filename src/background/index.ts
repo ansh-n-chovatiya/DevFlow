@@ -64,7 +64,7 @@ import type {
 } from '../shared/types.js';
 import type { CapturedComponent, FrameworkComponentTable } from '../shared/messages.js';
 import type { Framework } from '../core/locate/adapter.js';
-import type { ComponentSource } from '../shared/types.js';
+import type { ComponentNeedle, ComponentSource } from '../shared/types.js';
 import { isPlaceholderId } from '../core/locate/id.js';
 import { stripReactRef } from '../core/react/attribution.js';
 import { flowHost, mergeTrailing, stepKey, type Pending } from '../core/flow/index.js';
@@ -267,6 +267,7 @@ async function captureAndSave(
     'reactNeedles',
     'frameworkComponents',
     'frameworkMeta',
+    'frameworkNeedles',
   ]);
   if (!stored.ok) {
     await reportError(stored.error);
@@ -473,6 +474,10 @@ async function captureAndSave(
     ...(stored.value.frameworkComponents ?? {}),
   };
   let frameworkChanged = false;
+  const frameworkNeedleTables: Partial<Record<Framework, Record<string, ComponentNeedle>>> = {
+    ...(stored.value.frameworkNeedles ?? {}),
+  };
+  let frameworkNeedlesChanged = false;
   for (const table of frameworkComponents ?? []) {
     const held = frameworkTables[table.framework] ?? {};
     let next = held;
@@ -483,6 +488,22 @@ async function captureAndSave(
       frameworkChanged = true;
     }
     if (next !== held) frameworkTables[table.framework] = next;
+
+    /*
+     * Needles ride the same merge, and gain the page they were seen on here.
+     * `ComponentNeedle.pageUrl` decides which scripts get searched, and the
+     * step knows the page while the adapter does not — the same split
+     * `mergeComponents` makes for React.
+     */
+    const heldNeedles = frameworkNeedleTables[table.framework] ?? {};
+    let nextNeedles = heldNeedles;
+    for (const [id, needle] of Object.entries(table.needles ?? {})) {
+      if (id in heldNeedles) continue;
+      if (nextNeedles === heldNeedles) nextNeedles = { ...heldNeedles };
+      nextNeedles[id] = { ...needle, pageUrl: componentsPageUrl ?? step.url };
+      frameworkNeedlesChanged = true;
+    }
+    if (nextNeedles !== heldNeedles) frameworkNeedleTables[table.framework] = nextNeedles;
   }
 
   /*
@@ -513,6 +534,7 @@ async function captureAndSave(
     recordedSteps,
     ...tabPatch,
     ...(frameworkChanged ? { frameworkComponents: frameworkTables } : {}),
+    ...(frameworkNeedlesChanged ? { frameworkNeedles: frameworkNeedleTables } : {}),
     ...(metaChanged ? { frameworkMeta: nextMeta } : {}),
     ...(shotPatch(captured, screenshot, screenshotOriginal) ?? {}),
     // Only when something actually changed: a flow that clicks one button forty
@@ -524,7 +546,7 @@ async function captureAndSave(
     return;
   }
 
-  if (merged?.changed) scheduleResolve();
+  if (merged?.changed || frameworkNeedlesChanged) scheduleResolve();
 }
 
 /**
@@ -919,6 +941,8 @@ async function runResolve(requestedFinal: boolean): Promise<void> {
     'reactNeedles',
     'reactScripts',
     'recordingActive',
+    'frameworkComponents',
+    'frameworkNeedles',
   ]);
   if (!stored.ok) return;
 
@@ -933,7 +957,11 @@ async function runResolve(requestedFinal: boolean): Promise<void> {
 
   const needles = stored.value.reactNeedles ?? {};
   const components = stored.value.reactComponents ?? {};
-  if (Object.keys(needles).length === 0 && !final) return;
+  const frameworkNeedles = stored.value.frameworkNeedles ?? {};
+  const frameworkPending = Object.values(frameworkNeedles).some(
+    (table) => Object.keys(table ?? {}).length > 0,
+  );
+  if (Object.keys(needles).length === 0 && !frameworkPending && !final) return;
 
   // A failed read leaves resolution on, matching the setting's own default: a
   // storage hiccup should not quietly switch a feature off. `load()` guarantees
@@ -963,11 +991,79 @@ async function runResolve(requestedFinal: boolean): Promise<void> {
     },
   });
 
-  if (!result.changed) return;
+  /*
+   * The same resolver, run once per framework that has anything pending.
+   *
+   * `resolvePending` never knew anything about React: it takes components,
+   * needles and a script list and searches. It lives under `features/react/`
+   * for historical reasons only — the engine underneath it was measured
+   * framework-neutral and moved to `core/locate/` in ADR 0026 — so a second
+   * resolver here would be the duplicate this repository keeps paying for.
+   *
+   * `reactScripts` is the page's script inventory and is shared for the same
+   * reason: it is a list of the bundles the page loaded, and a bundle does not
+   * belong to a framework. `src/injected/agent.ts` now keeps that inventory
+   * running while *either* path is live, because a Vue page abandons React by
+   * design and used to take the bundle list down with it.
+   *
+   * The budget is shared across every pass rather than granted to each, so a
+   * page carrying two runtimes cannot spend `react.maxResolveMsPerFlow` twice.
+   * `reactResolve` gates them all: it is the "look up where components were
+   * written" switch, and honouring it for React while ignoring it for Vue would
+   * make one setting mean two things.
+   */
+  const startedAt = Date.now();
+  const frameworkComponents = stored.value.frameworkComponents ?? {};
+  const nextComponents: Partial<Record<Framework, Record<string, ComponentSource>>> = {
+    ...frameworkComponents,
+  };
+  const nextNeedles: Partial<Record<Framework, Record<string, ComponentNeedle>>> = {
+    ...frameworkNeedles,
+  };
+  let frameworkChanged = false;
+
+  for (const key of Object.keys(frameworkNeedles)) {
+    const framework = key as Framework;
+    const pending = frameworkNeedles[framework] ?? {};
+    if (Object.keys(pending).length === 0 && !final) continue;
+
+    const spent = Date.now() - startedAt;
+    const remaining = settings['react.maxResolveMsPerFlow'] - spent;
+    // Out of budget is not out of work: the needles stay in storage and the
+    // next trigger picks them up, which is what `final` is for.
+    if (remaining <= 0 && !final) break;
+
+    const answer = await resolvePending({
+      components: frameworkComponents[framework] ?? {},
+      needles: pending,
+      scripts: stored.value.reactScripts ?? {},
+      final,
+      disabled: !settings.reactResolve,
+      budgetMs: Math.max(0, remaining),
+      limits: {
+        concurrency: settings['react.resolveConcurrency'],
+        cacheEntries: settings['react.bundleCacheEntries'],
+        cacheBytes: settings['react.bundleCacheBytes'],
+        resourceBytes: settings['react.maxResourceBytes'],
+        mapBytes: settings['react.maxMapBytes'],
+      },
+    });
+
+    if (!answer.changed) continue;
+    nextComponents[framework] = answer.components;
+    nextNeedles[framework] = answer.needles;
+    frameworkChanged = true;
+  }
+
+  if (!result.changed && !frameworkChanged) return;
 
   const written = await setLocal({
-    reactComponents: result.components,
-    reactNeedles: result.needles,
+    ...(result.changed
+      ? { reactComponents: result.components, reactNeedles: result.needles }
+      : {}),
+    ...(frameworkChanged
+      ? { frameworkComponents: nextComponents, frameworkNeedles: nextNeedles }
+      : {}),
   });
   if (!written.ok) await reportError(written.error);
 }
@@ -1027,6 +1123,7 @@ async function purgeReact(): Promise<void> {
       reactMeta: null,
       frameworkMeta: null,
       frameworkComponents: {},
+      frameworkNeedles: {},
     });
     if (!written.ok) await reportError(written.error);
   };
@@ -1836,6 +1933,7 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
             reactMeta: null,
             frameworkMeta: null,
             frameworkComponents: {},
+            frameworkNeedles: {},
           }),
         )
         .then((written) => {
