@@ -22,6 +22,7 @@
 
 import type { ComponentStamp } from '../core/react/stamp.js';
 import type { Pos0, Pos1 } from '../core/locate/positions.js';
+import type { Framework, FrameworkPresence } from '../core/locate/adapter.js';
 
 export interface BoundingBox {
   x: number;
@@ -46,6 +47,14 @@ export interface ElementRef {
   ariaLabel?: string | null;
   /** The React components this element sits inside, when the page is React. */
   react?: ElementReactRef;
+  /**
+   * The same, for every *other* framework that claimed this element.
+   *
+   * A list because a page is not one framework: every Next.js App Router page is
+   * React and RSC at once, and a React island inside a Vue app is a shipped
+   * pattern. Absent entirely when nothing but React claimed the element.
+   */
+  frameworks?: ElementFrameworkRef[];
 }
 
 /**
@@ -149,13 +158,40 @@ export interface ComponentSource {
   detail?: string;
 }
 
-/** React facts about the page a flow was recorded on. */
-export interface FlowReact {
+/**
+ * What one framework says about the page a flow was recorded on.
+ *
+ * One shape for all four runtimes, because there is only one question here and
+ * a second interface answering it identically is how two renderers of one thing
+ * get written. `FlowReact` is kept as a name rather than a second definition:
+ * every saved flow on disk carries `react`, and 104 references spell it.
+ */
+export interface FlowComponents {
   detected: boolean;
   version?: string;
   build?: 'development' | 'production' | 'unknown';
-  /** Keyed by component id, as referenced by `ElementReactRef.chain`. */
+  /** Keyed by component id, as referenced by a chain on an `ElementRef`. */
   components: Record<string, ComponentSource>;
+}
+
+/** React facts about the page a flow was recorded on. */
+export type FlowReact = FlowComponents;
+
+/**
+ * The components of one non-React framework above an element.
+ *
+ * No `owner`/`within`, unlike `ElementReactRef`, and the absence is deliberate.
+ * Those two are decided by `core/react/owner.ts`'s four preference tiers, which
+ * were derived from how React's chains are actually shaped. Nothing equivalent
+ * has been measured for Vue, Svelte or RSC, and inventing one here would put a
+ * confident attribution on a rule nobody checked.
+ */
+export interface ElementFrameworkRef {
+  framework: Framework;
+  /** Component ids, outermost first. */
+  chain: string[];
+  /** The walk hit its cap, so `chain[0]` is not the root component. */
+  truncated?: boolean;
 }
 
 /**
@@ -789,6 +825,18 @@ export interface FlowPayload {
    */
   react?: FlowReact;
   /**
+   * The other three runtimes, each absent entirely when the page was not it.
+   *
+   * Additive on exactly `react`'s terms — a server that predates them ignores
+   * what it does not know, which is what the version field exists to allow — so
+   * these are not a `schemaVersion` bump either. Separate keys rather than one
+   * `framework` discriminant, because a Next.js page is genuinely React *and*
+   * RSC and a single discriminant would have to call one of them a lie.
+   */
+  vue?: FlowComponents;
+  svelte?: FlowComponents;
+  rsc?: FlowComponents;
+  /**
    * What the recording could and could not see of the app's state. Absent
    * entirely on a flow recorded before state capture existed — additive for
    * `react`'s reason, and not a `schemaVersion` bump for it either.
@@ -925,6 +973,26 @@ export interface LocalStorageShape {
   /** React facts about the page, minus the component table. */
   reactMeta: Omit<FlowReact, 'components'> | null;
   /**
+   * What the non-React adapters said about the page, recorded once.
+   *
+   * A list rather than a map, because it is stored exactly as the adapters
+   * produced it and `FrameworkPresence` already names its framework. The flow
+   * assembly keys it out into `vue`/`svelte`/`rsc`.
+   *
+   * Null on a recording where no adapter reported a runtime, and on one made by
+   * a build that predates this — which readers treat the same way, because
+   * "nothing said so" and "nobody asked" are the same absence here.
+   */
+  frameworkMeta: FrameworkPresence[] | null;
+  /**
+   * Component tables for those frameworks, keyed by framework and then by the
+   * component ids the steps' chains reference.
+   *
+   * Its own key for `reactComponents`' reason: `recordedSteps` is rewritten by
+   * the capture queue, and a table living inside it would be rewritten with it.
+   */
+  frameworkComponents: Partial<Record<Framework, Record<string, ComponentSource>>>;
+  /**
    * The stores the live recording has read, described once each.
    *
    * Its own key for `reactComponents`' reason — `recordedSteps` is rewritten
@@ -1020,6 +1088,22 @@ export function savedFlowKey(id: string): `savedFlow_${string}` {
  */
 export function savedFlowReactKey(id: string): `savedFlowReact_${string}` {
   return `savedFlowReact_${id}`;
+}
+
+/**
+ * An archived flow's non-React framework tables, one key per flow.
+ *
+ * One key holding all three rather than three keys, unlike the flow payload's
+ * `vue`/`svelte`/`rsc` siblings. The payload is read by other programs and is
+ * shaped for them; this is storage, read only by the code that wrote it, and a
+ * flow that is Vue *and* RSC would otherwise cost two reads and two writes on
+ * every archive operation to hold what is always fetched together.
+ *
+ * A flow archived before this existed has no such key, which reads as "no
+ * framework data" rather than as a broken record — `savedFlowReactKey`'s rule.
+ */
+export function savedFlowFrameworksKey(id: string): `savedFlowFrameworks_${string}` {
+  return `savedFlowFrameworks_${id}`;
 }
 
 /**

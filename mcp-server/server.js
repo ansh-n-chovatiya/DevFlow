@@ -2933,12 +2933,50 @@ function stepParts(flow, dir, step, render) {
       }
     }
 
+    /*
+     * The other frameworks, read the same way and rendered by the same helper.
+     *
+     * `formatSource` takes a `ComponentSource`, and that is exactly what the
+     * extension stores for a Vue, Svelte or RSC component — the conversion
+     * happens once, in `core/locate/resolution.ts`, so nothing here needs a
+     * second renderer or any knowledge of which runtime it is looking at. That
+     * reuse is the whole reason the adapters were made to produce
+     * `ComponentSource` rather than a shape of their own.
+     *
+     * No `within`: `stepEnclosing` is React's owner rule, and nothing
+     * equivalent has been measured for these three. Printing one anyway would
+     * be a confident attribution nobody checked.
+     */
+    for (const ref of step.element?.frameworks ?? []) {
+      const table = flow[ref.framework]?.components ?? {};
+      const named = (ref.chain ?? []).map((id) => table[id]).filter(Boolean);
+      if (named.length === 0) continue;
+
+      const [innermost] = named.slice(-1);
+      const where = formatSource(innermost);
+      lines.push(
+        `${ref.framework}: ${innermost.name}${where ? `  ${where}` : ''}`,
+      );
+      if (innermost.detail) lines.push(`  ${innermost.detail}`);
+      if (named.length > 1) {
+        lines.push(
+          `${ref.framework} chain, outermost first: ${named.map((c) => c.name).join(' › ')}`,
+        );
+      }
+    }
+
+    const otherFrameworks = (step.element?.frameworks ?? [])
+      .map((ref) => ref.framework)
+      .filter((name) => (flow[name]?.components ?? null) !== null);
+
     parts.component = {
       have: owner
         ? `${owner.name}${within ? ` within ${within.name}` : ''}`
-        : flow.react?.detected
-          ? 'no component attributed to this step'
-          : 'this flow carries no React data',
+        : otherFrameworks.length
+          ? `no React component; read by ${otherFrameworks.join(', ')}`
+          : flow.react?.detected
+            ? 'no component attributed to this step'
+            : 'this flow carries no React data',
       lines,
     };
   }

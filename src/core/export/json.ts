@@ -7,8 +7,15 @@
 
 import { compactBody, type BodyLimits } from '../schema/index.js';
 import { attributeSteps, pruneComponents, stripReactRef } from '../react/attribution.js';
+import type { Framework } from '../locate/adapter.js';
 import { CAPPED_ID } from '../react/table.js';
-import type { ExportOptions, FlowReact, Overrides, Step } from '../../shared/types.js';
+import type {
+  ExportOptions,
+  FlowComponents,
+  FlowReact,
+  Overrides,
+  Step,
+} from '../../shared/types.js';
 
 export const EXPORT_SCHEMA_VERSION = '1.0';
 
@@ -33,6 +40,15 @@ export interface JsonExportOptions extends Omit<Partial<ExportOptions>, 'react'>
    */
   react?: FlowReact;
   /**
+   * The same, for every non-React framework the recording found.
+   *
+   * Pruned by the caller rather than here, unlike `react`: `pruneComponents`
+   * walks `ElementReactRef`, which these do not have, and `buildFlowFrameworks`
+   * in `core/locate/` already prunes against the steps it is given. Passing an
+   * unpruned table here would ship components no surviving step names.
+   */
+  frameworks?: Partial<Record<Framework, FlowComponents>>;
+  /**
    * The flow's name — the same string that titles the Markdown.
    *
    * Written down because a `flow.json` that does not name itself is one of three
@@ -53,7 +69,8 @@ export interface JsonExportOptions extends Omit<Partial<ExportOptions>, 'react'>
 
 /** Serialise recorded steps to the on-disk flow format. */
 export function exportToJSON(steps: Step[], options: JsonExportOptions = {}): string {
-  const { imageNames, images, network, logs, react, title, settings, bodies } = options;
+  const { imageNames, images, network, logs, react, title, settings, bodies, frameworks } =
+    options;
   const components = react ? pruneComponents(steps, react.components) : {};
   /*
    * The cap marker is not a component.
@@ -81,6 +98,14 @@ export function exportToJSON(steps: Step[], options: JsonExportOptions = {}): st
       // Absent rather than empty, so a flow from a page that is not React reads
       // the same as one exported before this existed.
       ...(carries ? { react: { ...react, components } } : {}),
+      /*
+       * Spread as siblings — `vue`, `svelte`, `rsc` — rather than nested under
+       * one `frameworks` key. That is `Flow`'s own shape, and the reason is that
+       * a reader which knows about Vue and not Svelte should be able to find
+       * `vue` without learning a container first. Absent entirely when nothing
+       * was found, exactly like `react`.
+       */
+      ...(frameworks ?? {}),
       steps: list.map((step, i) => {
         const out: Record<string, unknown> = { ...step };
 

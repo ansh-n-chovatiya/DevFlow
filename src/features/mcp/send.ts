@@ -15,7 +15,13 @@ import { describeStamp } from '../settings/stamp.js';
 import { renderLimits, type RenderLimits } from '../settings/render.js';
 import { load as loadSettings, resolve } from '../settings/index.js';
 import { readRecordingStamp, renderedOverrides } from '../settings/recording.js';
-import { readCurrentReact, readCurrentRenders, readCurrentState } from '../flows/store.js';
+import {
+  readCurrentFrameworks,
+  readCurrentReact,
+  readCurrentRenders,
+  readCurrentState,
+} from '../flows/store.js';
+import type { Framework } from '../../core/locate/adapter.js';
 import { sendToWorker } from '../../shared/messages.js';
 import {
   FLOW_SCHEMA_VERSION,
@@ -25,6 +31,7 @@ import { err, ok, type Result } from '../../shared/result.js';
 import type {
   ExportOptions,
   FlowPayload,
+  FlowComponents,
   FlowReact,
   FlowState,
   FlowRenders,
@@ -295,6 +302,12 @@ export function buildPayload(
    * re-rendered" — see `FlowRenders`.
    */
   renders: FlowRenders | null = null,
+  /**
+   * The non-React frameworks' tables, already pruned to `steps` by
+   * `buildFlowFrameworks`. Empty rather than null: a page with none simply has
+   * no keys, and the payload spreads it either way.
+   */
+  frameworks: Partial<Record<Framework, FlowComponents>> = {},
 ): FlowPayload {
   const components = react ? pruneComponents(steps, react.components) : {};
   const carries = react !== null && react !== undefined && Object.keys(components).length > 0;
@@ -323,6 +336,8 @@ export function buildPayload(
     // stamp is what shaped the bodies below.
     steps: attributed.map((step) => leanCalls(step, bodyLimits(settings))),
     ...(carries ? { react: { ...react, components } } : {}),
+    // Siblings of `react`, on exactly its terms — see `Flow` in shared/types.
+    ...frameworks,
     // Sent whole, including when it says nothing was read. That is the whole
     // point of `FlowState.read` and `FlowState.note`: on the receiving side,
     // "state capture was off" and "no store changed" are indistinguishable
@@ -379,6 +394,15 @@ export async function sendFlow(
   archivedState?: FlowState | null,
   /** An archived flow's frozen render summary, on the same split again. */
   archivedRenders?: FlowRenders | null,
+  /**
+   * An archived flow's frozen framework tables, on the same split again.
+   *
+   * Undefined rather than `{}` for the live recording, so "the caller had none
+   * to give" stays distinguishable from "this archived flow genuinely had
+   * none" — the live path reads its own back below, and an empty object from an
+   * archive must not trigger that read.
+   */
+  archivedFrameworks?: Partial<Record<Framework, FlowComponents>>,
 ): Promise<Result<SendResult>> {
   if (steps.length === 0) return err(flowError('MCP_UNREACHABLE', 'nothing to send'));
 
@@ -447,6 +471,9 @@ export async function sendFlow(
     stamp,
     state,
     renders,
+    include.react
+      ? (archivedFrameworks ?? (await readCurrentFrameworks(sending)))
+      : {},
   );
   const first = payload.startUrl;
 

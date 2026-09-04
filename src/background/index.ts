@@ -62,7 +62,9 @@ import type {
   StepStateDelta,
   StepA11yFinding,
 } from '../shared/types.js';
-import type { CapturedComponent } from '../shared/messages.js';
+import type { CapturedComponent, FrameworkComponentTable } from '../shared/messages.js';
+import type { Framework } from '../core/locate/adapter.js';
+import type { ComponentSource } from '../shared/types.js';
 import { stripReactRef } from '../core/react/attribution.js';
 import { flowHost, mergeTrailing, stepKey, type Pending } from '../core/flow/index.js';
 import { mergeComponents } from '../core/react/table.js';
@@ -208,6 +210,8 @@ async function captureAndSave(
   componentsPageUrl?: string,
   /** Where the page was scrolled when `elementBox` was measured. */
   measuredScroll?: { x: number; y: number },
+  /** The non-React frameworks' tables for this step, already `ComponentSource`. */
+  frameworkComponents?: FrameworkComponentTable[],
 ): Promise<void> {
   /*
    * The settings this recording was frozen at, not the ones in force now.
@@ -429,9 +433,40 @@ async function captureAndSave(
       )
     : null;
 
+  /*
+   * A plain merge rather than `mergeComponents`, and the difference is that
+   * there is nothing to resolve.
+   *
+   * React's table carries needles waiting for a bundle search, so its merge has
+   * to track what changed and schedule the resolver. These entries are already
+   * `ComponentSource` — a `declared` one arrived complete, and the others
+   * arrived saying in words why they are not — so merging is a union keyed by
+   * id, and there is no queue to wake.
+   *
+   * Existing entries win. An id is a hash of the name and where it came from, so
+   * two entries under one id describe one component, and the first was recorded
+   * closer to the interaction that found it.
+   */
+  const frameworkTables: Partial<Record<Framework, Record<string, ComponentSource>>> = {
+    ...(stored.value.frameworkComponents ?? {}),
+  };
+  let frameworkChanged = false;
+  for (const table of frameworkComponents ?? []) {
+    const held = frameworkTables[table.framework] ?? {};
+    let next = held;
+    for (const [id, source] of Object.entries(table.components)) {
+      if (id in held) continue;
+      if (next === held) next = { ...held };
+      next[id] = source;
+      frameworkChanged = true;
+    }
+    if (next !== held) frameworkTables[table.framework] = next;
+  }
+
   const written = await setLocal({
     recordedSteps,
     ...tabPatch,
+    ...(frameworkChanged ? { frameworkComponents: frameworkTables } : {}),
     ...(shotPatch(captured, screenshot, screenshotOriginal) ?? {}),
     // Only when something actually changed: a flow that clicks one button forty
     // times would otherwise rewrite an identical table forty times.
@@ -943,6 +978,8 @@ async function purgeReact(): Promise<void> {
       reactNeedles: {},
       reactScripts: {},
       reactMeta: null,
+      frameworkMeta: null,
+      frameworkComponents: {},
     });
     if (!written.ok) await reportError(written.error);
   };
@@ -1583,10 +1620,20 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
 
     case 'CAPTURE_AND_SAVE_STEP': {
       const { step, elementBox, dpr, components, componentsPageUrl, scroll } = message;
+      const { frameworkComponents } = message;
       // Enqueue so captures run one at a time. A rejected step is swallowed so
       // one failure cannot break the chain for later steps.
       captureQueue = captureQueue.then(() =>
-        captureAndSave(step, elementBox, dpr, sender, components, componentsPageUrl, scroll).catch((error: unknown) =>
+        captureAndSave(
+        step,
+        elementBox,
+        dpr,
+        sender,
+        components,
+        componentsPageUrl,
+        scroll,
+        frameworkComponents,
+      ).catch((error: unknown) =>
           console.error('DevFlow: captureAndSave rejected', error),
         ),
       );
@@ -1607,6 +1654,30 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
           return;
         }
         void setLocal({ reactMeta: message.meta }).then((written) =>
+          sendResponse({ ok: written.ok }),
+        );
+      });
+      return true;
+    }
+
+    case 'FRAMEWORK_META': {
+      /*
+       * Merged rather than written once, unlike `REACT_META`.
+       *
+       * React's rule is "first detection wins", because a flow that visited a
+       * React page and then a plain one was still recorded against React. Here
+       * the same recording can legitimately gain a *second* framework later —
+       * a Vue page that navigates to a Svelte one — and each entry is a fact
+       * about a runtime rather than about the flow, so the union is right and
+       * last-write-wins would drop the earlier one.
+       */
+      void getLocal('frameworkMeta').then((stored) => {
+        const held = (stored.ok ? stored.value.frameworkMeta : null) ?? [];
+        const byFramework = new Map(held.map((entry) => [entry.framework, entry]));
+        for (const entry of message.frameworks) {
+          if (!byFramework.has(entry.framework)) byFramework.set(entry.framework, entry);
+        }
+        void setLocal({ frameworkMeta: [...byFramework.values()] }).then((written) =>
           sendResponse({ ok: written.ok }),
         );
       });
@@ -1716,6 +1787,8 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
             reactNeedles: {},
             reactScripts: {},
             reactMeta: null,
+            frameworkMeta: null,
+            frameworkComponents: {},
           }),
         )
         .then((written) => {

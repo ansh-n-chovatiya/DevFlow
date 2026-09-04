@@ -35,6 +35,9 @@ import {
   REACT_SETTING_DEFAULTS,
 } from '../shared/constants.js';
 import { createChainBuffer } from '../core/locate/chains.js';
+import type { ResolvedChain } from '../core/locate/adapter.js';
+import type { FrameworkComponentTable } from '../shared/messages.js';
+import { resolutionId, resolutionSource } from '../core/locate/resolution.js';
 import { load, subscribe } from '../features/settings/index.js';
 import {
   RECORDING_DEFAULTS,
@@ -106,6 +109,7 @@ function clearBuffers(): void {
   pendingLogs = [];
   pendingNetworkCalls = [];
   reactChains.clear();
+  frameworkChains.clear();
   stepByEventTime.clear();
   flowStores.clear();
   /*
@@ -130,6 +134,24 @@ function clearBuffers(): void {
  * that happened in the same tick as the page loaded.
  */
 const reactChains = createChainBuffer<{ chain: CapturedComponent[]; truncated: boolean }>({
+  size: REACT_BUFFER_SIZE,
+  ttlMs: REACT_BUFFER_TTL_MS,
+  timeoutMs: REACT_CHAIN_TIMEOUT_MS,
+});
+
+/**
+ * The same buffer, for every framework that is not React.
+ *
+ * A second buffer rather than a second value on the first, because the two
+ * arrive independently: React's chain and Vue's for one click are produced by
+ * two listeners with two lifecycles, and either may be absent. Sharing one
+ * buffer entry would make whichever arrived first decide whether the other
+ * could be claimed at all.
+ *
+ * Same size, TTL and timeout, because it is the same race against the same
+ * `eventTime`.
+ */
+const frameworkChains = createChainBuffer<ResolvedChain[]>({
   size: REACT_BUFFER_SIZE,
   ttlMs: REACT_BUFFER_TTL_MS,
   timeoutMs: REACT_CHAIN_TIMEOUT_MS,
@@ -426,6 +448,10 @@ window.addEventListener('message', (event: MessageEvent<AgentMessage | AgentQuer
     onRenderSample(data);
   } else if (data.kind === 'a11y') {
     onA11ySample(data);
+  } else if (data.kind === 'framework') {
+    frameworkChains.deliver({ eventTime: data.eventTime, value: data.chains, at: Date.now() });
+  } else if (data.kind === 'framework-meta') {
+    void sendToWorker({ type: 'FRAMEWORK_META', frameworks: data.frameworks });
   } else if (data.kind === 'react-meta') {
     void sendToWorker({
       type: 'REACT_META',
@@ -715,7 +741,10 @@ function applyCaptureSetting(enabled: boolean, initial = false): void {
   // Chains already collected for a step that has not claimed them are dropped:
   // turning capture off should stop attribution now, not after the buffer
   // drains into the next two steps.
-  if (!enabled) reactChains.clear();
+  if (!enabled) {
+    reactChains.clear();
+    frameworkChains.clear();
+  }
   syncAgent();
 
   // And what the recording has already stored goes with them. Stopping new
@@ -1271,6 +1300,7 @@ function requestScreenshotAndSave(step: DraftStep, eventTime?: number, el?: Elem
 
   void (async () => {
     let components: CapturedComponent[] | undefined;
+    let frameworkComponents: FrameworkComponentTable[] | undefined;
 
     if (eventTime !== undefined && enriched.element) {
       const found = await reactChains.take(eventTime, Date.now());
@@ -1280,6 +1310,32 @@ function requestScreenshotAndSave(step: DraftStep, eventTime?: number, el?: Elem
           chain: found.chain.map((component) => component.id),
           ...(found.truncated ? { truncated: true } : {}),
         };
+      }
+
+      /*
+       * Claimed separately from React's, because they are produced by two
+       * listeners with two lifecycles and either may be absent — a Vue page has
+       * given up on React by the third click, and a plain React page never
+       * produces one of these at all.
+       *
+       * The component *tables* go to the worker with the step, keyed by the
+       * same ids the chain references, exactly as `components` does for React.
+       */
+      const claimed = await frameworkChains.take(eventTime, Date.now());
+      const chains = (claimed ?? []).filter((resolved) => resolved.chain.length > 0);
+      if (chains.length > 0) {
+        enriched.element.frameworks = chains.map((resolved) => ({
+          framework: resolved.framework,
+          chain: resolved.chain.map(resolutionId),
+          ...(resolved.truncated ? { truncated: true } : {}),
+        }));
+        frameworkComponents = chains.map((resolved) => ({
+          framework: resolved.framework,
+          build: resolved.build,
+          components: Object.fromEntries(
+            resolved.chain.map((r) => [resolutionId(r), resolutionSource(r)]),
+          ),
+        }));
       }
     }
 
@@ -1295,6 +1351,7 @@ function requestScreenshotAndSave(step: DraftStep, eventTime?: number, el?: Elem
         scroll: { x: window.scrollX, y: window.scrollY },
         components,
         componentsPageUrl: components ? window.location.href : undefined,
+        frameworkComponents,
       }),
     );
   })();

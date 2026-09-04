@@ -15,16 +15,20 @@
 import { countByType, countFailures, flowHost, renumber, stepKey } from '../../core/flow/index.js';
 import { deleteRemoteFlow } from '../mcp/remote.js';
 import { buildFlowReact, pruneComponents } from '../../core/react/attribution.js';
+import { buildFlowFrameworks } from '../../core/locate/flow-frameworks.js';
+import type { Framework } from '../../core/locate/adapter.js';
 import { getLocal, removeLocal, setLocal } from '../../chrome/storage.js';
 import { sendToWorker } from '../../shared/messages.js';
 import { err, ok, type Result } from '../../shared/result.js';
 import { flowError } from '../../shared/errors.js';
 import {
   savedFlowKey,
+  savedFlowFrameworksKey,
   savedFlowReactKey,
   savedFlowStateKey,
   savedFlowRendersKey,
   type FlowMeta,
+  type FlowComponents,
   type FlowReact,
   type FlowState,
   type FlowRenders,
@@ -232,6 +236,27 @@ export async function readCurrentReact(steps: Step[]): Promise<FlowReact | null>
 }
 
 /**
+ * The live recording's non-React frameworks, pruned to the steps given.
+ *
+ * Read at the moment it is needed for `readCurrentReact`'s reason, and empty
+ * rather than null when there is nothing: a page with no Vue has no `vue` key,
+ * and the caller spreads this object either way, so an empty one is the same
+ * statement with no branch at the call site.
+ */
+export async function readCurrentFrameworks(
+  steps: Step[],
+): Promise<Partial<Record<Framework, FlowComponents>>> {
+  const stored = await getLocal(['frameworkComponents', 'frameworkMeta']);
+  if (!stored.ok) return {};
+
+  return buildFlowFrameworks(
+    steps,
+    stored.value.frameworkMeta ?? null,
+    stored.value.frameworkComponents ?? {},
+  );
+}
+
+/**
  * The live recording's state stores, and what to say when there are none.
  *
  * Read at the moment it is needed for `readCurrentReact`'s reason. The
@@ -319,6 +344,8 @@ interface FlowRecord {
   /** `null` when the index lists the flow but its steps key is gone. */
   steps: Step[] | null;
   react: FlowReact | null;
+  /** Empty rather than null: absent and "none found" are the same statement. */
+  frameworks: Partial<Record<Framework, FlowComponents>>;
   state: FlowState | null;
   renders: FlowRenders | null;
 }
@@ -328,18 +355,23 @@ async function readFlowRecord(id: string): Promise<Result<FlowRecord>> {
   if (!flows.ok) return flows;
 
   const meta = flows.value.find((flow) => flow.id === id) ?? null;
-  if (!meta) return ok({ meta: null, steps: null, react: null, state: null, renders: null });
+  if (!meta) {
+    return ok({ meta: null, steps: null, react: null, frameworks: {}, state: null, renders: null });
+  }
 
   const key = savedFlowKey(id);
   const reactKey = savedFlowReactKey(id);
+  const frameworksKey = savedFlowFrameworksKey(id);
   const stateKey = savedFlowStateKey(id);
   const rendersKey = savedFlowRendersKey(id);
-  const stored = await getLocal([key, reactKey, stateKey, rendersKey]);
+  const stored = await getLocal([key, reactKey, frameworksKey, stateKey, rendersKey]);
   if (!stored.ok) return stored;
 
   const steps = stored.value[key];
   // Flows archived before components were captured have no such key at all.
   const react = (stored.value[reactKey] as FlowReact | undefined) ?? null;
+  const frameworks =
+    (stored.value[frameworksKey] as Partial<Record<Framework, FlowComponents>> | undefined) ?? {};
   // Nor before state was. Null reads as "this recording says nothing about
   // state", which is exactly what a flow from that build does say.
   const state = (stored.value[stateKey] as FlowState | undefined) ?? null;
@@ -349,6 +381,7 @@ async function readFlowRecord(id: string): Promise<Result<FlowRecord>> {
 
   return ok({
     meta,
+    frameworks,
     steps: Array.isArray(steps) ? (steps as Step[]) : null,
     react,
     state,
@@ -473,6 +506,7 @@ export async function saveAsFlow(name: string, steps: Step[]): Promise<Result<Fl
 
   await sendToWorker({ type: 'RESOLVE_COMPONENTS', final: true });
   const react = await readCurrentReact(numbered);
+  const frameworks = await readCurrentFrameworks(numbered);
   const state = await readCurrentState();
   const renders = await readCurrentRenders();
 
@@ -481,6 +515,7 @@ export async function saveAsFlow(name: string, steps: Step[]): Promise<Result<Fl
   const written = await setLocal({
     [savedFlowKey(id)]: numbered,
     ...(react ? { [savedFlowReactKey(id)]: react } : {}),
+    ...(Object.keys(frameworks).length ? { [savedFlowFrameworksKey(id)]: frameworks } : {}),
     ...(state ? { [savedFlowStateKey(id)]: state } : {}),
     ...(renders ? { [savedFlowRendersKey(id)]: renders } : {}),
   });
@@ -501,6 +536,7 @@ export async function saveAsFlow(name: string, steps: Step[]): Promise<Result<Fl
     await removeLocal([
       savedFlowKey(id),
       savedFlowReactKey(id),
+      savedFlowFrameworksKey(id),
       savedFlowStateKey(id),
       savedFlowRendersKey(id),
     ]);
@@ -616,6 +652,7 @@ export async function deleteFlow(id: string): Promise<Result<DeletedFlow>> {
     const removed = await removeLocal([
       savedFlowKey(id),
       savedFlowReactKey(id),
+      savedFlowFrameworksKey(id),
       savedFlowStateKey(id),
       savedFlowRendersKey(id),
     ]);
