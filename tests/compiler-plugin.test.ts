@@ -451,3 +451,57 @@ describe('the plugin and the reader agree', () => {
     expect(readStamp((Row as { render: unknown }).render)).toBeNull();
   });
 });
+
+/**
+ * The README told people to write a plugin name Babel cannot resolve.
+ *
+ * Babel expands a bare plugin name to `babel-plugin-<name>`, so the shipped
+ * example — `plugins: ['devflow-compiler-plugin']` — sent every reader looking
+ * for `babel-plugin-devflow-compiler-plugin`, a package that has never existed.
+ * The instruction failed for everybody who followed it exactly, and the error
+ * names a package the README never mentions.
+ *
+ * This reads the README rather than restating the rule, because a test that
+ * agrees with the fix and not with the document is a test that passes while the
+ * document is wrong — which is the state it was already in.
+ */
+describe('the install instructions in README.md', () => {
+  /** Every plugin name in a `babel.config.js` block in the README. */
+  function pluginSpecifiers(markdown: string): string[] {
+    const specifiers: string[] = [];
+    for (const block of markdown.matchAll(/```js\n([\s\S]*?)```/g)) {
+      if (!block[1].includes('babel.config')) continue;
+      for (const entry of block[1].matchAll(/plugins:\s*\[([^\]]*)\]/g)) {
+        for (const quoted of entry[1].matchAll(/['"]([^'"]+)['"]/g)) specifiers.push(quoted[1]);
+      }
+    }
+    return specifiers;
+  }
+
+  it('names the plugin in a form Babel resolves to this package', () => {
+    const specifiers = pluginSpecifiers(readFileSync(resolve(ROOT, 'README.md'), 'utf8'));
+
+    // A README that stopped documenting the plugin would pass an assertion
+    // about "every" specifier vacuously.
+    expect(specifiers.length).toBeGreaterThan(0);
+
+    for (const specifier of specifiers) {
+      expect(specifier).toBe('module:devflow-compiler-plugin');
+    }
+  });
+
+  it('proves that form is the one Babel accepts, and the bare name is not', async () => {
+    // Not a claim about Babel's documented behaviour — Babel's own resolver,
+    // asked both ways. `module:` is the prefix that suppresses the
+    // `babel-plugin-` expansion.
+    await expect(
+      transformAsync('export const Panel = () => null;', {
+        plugins: ['devflow-compiler-plugin'],
+        filename: 'Panel.jsx',
+        configFile: false,
+        babelrc: false,
+        cwd: ROOT,
+      }),
+    ).rejects.toThrow(/babel-plugin-devflow-compiler-plugin/);
+  });
+});

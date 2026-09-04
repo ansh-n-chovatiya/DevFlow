@@ -15,6 +15,17 @@ import { commentText, jsLiteral, jsonLiteral } from './literals.js';
 import { planMocks } from './mocks.js';
 import { FRAGILE_WARNING, resilientSelector } from './selectors.js';
 import { STATE_PREAMBLE, hasState, stateComments } from './state.js';
+import {
+  ACTION_CEILING_MS,
+  ACTION_FLOOR_MS,
+  GAP_WORTH_STATING_MS,
+  NAVIGATION_CEILING_MS,
+  NAVIGATION_FLOOR_MS,
+  gapsBefore,
+  seconds,
+  stepBudget,
+  testBudget,
+} from './timing.js';
 
 const DEFAULT_TEST_NAME = 'DevFlow recorded flow';
 
@@ -37,6 +48,92 @@ export interface PlaywrightOptions {
   mocks?: boolean;
 }
 
+/**
+ * How to run this file on a machine that has nothing on it.
+ *
+ * An exported spec leaves the browser and lands in a downloads folder, often on
+ * somebody else's laptop — a QA engineer, a colleague reproducing a bug report,
+ * the person who will fix it. Everything they need to go from that file to a
+ * passing or failing run is four commands, and none of them are guessable from
+ * a `.spec.ts` alone. So the file carries them.
+ *
+ * The commands name no filename on purpose. `npx playwright test` runs every
+ * spec in the folder, which is right when the folder holds this one, and cannot
+ * go stale when the file is renamed on the way out of the browser.
+ */
+function setupHeader(): string[] {
+  return [
+    `/*`,
+    ` * Recorded with DevFlow and compiled to a Playwright test.`,
+    ` *`,
+    ` * ─────────────────────────────────────────────────────────────────────────`,
+    ` *  RUNNING THIS, ON A COMPUTER WITH NOTHING SET UP`,
+    ` * ─────────────────────────────────────────────────────────────────────────`,
+    ` *`,
+    ` *  1. Install Node.js 20 or newer — the LTS download at https://nodejs.org`,
+    ` *`,
+    ` *     Then open a terminal and check it took:`,
+    ` *`,
+    ` *         node --version`,
+    ` *`,
+    ` *  2. Put this file in a folder of its own, and go there:`,
+    ` *`,
+    ` *         mkdir devflow-replay`,
+    ` *         cd devflow-replay`,
+    ` *`,
+    ` *     Move this .spec.ts file into that folder.`,
+    ` *`,
+    ` *  3. Install Playwright and the browsers it drives. Once, about two`,
+    ` *     minutes, and most of that is the browser download:`,
+    ` *`,
+    ` *         npm init -y`,
+    ` *         npm install --save-dev @playwright/test`,
+    ` *         npx playwright install`,
+    ` *`,
+    ` *     On Linux, also run:  npx playwright install-deps`,
+    ` *`,
+    ` *     There is no TypeScript setup to do. Playwright compiles .spec.ts`,
+    ` *     itself, so no tsconfig.json and no build step.`,
+    ` *`,
+    ` *  4. Run it:`,
+    ` *`,
+    ` *         npx playwright test`,
+    ` *`,
+    ` *     Watch it happen in a real browser window instead:`,
+    ` *`,
+    ` *         npx playwright test --headed`,
+    ` *`,
+    ` *     Or step through it one action at a time, which is what to reach for`,
+    ` *     when a step fails and the reason is not obvious:`,
+    ` *`,
+    ` *         npx playwright test --debug`,
+    ` *`,
+    ` *  5. Read what happened — screenshots, the DOM at each step, the failure:`,
+    ` *`,
+    ` *         npx playwright show-report`,
+    ` *`,
+    ` * ─────────────────────────────────────────────────────────────────────────`,
+    ` *  ABOUT THE WAITS`,
+    ` * ─────────────────────────────────────────────────────────────────────────`,
+    ` *`,
+    ` *  Every action carries a timeout sized from the time that step actually`,
+    ` *  took when it was recorded. Playwright waits for the element to be there`,
+    ` *  and clickable, then proceeds immediately — so a generous timeout costs`,
+    ` *  nothing on a step that works, and is only spent on one that does not.`,
+    ` *`,
+    ` *  There are no fixed sleeps here, deliberately. A sleep long enough to be`,
+    ` *  reliable is longer than the step needs every other time, and a run that`,
+    ` *  is mostly sleeping is a run nobody keeps in CI.`,
+    ` *`,
+    ` *  If a step still times out, the app is genuinely slower than it was when`,
+    ` *  recorded, or the page changed and the selector no longer matches. The`,
+    ` *  HTML report tells you which — it holds a screenshot from the moment it`,
+    ` *  gave up.`,
+    ` */`,
+    ``,
+  ];
+}
+
 export function generatePlaywrightTest(
   steps: Step[],
   testName = DEFAULT_TEST_NAME,
@@ -53,6 +150,7 @@ export function generatePlaywrightTest(
    */
   if (steps.length === 0) {
     return [
+      ...setupHeader(),
       `import { test } from '@playwright/test';`,
       ``,
       `test(${name}, async () => {`,
@@ -62,10 +160,18 @@ export function generatePlaywrightTest(
     ].join('\n');
   }
 
+  const gaps = gapsBefore(steps);
+
+  const testTimeout = testBudget(steps, gaps);
+
   const lines: string[] = [];
+  lines.push(...setupHeader());
   lines.push(`import { test } from '@playwright/test';`);
   lines.push(``);
   lines.push(`test(${name}, async ({ page }) => {`);
+  lines.push(`  // Long enough for every step below to spend its own timeout.`);
+  lines.push(`  test.setTimeout(${testTimeout});`);
+  lines.push(``);
 
   /*
    * An unmocked spec plans no mocks at all rather than planning them and
@@ -155,38 +261,65 @@ export function generatePlaywrightTest(
   // the page the user was already looking at — and a spec that starts clicking
   // before it has opened anything fails on `about:blank`.
   if (steps[0].type !== 'navigate' && steps[0].url) {
-    lines.push(`  await page.goto(${jsLiteral(steps[0].url)});`);
+    lines.push(`  await page.goto(${jsLiteral(steps[0].url)}, { timeout: ${NAVIGATION_FLOOR_MS} });`);
   }
 
-  for (const step of steps) {
+  steps.forEach((step, index) => {
     lines.push(`  // Step ${step.stepNumber ?? '?'}: ${commentText(step.action)}`);
 
+    /*
+     * The recorded gap, stated rather than slept.
+     *
+     * It is the one number a reader needs to judge whether a timeout below is
+     * wrong, and it is the thing the exported spec used to throw away — a step
+     * that took eleven seconds to become possible was emitted next to one that
+     * took eighty milliseconds, with nothing to tell them apart.
+     */
+    if (gaps[index] >= GAP_WORTH_STATING_MS) {
+      lines.push(`  // ${seconds(gaps[index])} after the previous step when recorded.`);
+    }
+
     if (step.type === 'navigate') {
-      lines.push(`  await page.goto(${jsLiteral(step.url)});`);
+      const timeout = stepBudget(gaps[index], NAVIGATION_FLOOR_MS, NAVIGATION_CEILING_MS);
+      lines.push(`  await page.goto(${jsLiteral(step.url)}, { timeout: ${timeout} });`);
       for (const line of stateComments(step)) lines.push(`  // ${line}`);
-      continue;
+      return;
     }
 
     if (step.type === 'note') {
       lines.push(`  // Note: ${commentText(step.value)}`);
       for (const line of stateComments(step)) lines.push(`  // ${line}`);
-      continue;
+      return;
     }
 
     const selector = resilientSelector(step.element);
     if (selector.note) lines.push(`  // ${selector.note}`);
     if (selector.fragile) lines.push(`  // ${FRAGILE_WARNING}`);
 
+    /*
+     * The timeout goes on the action, not into a `waitForSelector` before it.
+     *
+     * Playwright's actionability check is strictly stronger than a visibility
+     * wait — it also holds out for the element to be enabled, stable and not
+     * covered by something else — and it is checked against the element the
+     * action will actually use, rather than against a second lookup that can
+     * resolve differently a tick later. One statement, and the failure names
+     * the step rather than a wait that preceded it.
+     */
+    const timeout = stepBudget(gaps[index], ACTION_FLOOR_MS, ACTION_CEILING_MS);
+
     if (step.type === 'click') {
-      lines.push(`  await page.${selector.playwright}.click();`);
+      lines.push(`  await page.${selector.playwright}.click({ timeout: ${timeout} });`);
     } else {
-      lines.push(`  await page.${selector.playwright}.fill(${jsLiteral(step.value)});`);
+      lines.push(
+        `  await page.${selector.playwright}.fill(${jsLiteral(step.value)}, { timeout: ${timeout} });`,
+      );
     }
 
     // After the action, not before it: this is what the interaction *did*, and
     // a recording only ever attaches it to a step that had one.
     for (const line of stateComments(step)) lines.push(`  // ${line}`);
-  }
+  });
 
   if (options.mocks === false) {
     /*
