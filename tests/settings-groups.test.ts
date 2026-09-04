@@ -37,6 +37,22 @@ const CONTRACT: Record<Concept, readonly string[]> = {
     'reactCapture',
     'reactResolve',
     'react.',
+    /*
+     * AHEAD OF THE CONTRACT, deliberately, and the only entry here that is.
+     *
+     * §3.6 does not list `vue.*` under any concept. It was written when React
+     * was the only runtime that could name a component, and `vue.maxVNodeWalk`
+     * is the same question — *which component drew this, and where was it
+     * written* — asked of the second one. The `source` concept is where it
+     * belongs; the document has not been told yet, and this repository does not
+     * edit CONTRACTS.md to make a test pass.
+     *
+     * So this line is a request, not a transcription: §3.6's first bullet needs
+     * `vue.*` added beside `react.*`. Until it is, the assertion below is
+     * testing this file's opinion rather than the contract's, which is worth
+     * exactly one line of comment and no more.
+     */
+    'vue.',
     'locator.hidden.',
   ],
   recording: [

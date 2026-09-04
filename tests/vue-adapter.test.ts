@@ -16,7 +16,8 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { detectVue, vueAdapter, vueChainFromElement } from '../src/injected/vue.js';
+import { createVueAdapter, detectVue, vueChainFromElement } from '../src/injected/vue.js';
+import { VUE_MAX_VNODE_WALK } from '../src/shared/constants.js';
 import type { VueInstance } from '../src/core/vue/instance.js';
 import {
   DEV_FILES,
@@ -330,9 +331,62 @@ describe('not a Vue page', () => {
 describe('the frozen interface', () => {
   it('is implemented, and reports the framework it is', () => {
     mountPlainVue('development');
+    const adapter = createVueAdapter();
 
-    expect(vueAdapter.framework).toBe('vue');
-    expect(vueAdapter.detect()).toMatchObject({ framework: 'vue', detected: true });
-    expect(names(vueAdapter.fromElement(need('leaf-1'))!.chain).at(-1)).toBe('DeepLeaf');
+    expect(adapter.framework).toBe('vue');
+    expect(adapter.detect()).toMatchObject({ framework: 'vue', detected: true });
+    expect(names(adapter.fromElement(need('leaf-1'))!.chain).at(-1)).toBe('DeepLeaf');
+  });
+
+  it('falls back to the shipped budget when it is built without one', () => {
+    mountPlainVue('production');
+    const seen: number[] = [];
+    // The default is the constant, and it is genuinely used rather than merely
+    // declared: a walk built with no reader has to behave like one built with
+    // a reader that returns the constant.
+    const withDefault = createVueAdapter().fromElement(need('leaf-1'));
+    const withConstant = createVueAdapter(() => {
+      seen.push(VUE_MAX_VNODE_WALK);
+      return VUE_MAX_VNODE_WALK;
+    }).fromElement(need('leaf-1'));
+
+    expect(seen).toEqual([VUE_MAX_VNODE_WALK]);
+    expect(names(withDefault!.chain)).toEqual(names(withConstant!.chain));
+  });
+
+  /*
+   * The reason `createVueAdapter` takes a function and not a number. The
+   * adapter is built once per page and memoised; the user's settings arrive
+   * afterwards. An adapter that read its budget at construction would keep the
+   * value that was current then — a setting that saves, reloads and does
+   * nothing, which is indistinguishable from a working one.
+   */
+  it('reads the budget on every call, so a later setting takes effect', () => {
+    mountPlainVue('production');
+    let budget = 2;
+    const adapter = createVueAdapter(() => budget);
+
+    const starved = adapter.fromElement(need('leaf-1'))!.chain[0];
+    expect(starved.kind === 'absent' && starved.reason).toBe('stripped-by-build');
+
+    budget = VUE_MAX_VNODE_WALK;
+
+    expect(names(adapter.fromElement(need('leaf-1'))!.chain).at(-1)).toBe('DeepLeaf');
+  });
+
+  it('keeps saying search-exhausted rather than reporting nothing found', () => {
+    mountPlainVue('production');
+    const exhausted = createVueAdapter(() => 2).fromElement(need('leaf-1'))!.chain[0];
+    // Inside the app, owned by no vnode — the walk that finishes empty.
+    const missed = createVueAdapter().fromElement(need('ssr-leftover'));
+
+    // A budget that ran out and a walk that finished empty are different facts
+    // and stay different answers: the first names the build that stripped the
+    // link and says how far it got, the second says nothing in this browser
+    // drew the element.
+    expect(exhausted.kind === 'absent' && exhausted.reason).toBe('stripped-by-build');
+    expect(exhausted.kind === 'absent' && exhausted.detail).toContain('2 vnodes');
+    const empty = missed!.chain[0];
+    expect(empty.kind === 'absent' && empty.reason).toBe('server-rendered');
   });
 });

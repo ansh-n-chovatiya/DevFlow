@@ -34,16 +34,26 @@
 import type { FrameworkAdapter, FrameworkPresence, ResolvedChain } from '../core/locate/adapter.js';
 import { rscAdapter } from './rsc.js';
 import { createSvelteAdapter } from './svelte.js';
-import { vueAdapter } from './vue.js';
+import { createVueAdapter } from './vue.js';
 
 /**
  * Built once per page rather than per interaction.
  *
  * `createSvelteAdapter` takes the window it reads, so it is constructed rather
- * than imported as a constant; the other two read the document directly.
+ * than imported as a constant; `createVueAdapter` takes its vnode budget the
+ * same way. RSC reads the document directly.
+ *
+ * `vueBudget` is a **function**, not a number, precisely because this is built
+ * once and memoised while the user's settings arrive later: a number read here
+ * would be the compiled-in default for the life of the page, however the
+ * setting was left. See the header of `vue.ts`. Omitted, the adapter falls back
+ * to the shipped constant on its own.
  */
-export function buildAdapters(win: Window = window): readonly FrameworkAdapter[] {
-  return [vueAdapter, createSvelteAdapter(win), rscAdapter];
+export function buildAdapters(
+  win: Window = window,
+  vueBudget?: () => number,
+): readonly FrameworkAdapter[] {
+  return [createVueAdapter(vueBudget), createSvelteAdapter(win), rscAdapter];
 }
 
 /**

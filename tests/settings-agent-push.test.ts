@@ -36,6 +36,7 @@ import {
   STATE_SETTLE_MS,
   STATE_STRING_CAP,
   REACT_PREWARM_TTL_MS,
+  VUE_MAX_VNODE_WALK,
   TRACE_HEADER_ENABLED,
   TRACEPARENT_ENABLED,
 } from '../src/shared/constants.js';
@@ -109,6 +110,9 @@ describe('what the content script sends', () => {
       maxComponentChain: MAX_COMPONENT_CHAIN,
       maxFiberWalk: MAX_FIBER_WALK,
       prewarmTtlMs: REACT_PREWARM_TTL_MS,
+      // Vue's, for the same reason and more sharply: a production build leaves
+      // no upward edge at all, so the whole search happens in the MAIN world.
+      vueMaxVNodeWalk: VUE_MAX_VNODE_WALK,
       // The state sampler's seven, for the same reason: the stores are read off
       // the page's own fibers, so the caps have to be in the page.
       // `recording.statePatchOps` is deliberately absent — it budgets the diff,
@@ -158,6 +162,7 @@ describe('what the content script sends', () => {
       'stateSettleMs',
       'stateStringCap',
       'trace',
+      'vueMaxVNodeWalk',
     ]);
   });
 
