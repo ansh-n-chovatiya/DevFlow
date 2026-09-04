@@ -5,9 +5,9 @@
  * LOCAL (default): stdio MCP, plus an HTTP receiver on 127.0.0.1:7734 that the
  * Chrome extension POSTs recordings to.
  *
- *   npx devflow-mcp-server install
+ *   npx devflow-server install
  *
- * which is `claude mcp add devflow --scope user -- npx -y devflow-mcp-server` with
+ * which is `claude mcp add devflow --scope user -- npx -y devflow-server` with
  * the scope no longer something a person can leave off. See `install.js`.
  *
  * REMOTE: SSE MCP and the receiver on $PORT, for a hosted deployment.
@@ -94,7 +94,7 @@ import {
  *
  * Everything below makes a directory, reads a config file and binds a port, all
  * at the top level, because that is what a server started by an MCP client
- * should do the moment it is started. `npx devflow-mcp-server install` should do none
+ * should do the moment it is started. `npx devflow-server install` should do none
  * of it: it is a person at a terminal registering the server, not Claude Code
  * launching it, and a setup command that leaves a listener behind is a setup
  * command with a side effect nobody asked for.
@@ -1540,7 +1540,7 @@ async function saveFlow(flow, git = null) {
      * Kept verbatim, and not validated against anything here: it is a sparse
      * set of the *sender's* overrides, and a server that dropped a key it did
      * not recognise would silently unlabel a flow recorded by a newer DevFlow
-     * than itself, which `npx -y devflow-mcp-server` makes an ordinary situation
+     * than itself, which `npx -y devflow-server` makes an ordinary situation
      * rather than a corner case. `describeStamp` prints what it can name and
      * prints the rest raw.
      *
@@ -1676,7 +1676,7 @@ async function readFlow(id) {
    *
    * The receiver refuses a POST it is too old to understand, which covers the
    * flow arriving — and covers nothing about the flow already on disk. The
-   * directory outlives any one server: `npx -y devflow-mcp-server` resolves to
+   * directory outlives any one server: `npx -y devflow-server` resolves to
    * whatever npm has cached, a second checkout can run an older build against
    * the same `~/.devflow`, and a downgrade is one `npm install` away. In every
    * one of those an older server reads a newer flow, finds the fields it knows,
@@ -1685,9 +1685,9 @@ async function readFlow(id) {
    */
   if (Number(json.schemaVersion ?? 1) > SUPPORTED_SCHEMA) {
     throw new UnsupportedFlow(
-      `"${json.name ?? id}" was recorded in format v${json.schemaVersion}, and devflow-mcp-server ` +
+      `"${json.name ?? id}" was recorded in format v${json.schemaVersion}, and devflow-server ` +
         `${VERSION} understands up to v${SUPPORTED_SCHEMA}. Reading it would mean guessing at ` +
-        `fields this build does not know. Update the server: npx -y devflow-mcp-server@latest`,
+        `fields this build does not know. Update the server: npx -y devflow-server@latest`,
     );
   }
 
@@ -2145,8 +2145,8 @@ const httpServer = http.createServer(async (req, res) => {
         res.end(
           JSON.stringify({
             error:
-              `This flow uses format v${flow.schemaVersion}, and devflow-mcp-server ${VERSION} understands ` +
-              `up to v${SUPPORTED_SCHEMA}. Update the server: npx -y devflow-mcp-server@latest`,
+              `This flow uses format v${flow.schemaVersion}, and devflow-server ${VERSION} understands ` +
+              `up to v${SUPPORTED_SCHEMA}. Update the server: npx -y devflow-server@latest`,
           }),
         );
         return;

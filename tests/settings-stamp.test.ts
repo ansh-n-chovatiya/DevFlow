@@ -17,7 +17,7 @@
  *     normal — and knowing it is the whole difference between "made small
  *     deliberately" and "something is wrong with this".
  *   - **Honest across versions.** A key this build cannot name is printed raw
- *     rather than dropped, because `npx -y devflow-mcp-server` makes "an older server
+ *     rather than dropped, because `npx -y devflow-server` makes "an older server
  *     reading a newer flow" ordinary rather than exotic.
  *   - **Present wherever the flow is.** The payload, the walkthrough header,
  *     `flow.json`, and the ZIP.
@@ -82,7 +82,7 @@ describe('what a stamp says', () => {
   it('prints a key from a newer DevFlow rather than dropping it', () => {
     /*
      * The situation this exists for: the extension updates, the MCP server does
-     * not — `npx -y devflow-mcp-server` resolves to whatever npm has cached. Dropping
+     * not — `npx -y devflow-server` resolves to whatever npm has cached. Dropping
      * the key would render a flow made under an unusual setting as one made at
      * the defaults, which is the exact wrong answer this whole mechanism is for.
      */

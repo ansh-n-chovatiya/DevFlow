@@ -416,7 +416,7 @@ describe('a flow recorded by a newer build', () => {
     // them hunting for a recording they already have.
     expect(answer).not.toContain('not found');
     expect(answer).toContain('v99');
-    expect(answer).toContain('npx -y devflow-mcp-server@latest');
+    expect(answer).toContain('npx -y devflow-server@latest');
   });
 });
 

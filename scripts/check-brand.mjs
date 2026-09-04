@@ -37,9 +37,9 @@
  *     none of them can be found this way.
  *   - **Anything outside `src/` and `public/`** — `mcp-server/`, the vite
  *     configs, the workflows, this repo's docs. Deliberate (see above), and the
- *     reason `mcp-server/` keeps `devflow-mcp-server`: that is a published npm
+ *     reason `mcp-server/` keeps `devflow-server`: that is a published npm
  *     package name, not a word on a screen.
- *   - **Lowercase `devflow`.** `~/.devflow`, `devflow-mcp-server` and
+ *   - **Lowercase `devflow`.** `~/.devflow`, `devflow-server` and
  *     `devflow/settings-1` are identifiers a shipped, installed thing already
  *     answers to; renaming them would break every existing install for a word
  *     no user reads as a brand. The `DevFlow` rule is case-sensitive on

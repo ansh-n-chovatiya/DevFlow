@@ -447,8 +447,8 @@ describe('the destination', () => {
   it('says it is checking, then what answered', () => {
     expect(target(URL_LOCAL, { kind: 'checking' })?.status).toBe('Checking…');
     expect(
-      target(URL_LOCAL, { kind: 'ok', service: 'devflow-mcp-server', mode: 'local' })?.status,
-    ).toBe('Connected · devflow-mcp-server (local)');
+      target(URL_LOCAL, { kind: 'ok', service: 'devflow-server', mode: 'local' })?.status,
+    ).toBe('Connected · devflow-server (local)');
   });
 
   it('raises no problem while the server is answering', () => {
@@ -460,7 +460,7 @@ describe('the destination', () => {
 
     expect(problem?.title).toBe('Nothing is listening on that port');
     expect(problem?.text).toContain('127.0.0.1:4321');
-    expect(problem?.text).toContain('npx devflow-mcp-server install');
+    expect(problem?.text).toContain('npx devflow-server install');
   });
 
   it('reads an HTTP answer as something else holding the port', () => {

@@ -1,5 +1,5 @@
 /**
- * `devflow-mcp-server install` — the scope, taken out of the user's hands.
+ * `devflow-server install` — the scope, taken out of the user's hands.
  *
  * The setup command was always documented correctly and was always one flag
  * away from being wrong: `claude mcp add` defaults to `local` scope, which is
@@ -157,7 +157,7 @@ function run(where: Machine, args: string[]): Run {
 
 /** A user-scope registration pointing at the published package. */
 const REGISTERED = {
-  mcpServers: { devflow: { type: 'stdio', command: 'npx', args: ['-y', 'devflow-mcp-server'] } },
+  mcpServers: { devflow: { type: 'stdio', command: 'npx', args: ['-y', 'devflow-server'] } },
 };
 
 describe('installing registers for every project, not for one directory', () => {
@@ -173,7 +173,7 @@ describe('installing registers for every project, not for one directory', () => 
      */
     expect(result.calls).toEqual([
       '--version',
-      'mcp add devflow --scope user -- npx -y devflow-mcp-server',
+      'mcp add devflow --scope user -- npx -y devflow-server',
     ]);
     expect(result.out).toContain('registered devflow at user scope');
   });
@@ -220,7 +220,7 @@ describe('installing registers for every project, not for one directory', () => 
     expect(forced.calls).toEqual([
       '--version',
       'mcp remove devflow --scope user',
-      'mcp add devflow --scope user -- npx -y devflow-mcp-server',
+      'mcp add devflow --scope user -- npx -y devflow-server',
     ]);
   });
 
@@ -251,7 +251,7 @@ describe('installing registers for every project, not for one directory', () => 
     expect(result.out).toContain('not on your PATH');
     // The manual command, so somebody with `claude` under another name is not
     // left with nothing.
-    expect(result.out).toContain('claude mcp add devflow --scope user -- npx -y devflow-mcp-server');
+    expect(result.out).toContain('claude mcp add devflow --scope user -- npx -y devflow-server');
   });
 
   it('treats the CLI saying it already exists as the finished state', () => {
@@ -299,14 +299,14 @@ describe('the rest of the command surface', () => {
 
   it('answers a typo with the usage rather than a server nobody is speaking to', () => {
     /*
-     * The failure this prevents: `devflow-mcp-server instal` falls through to server
+     * The failure this prevents: `devflow-server instal` falls through to server
      * mode, binds the port, sits on a stdio transport with no client, and looks
      * to the person who typed it like a command that hung.
      */
     const result = run(machine({}), ['instal']);
 
     expect(result.code).toBe(2);
-    expect(result.out).toContain('npx devflow-mcp-server install');
+    expect(result.out).toContain('npx devflow-server install');
     expect(result.calls).toEqual([]);
   });
 

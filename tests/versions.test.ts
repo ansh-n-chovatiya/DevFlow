@@ -67,16 +67,19 @@ describe('versions', () => {
 
 describe('the published MCP server', () => {
   /*
-   * The bin is deliberately *not* the package name. `devflow-mcp` was taken on
-   * npm by an unrelated package before this one existed, so the package is
-   * `devflow-mcp-server` and the command it installs stays the shorter name.
+   * The bin is deliberately *not* the package name, and the package name has
+   * moved twice. `devflow-mcp` was taken on npm by an unrelated package before
+   * this one existed; `devflow-mcp-server`, which this shipped as until 3.0.0,
+   * belongs to an account that was lost and cannot be recovered, so nothing can
+   * be published to it again. The package is now `devflow-server` and the
+   * command it installs stays the shorter name through all of it.
    *
-   * `npx -y devflow-mcp-server` still works: npm exec falls back to the only
+   * `npx -y devflow-server` still works: npm exec falls back to the only
    * bin when the requested name matches none. That fallback is the whole reason
    * a single entry here matters — add a second bin and the fallback is gone,
    * and every install instruction in the README breaks at once.
    */
-  it('exposes exactly one bin, which is what makes `npx devflow-mcp-server` work', () => {
+  it('exposes exactly one bin, which is what makes `npx devflow-server` work', () => {
     expect(server.bin).toEqual({ 'devflow-mcp': 'server.js' });
     expect(Object.keys(server.bin ?? {})).toHaveLength(1);
   });
@@ -94,7 +97,7 @@ describe('the published MCP server', () => {
      * that leaves it out ships something that throws on its first tool call.
      *
      * `install.js` is the same kind of hazard from the other direction: it is
-     * imported only on the `npx devflow-mcp-server install` path, so a publish without
+     * imported only on the `npx devflow-server install` path, so a publish without
      * it passes every test that runs the server and fails the one command a
      * person types before they have a server at all.
      *

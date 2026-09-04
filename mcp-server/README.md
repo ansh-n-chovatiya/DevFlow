@@ -1,4 +1,4 @@
-# devflow-mcp-server
+# devflow-server
 
 Gives Claude Code the browser flow you just recorded — the clicks, the console
 errors, the failed requests and their bodies, and a screenshot of every step —
@@ -12,33 +12,46 @@ posts them here.
 rename there would leave every recording anyone has kept in a directory nothing
 reads — and nothing would say so.
 
-The npm package is the one exception, and not by choice: `devflow-mcp` was
-already taken on npm by an unrelated package, so this publishes as
-`devflow-mcp-server`. If you registered the 2.7.1 server, its registration still
-points at the old package and will never see another release — it does not
-break, it just stops moving. `npx -y devflow-mcp-server install --force`
-replaces it. The extension is DevFlow; this is the server it talks to.
+The npm package is the one exception, and it has now moved twice — neither time
+by choice.
+
+**It publishes as `devflow-server`.** The obvious name, `devflow-mcp`, was taken
+on npm by an unrelated package before this one existed. The name this server
+*used* to publish under, `devflow-mcp-server`, is still on npm at 3.0.0 — but
+the account that owns it was lost and cannot be recovered, so nothing can ever
+be published to it again. The same is true of `flowsnap-mcp` at 2.7.1.
+
+**If you installed either of those, they still work and will never update.** They
+are frozen at the last version their old owner published. Nothing breaks; it
+just stops moving, and npm has no way to tell you that. Move across with:
+
+```sh
+npx -y devflow-server install --force
+```
+
+`--force` is what replaces a user-scope registration that points at the old
+package. The extension is DevFlow; this is the server it talks to.
 
 ## Install (Global Setup)
 
 Register once globally on your machine — all your projects and workspaces can use it immediately without any per-project setup:
 
 ```sh
-npx devflow-mcp-server install
+npx devflow-server install
 ```
 
 Once, globally, for every project you open — the Claude Code CLI and the VS Code extension
 alike. Nothing to clone, nothing to build, and safe to run again.
 
-It runs `claude mcp add devflow --scope user -- npx -y devflow-mcp-server` for you.
+It runs `claude mcp add devflow --scope user -- npx -y devflow-server` for you.
 Setting up at user scope (`--scope user`) ensures DevFlow is available globally across all your repositories. You do not need to run this per project or add `.mcp.json` to individual folders.
 
 | | |
 | --- | --- |
-| `npx devflow-mcp-server install` | Register globally for every project |
-| `npx devflow-mcp-server install --force` | Replace a user-scope registration pointing elsewhere |
-| `npx devflow-mcp-server uninstall` | Remove the user-scope registration |
-| `npx devflow-mcp-server` | Run the server — what Claude Code does |
+| `npx devflow-server install` | Register globally for every project |
+| `npx devflow-server install --force` | Replace a user-scope registration pointing elsewhere |
+| `npx devflow-server uninstall` | Remove the user-scope registration |
+| `npx devflow-server` | Run the server — what Claude Code does |
 
 If a project has its own `.mcp.json` naming `devflow`, that local entry takes precedence inside that directory. `install` detects this and gives you the line to remove it if you want to use the global registration instead.
 
@@ -145,7 +158,7 @@ watching: it runs on a machine that has just checked out a branch, and its answe
 has to become an exit code.
 
 ```sh
-DEVFLOW_REPLAY=1 npx devflow-mcp-server regression --base origin/main --mode mocked
+DEVFLOW_REPLAY=1 npx devflow-server regression --base origin/main --mode mocked
 ```
 
 A flow has to be **committed** for CI to reach it — `.devflow/flows/<id>/flow.json`
@@ -418,7 +431,7 @@ belong to whoever launched it, so they come from the environment.
 ## Remote mode
 
 ```sh
-MCP_MODE=remote PORT=8080 npx devflow-mcp-server
+MCP_MODE=remote PORT=8080 npx devflow-server
 ```
 
 Serves MCP over SSE at `/mcp` and accepts flows at `/flows`, for use as a custom

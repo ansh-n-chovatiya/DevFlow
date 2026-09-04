@@ -114,7 +114,7 @@ a release cannot be cut past a red gate.
 
 - **Changelog gate (`npm run lint:changelog`).** Any change touching `src/` or `public/` must have a corresponding entry written under `## Unreleased` in `CHANGELOG.md`. CI validates this on all pull requests and pushes.
 - **Cutting a release on demand:**
-  - **Via GitHub Actions:** Go to **Actions** → **Release** → **Run workflow** → select bump (`patch`, `minor`, `major`). The workflow automatically renames `## Unreleased`, bumps all version files, tags `v<version>`, pushes to `main`, creates the GitHub Release with the extension `.zip`, and publishes `devflow-mcp-server` to npm.
+  - **Via GitHub Actions:** Go to **Actions** → **Release** → **Run workflow** → select bump (`patch`, `minor`, `major`). The workflow automatically renames `## Unreleased`, bumps all version files, tags `v<version>`, pushes to `main`, creates the GitHub Release with the extension `.zip`, and publishes `devflow-server` to npm.
   - **Locally:** Run `npm run release <patch|minor|major>` (e.g. `npm run release patch` or `npm run release -- --dry-run` to preview). This updates `CHANGELOG.md`, bumps all version files, runs `npm run verify`, commits, and creates tag `v<version>`. Then push with `git push origin main --tags`.
 
 ## Conventions

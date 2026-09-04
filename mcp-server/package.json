@@ -1,5 +1,5 @@
 {
-  "name": "devflow-mcp-server",
+  "name": "devflow-server",
   "version": "3.1.1",
   "description": "MCP server exposing browser flows recorded by the DevFlow Chrome extension \u2014 steps, console errors, network calls and screenshots \u2014 to Claude Code.",
   "type": "module",
