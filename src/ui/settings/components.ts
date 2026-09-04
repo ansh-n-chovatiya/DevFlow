@@ -1574,7 +1574,7 @@ function activeResults(model: SettingsModel): SearchState['results'] {
 }
 
 /*
- * The rail is four concepts, and eleven groups under them.
+ * The rail is four concepts, and twelve groups under them.
  *
  * §3.6 of the contracts groups settings by concept and not by origin, and the
  * failure it names is a rail with a section that is recognisably one of the two

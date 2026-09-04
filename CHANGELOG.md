@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+**Phase 5 §5.1 is closed.** The two items the roadmap still carried are done.
+
+**`mcp-server/rsc.js` has a caller.** Two call sites in the MCP server, both
+behind an `rscTry` guard and both inside answers that already existed — no new
+tool. A client component's module id is joined to the element by matching its
+`id`/`data-*` against the flight tuple's props, and the server maps it to a file
+through Next's client-reference manifest. It is reachable only when the server
+passes such a prop through, which is stated in the roadmap rather than hidden:
+a page whose client props are all non-attribute still gets nothing.
+
+**A server action's `next-action` header now survives the send.** `leanCalls`
+kept request headers only on *failed* calls, because that set answers "what went
+wrong" — so the one header that says *which code ran* was dropped on every
+action that worked, and the manifest reader was reachable only for actions that
+failed. It has its own set now rather than widening the diagnostic one, so
+neither set has to mean two things.
+
+**`vue.maxVNodeWalk` is a setting, and its default was measured rather than
+guessed.** Timed in a real browser against production Vue at four app sizes: the
+walk costs a flat ~8ns per vnode and, because deepest-match-wins prevents
+stopping at the first hit, its cost depends on page size and not on where the
+click landed — clicking the first and last card both visited 16,206 vnodes.
+20,000 is a coverage line of roughly 17,000 elements, not a time budget; it
+stands, with the ceiling raised to 1,000,000. It is threaded as a getter, so a
+change actually takes effect on a page that has already been picked on.
+
+**Removed `NEXT_SESSION_PROMPT.md`.** A hand-written handoff that went stale
+between every session; `.ctx/` does that job now and writes itself.
+
 **The review panel shows Vue, Svelte and RSC components.** It showed nothing
 for them until now: the card started at `stepOwner`, which reads
 `step.element.react`, so a recording whose components all came from an adapter

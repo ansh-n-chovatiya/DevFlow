@@ -441,7 +441,7 @@ body {
 /**
  * The concept a run of rail rows sits under.
  *
- * Four of these over eleven groups. Deliberately the quietest thing in the rail
+ * Four of these over twelve groups. Deliberately the quietest thing in the rail
  * — smaller, faint, uppercase, and not clickable — because it is a label on a
  * run of destinations rather than a destination, and a heading that looked like
  * a row would be a row that does nothing when pressed.
