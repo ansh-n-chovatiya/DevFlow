@@ -1,6 +1,6 @@
 {
   "name": "devflow-compiler-plugin",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Optional Babel plugin that stamps each React component with the file and line it was defined in, so DevFlow can name a source exactly instead of searching for it.",
   "type": "module",
   "main": "index.js",

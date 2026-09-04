@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.0.1 — 2026-09-04
 
 **Every push to main that changes something you install now publishes it.**
 `.github/workflows/auto-release.yml` decides whether a push should become a
