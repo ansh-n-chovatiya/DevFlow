@@ -117,7 +117,23 @@ export function resolveSvelteElement(
   const meta = readSvelteMeta(reading.meta, options.frameLimit);
   if (meta) {
     const { chain, truncated } = chainFromMeta(meta, options.chainLimit);
-    return { framework: 'svelte', chain, ...(truncated ? { truncated } : {}) };
+    /*
+     * The build, reported from here because `detect()` cannot know it.
+     *
+     * `window.__svelte` is byte-identical in development and production, and
+     * there is no devtools hook — so the only honest signal is this one:
+     * `__svelte_meta` is emitted by the compiler in development and stripped in
+     * production, so an element that has it *is* a development build. That is
+     * the case `ResolvedChain.build` was added for, and it went unset until a
+     * real run recorded `build: "unknown"` on a plain `vite dev` page where
+     * every element carried meta.
+     */
+    return {
+      framework: 'svelte',
+      chain,
+      build: 'development',
+      ...(truncated ? { truncated } : {}),
+    };
   }
 
   // A dev page proves itself by carrying meta somewhere. This element has none,
@@ -125,7 +141,18 @@ export function resolveSvelteElement(
   if (page.devMetaAnywhere) return null;
 
   const absence = classifyAbsence(page);
-  return { framework: 'svelte', chain: [{ kind: 'absent', ...absence }] };
+  /*
+   * `not-hydrated` is the one absence that is not evidence about the build: the
+   * markup is server-rendered and the client runtime may still be on its way,
+   * so calling it production would be a guess that hardens into a stored fact.
+   * Every other absence here means the compiler stripped the metadata, which
+   * only a production build does.
+   */
+  return {
+    framework: 'svelte',
+    chain: [{ kind: 'absent', ...absence }],
+    build: absence.reason === 'not-hydrated' ? 'unknown' : 'production',
+  };
 }
 
 export { classifyAbsence, type Absence, type PageEvidence } from './absence.js';

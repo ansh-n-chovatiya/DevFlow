@@ -236,6 +236,9 @@ export function resolutionFor(component: RscDebugComponent): Resolution {
 
   return {
     kind: 'declared',
+    // `stack[0]` is the call site, never the declaration — this file's header
+    // argues it at length, and the contract has a field for saying so.
+    at: 'call-site' as const,
     name: component.name,
     source: frame.file,
     line: frame.line,

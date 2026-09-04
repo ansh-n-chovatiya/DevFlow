@@ -611,7 +611,7 @@ spans carrying zero component or file identity in any attribute. ADR 0027.
 **What each adapter can honestly deliver differs by build mode**, and is written
 out here rather than hidden behind one checkbox. All three work in development.
 
-- [~] **Vue 3 / Nuxt:** Reactivity proxy inspector and template mapper. Built, wired, merged and **run against a real Vue application** — the inspector half is done, the mapper half is not. See *What a real run proved* below.
+- [~] **Vue 3 / Nuxt:** Reactivity proxy inspector and template mapper. Built, wired, merged and **run against a real Vue application** — the inspector half is done, the mapper half is not. See *What the real runs proved* below.
   *Dev:* `__vueParentComponent` on every element, `type.__file` on the component.
   *Production:* element links are stripped and installing the devtools hook does
   not restore them, but an O(tree) walk from `__vue_app__` still resolves —
@@ -619,7 +619,7 @@ out here rather than hidden behind one checkbox. All three work in development.
   needle comes from `instance.render` and never from `type.setup`: through the
   real source map, `setup` resolved to the **wrong file** in 3 of 4 production
   cases, once landing inside `runtime-dom.esm-bundler.js`.
-- [~] **Svelte 5 / SvelteKit:** Runes and signals inspector. Built, wired and merged — `src/core/svelte/`, `src/injected/svelte.ts`, 72 tests. Reaches a recording and the MCP server; **never run against a real application** — see below.
+- [~] **Svelte 5 / SvelteKit:** Runes and signals inspector. Built, wired, merged and **run against real Svelte and SvelteKit applications**, five targets. Development resolves to files; production correctly resolves nothing. See *What the real runs proved*.
   *Dev:* `__svelte_meta` carries `{loc: {file, line, column}, parent}` — strictly
   richer than React's own `_debugSource`.
   *Production:* **honestly nothing.** Elements have zero own properties; the only
@@ -630,14 +630,14 @@ out here rather than hidden behind one checkbox. All three work in development.
   `sourceMappingURL` until `build.sourcemap: true`. The right answer here is to
   report *absent*, naming the one line of the user's own config that would fix
   it, rather than to guess a file.
-- [~] **Next.js App Router & RSC:** the wire protocol *and* the dev fiber. Built, wired and merged — `src/core/rsc/`, `src/injected/rsc.ts`, `mcp-server/rsc.js`, 71 tests. The dev path reaches a recording; `mcp-server/rsc.js` has no caller yet — see below.
+- [~] **Next.js App Router & RSC:** the wire protocol *and* the dev fiber. Built, wired, merged and **run against a real Next.js application**, both builds. A page registers as React *and* RSC, as designed. `mcp-server/rsc.js` still has no caller, and the run confirmed why. See *What the real runs proved*.
   *Dev:* `_debugInfo`, as above.
   *Production:* client components only, and their numeric module ids resolve
   through `.next/server/*-manifest.js`, which 404s on every served path — so this
   half is forced into `mcp-server/`, the only one of the two with a filesystem.
   Server components are unreachable at any price.
 
-#### What a real run proved, and what it found
+#### What the real runs proved, and what they found
 
 A Vue 3 application was built, the extension was built, and Chromium was driven
 headed with the extension loaded — headed because this repository already knows
@@ -682,6 +682,64 @@ rendered through the same `formatSource` React uses, with no new tool.
 **Svelte and RSC have had no such run.** Their adapters are gated on fixtures
 only, and the Vue run is now direct evidence that fixtures are not enough here.
 
+**Svelte, five targets.** Development resolved `App › CartPanel ›
+CheckoutButton` to `src/lib/CheckoutButton.svelte:10`; the SvelteKit dev chain
+was filtered of its six `Pyramid_N`/`render`/`if` frames exactly as `chain.ts`
+promises. Production resolved **nothing**, correctly — every element's own
+properties came back `[]`, the only symbol anywhere was `Symbol(events)` on the
+clicked button. SvelteKit's default build shipped **0** `.map` files. The
+sharpest result: building again with `build.sourcemap: true` produced 8 maps and
+a **byte-identical** absent row, because the missing half is the
+element-to-component link, not the map. That is worth knowing before anyone
+spends a day on source maps expecting it to help.
+
+**Next.js, both builds.** `_debugInfo` was present in `next dev` exactly as
+measured — `{name: 'ServerOnlyPanel', env: 'Server', owner: Page, …}` — and gone
+in production, with every fiber type minified to a single letter. The page
+registered as **React *and* RSC**, both tables reached disk, and
+`get_step_detail` printed both sections in one reply. They disagree usefully:
+React named `CheckoutButton  app/components/CheckoutButton.tsx:5` while RSC said
+`Page`, because RSC's client components have no `_debugInfo`.
+
+**Between them the two runs found five defects, all now fixed.** Three are worth
+naming because none could have been caught by a fixture:
+
+- **`captureAndSave` read two storage keys it never asked for.** `getLocal`
+  answers with `Partial<LocalStorageShape>` whatever it is handed, so
+  `stored.value.frameworkComponents` typechecked and was `undefined` forever —
+  the merge was unioning against nothing and *replacing* the table every step.
+  Measured shrinking live across three clicks, losing the best answer in the
+  recording. React escaped only because its two keys were already in the list.
+  The guard is now an invariant test that reads the source and asserts every key
+  the function reads is a key it asked for, because the next reader will make
+  the same mistake and no type can stop them.
+- **The RSC production arm was unreachable on the page it was written for.** Its
+  guard was `chain.length === 0`, and on a real App Router page the chain is
+  never empty: Next's own `LayoutRouter`, `RedirectBoundary` and `ErrorBoundary`
+  are ordinary functions in the production bundle and yield a `searchable` each
+  — seven measured. The old rule assumed the two facts competed. They do not: a
+  function *above* an element is its ancestor, not necessarily what rendered it,
+  and if the markup is on the wire a server component emitted it. Both are now
+  reported, with the element's own origin innermost where it belongs.
+- **`ResolvedChain.build` was declared for Svelte and never set by Svelte** —
+  the field's own documentation says *"Svelte is why this is here"*, and a real
+  `vite dev` page recorded `build: "unknown"` while every element carried
+  `__svelte_meta`. `FrameworkComponentTable.build` had no reader anywhere.
+
+Also fixed: RSC never marked its frames `at: 'call-site'`, so the sentence
+`resolutionSource` writes for that case was dead code and a call site shipped
+indistinguishable from a declaration; and the framework table merge let every
+unnamed absence collapse onto one placeholder id, so a recording visiting two
+Svelte pages kept the first page's advice and dropped the second's —
+`core/react/table.ts` has guarded exactly that with `isPlaceholderId` for
+months.
+
+**`mcp-server/rsc.js` still has no caller, and the run confirmed it is blocked
+rather than forgotten.** Its two entry points need a numeric client-module id or
+a `next-action` hash. Neither exists anywhere in the pipeline: `ComponentSource`
+has no module-id field and the adapter never emits an `I`-row id. Giving it a
+caller means teaching the adapter to carry one first.
+
 #### What is wired, and what the `[~]` still stands for
 
 The chain named here in the previous revision is closed. A recording made on a
@@ -707,11 +765,12 @@ to the MCP server:
 
 **The boxes stay `[~]`, and this is what they now stand for:**
 
-- **Svelte and RSC have not been run against a real application.** Vue has, and
-  it immediately found a bug every fixture had passed over — so this is a
-  measured risk rather than a theoretical one. Their tests are fixtures
-  mirroring what the Wave 1 spikes printed, and the spikes drove measurement
-  scripts rather than the built extension.
+- **All three have now been run against real applications**, and between them
+  the three runs found six defects that every fixture had passed over. What
+  remains untested is narrower and named: no Svelte 4 or legacy non-runes build,
+  no webpack builder for Vue or Next, no server action or error path (which is
+  the one production route `mcp-server/rsc.js` could actually serve), no
+  client-side navigation, and no `{#each}`/`{#if}`/snippet constructs.
 - **A `searchable` resolution is never resolved to a path.** It is stored
   `pending`, saying so in words. React's resolver — bundle fetch, needle search,
   source-map decode — is not wired for these three, so a component the runtime
