@@ -57,6 +57,22 @@ const ANONYMOUS = 'Anonymous';
 export function resolutionId(resolution: Resolution): string {
   const name = resolution.name ?? ANONYMOUS;
 
+  /*
+   * A module id outranks all three, because it is the strongest identity any of
+   * them carry: the bundler minted it per module, so two components cannot share
+   * one and one component keeps it across every pick on the page.
+   *
+   * It also removes a real hazard rather than merely being tidier. A production
+   * client component the wire named but the fiber did not is an `absent`
+   * resolution with no name, and `nameOnlyId('Anonymous')` is a *placeholder* id
+   * that every unnamed absence on the page collapses onto — so the second such
+   * component would overwrite the first and its module id, the one fact that
+   * could have found its file, would be the thing thrown away.
+   */
+  if (resolution.moduleId !== undefined) {
+    return componentId(name, `module:${resolution.moduleId}`);
+  }
+
   if (resolution.kind === 'declared') {
     return componentId(name, `${resolution.source}#${resolution.line ?? ''}`);
   }
@@ -69,8 +85,20 @@ export function resolutionId(resolution: Resolution): string {
 export function resolutionSource(resolution: Resolution): ComponentSource {
   const name = resolution.name ?? ANONYMOUS;
 
+  /*
+   * The join key survives whichever branch answers.
+   *
+   * It is carried on every status rather than only on the ones that failed,
+   * because a module id is not a consolation prize for a missing path: a
+   * `resolved` RSC component in development has both, and dropping the id there
+   * would mean the one build where the join can be checked against a known
+   * answer is the one build that does not carry it.
+   */
+  const joined = resolution.moduleId === undefined ? {} : { moduleId: resolution.moduleId };
+
   if (resolution.kind === 'declared') {
     return {
+      ...joined,
       name,
       status: 'resolved',
       via: 'debug-source',
@@ -89,6 +117,7 @@ export function resolutionSource(resolution: Resolution): ComponentSource {
 
   if (resolution.kind === 'searchable') {
     return {
+      ...joined,
       name,
       status: 'pending',
       detail:
@@ -98,5 +127,5 @@ export function resolutionSource(resolution: Resolution): ComponentSource {
     };
   }
 
-  return { name, status: 'not-found', detail: resolution.detail };
+  return { ...joined, name, status: 'not-found', detail: resolution.detail };
 }

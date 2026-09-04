@@ -154,6 +154,29 @@ export interface ComponentSource {
   compiled?: { url: string; line: Pos0; column: Pos0 };
   /** Distinct places the needle matched. Above 1 the path may be the wrong one. */
   matchCount?: number;
+  /**
+   * The bundler module id the framework published for this component.
+   *
+   * **Only `core/rsc/` sets this, and only for a client component.** It is the
+   * integer a production Next.js flight payload's `I` row carries —
+   * `4:I[56850,…]` — and it is here because that integer is the *only* thing in
+   * a production build that joins a component on screen to a file on disk. The
+   * browser cannot finish that join: the manifest holding the mapping,
+   * `page_client-reference-manifest.js`, 404s on every served path the RSC
+   * spike tried (`.ctx/spike-rsc.md` §4). `mcp-server/rsc.js` reads it off the
+   * filesystem, and this field is the key it is handed.
+   *
+   * A string even though the wire sends a number: the on-disk manifest's ids
+   * can be strings too, and two distinct string ids can parse to one number.
+   * A wrong file is worse than no file.
+   *
+   * Optional, and it stays optional. Every component this product has recorded
+   * from React, Vue and Svelte has no module id and needs none — the field is
+   * `undefined` for all of them, and no consumer written before it existed
+   * changes behaviour. Nothing may be read into its absence beyond "no runtime
+   * published one": it is not a build signal and not a framework signal.
+   */
+  moduleId?: string;
   /** One sentence, whenever `status` is not `resolved`. */
   detail?: string;
 }

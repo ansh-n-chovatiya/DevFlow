@@ -104,8 +104,22 @@ export type AbsentReason =
  *
  * `declared` beats `searchable` when both are available: it is what the runtime
  * itself recorded, and it costs no bundle fetch, no map decode and no search.
+ *
+ * `moduleId` rides beside all three kinds rather than inside one of them, and
+ * that is deliberate: it is not a *kind* of answer, it is a join key that an
+ * answer of any kind may or may not have picked up. Only `core/rsc/` sets it —
+ * see `ComponentSource.moduleId`, which is where it ends up.
  */
-export type Resolution =
+export type Resolution = ResolutionKind & {
+  /**
+   * A bundler module id the runtime published for this component, kept as a
+   * string because the wire sends an integer and two distinct string ids can
+   * parse to one number (`mcp-server/rsc.js`, `ENTRY`).
+   */
+  moduleId?: string;
+};
+
+type ResolutionKind =
   | {
       kind: 'declared';
       name: string;
