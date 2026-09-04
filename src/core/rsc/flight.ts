@@ -608,6 +608,110 @@ function propsMatch(props: unknown, distinguishing: readonly [string, string][])
   });
 }
 
+/**
+ * The client module reference that rendered this element, when the wire says so.
+ *
+ * ## Why this exists
+ *
+ * `mcp-server/rsc.js` can turn `56850` into `app/components/ClientCounter.tsx`,
+ * and until this function nothing anywhere in the product could produce the
+ * `56850` for a *picked element*. The manifest reader had no caller because the
+ * pipeline carried no module id, and the pipeline carried no module id because
+ * nothing joined an element on screen to an `I` row.
+ *
+ * ## The join, and why it is this one
+ *
+ * A client component is on the wire as an element tuple whose **type is a
+ * reference to its `I` row** — `["$","$L3f",null,{"id":"counter",…}]` against
+ * `3f:I[56850,[…],"default"]` (§1, §2). The fourth slot is the props the server
+ * passed it, and props that are `id` or `data-*` reach the DOM verbatim on
+ * whatever element the component puts them on. So an element carrying
+ * `id="counter"` and a tuple carrying `"id":"counter"` under a client module
+ * reference are the same component, and the integer beside it is the join key
+ * the on-disk manifest is indexed by.
+ *
+ * ## What it refuses, and the failure mode of not refusing
+ *
+ * `flightElementFor`'s rule, for `flightElementFor`'s reason: with no `id` and
+ * no `data-*` there is nothing distinguishing to match on, and the wrong answer
+ * a loose match gives is not "no idea" — it is a confident *file path* for a
+ * component that is not the one that was clicked. A missing attribution costs a
+ * question; a wrong one costs an afternoon in the wrong file.
+ *
+ * It also does not walk *up* to an enclosing client boundary. Markup passed to a
+ * client component as `children` is rendered by whoever wrote it, not by the
+ * component it was handed to, and naming the boundary would attribute a server
+ * component's output to a client file — the same lie `productionResolution`
+ * separates `server-rendered` from `stripped-by-build` to avoid.
+ *
+ * One code path serves both builds: dev's id is a path, so the caller gets the
+ * file for free, and prod's is an integer, so the caller needs the manifest.
+ * A production-only special case would be a code path nobody can exercise in
+ * development, which is how the untested half rots.
+ */
+export function flightClientModuleFor(
+  model: FlightModel,
+  descriptor: ElementDescriptor,
+): ClientModuleRef | null {
+  const distinguishing = distinguishingAttributes(descriptor.attributes);
+  if (distinguishing.length === 0) return null;
+
+  for (const rowList of model.rows.values()) {
+    for (const row of rowList) {
+      if (row.tag !== '') continue;
+      const found = findClientModule(model, parseJson(row.payload), distinguishing, 0);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * The `I` row an element tuple's type points at, or null when it points at a
+ * DOM tag, a React symbol, or a row that is not a client module reference.
+ */
+function clientModuleOf(model: FlightModel, type: unknown): ClientModuleRef | null {
+  if (typeof type !== 'string') return null;
+  const ref = readReference(type);
+  if (!ref) return null;
+  // `lazy` is the forward reference the shell uses and `back` the resolved one;
+  // which of the two a given page emits is an ordering accident, not a meaning.
+  if (ref.kind !== 'lazy' && ref.kind !== 'back') return null;
+  return model.modules.get(ref.id) ?? null;
+}
+
+function findClientModule(
+  model: FlightModel,
+  value: unknown,
+  distinguishing: readonly [string, string][],
+  depth: number,
+): ClientModuleRef | null {
+  if (depth > MAX_ELEMENT_DEPTH) return null;
+
+  const element = readElement(value);
+  if (element) {
+    const module = clientModuleOf(model, element.type);
+    if (module && propsMatch(element.props, distinguishing)) return module;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findClientModule(model, item, distinguishing, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) {
+      const found = findClientModule(model, item, distinguishing, depth + 1);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
 /** Split, index and stamp in one call — what a caller with whole bytes wants. */
 export function parseFlightPayload(text: string): {
   model: FlightModel;

@@ -59,9 +59,11 @@ import { isServerComponent, readDebugInfo, resolutionFor } from './debug.js';
 import {
   buildFromFlight,
   buildFlightModel,
+  flightClientModuleFor,
   flightElementFor,
   joinFlightChunks,
   splitFlightRows,
+  type ClientModuleRef,
   type ElementDescriptor,
   type FlightModel,
 } from './flight.js';
@@ -143,6 +145,7 @@ export function createRscAdapter(port: RscPort): FrameworkAdapter {
 
       const model = modelOf();
       const build = model ? buildFromFlight(model) : 'unknown';
+      const descriptor = port.describe(el);
 
       const chain: Resolution[] = [];
       const capped = readings.slice(0, MAX_CHAIN);
@@ -150,6 +153,19 @@ export function createRscAdapter(port: RscPort): FrameworkAdapter {
       for (const reading of capped) {
         for (const resolution of resolutionsFrom(reading)) chain.push(resolution);
       }
+
+      /*
+       * What the wire says this element's own client module is.
+       *
+       * Read before the production arm below, because the two answers are
+       * mutually exclusive and this one is the stronger evidence: an element
+       * whose props sit under an `I` row reference was rendered by that client
+       * module, so `server-rendered` would be false about it. The fiber cannot
+       * contradict this — in production it has been minified to `anon-fn` — so
+       * there is nothing to weigh it against.
+       */
+      const clientModule = model && descriptor ? flightClientModuleFor(model, descriptor) : null;
+      if (clientModule) foldClientModule(chain, clientModule);
 
       /*
        * The production arm, and its guard used to be `chain.length === 0`.
@@ -173,8 +189,8 @@ export function createRscAdapter(port: RscPort): FrameworkAdapter {
        * however many wrappers sit above. Only the wire decides.
        */
       const hasIdentity = chain.some((resolution) => resolution.kind === 'declared');
-      if (!hasIdentity && build === 'production' && model) {
-        const onTheWire = flightElementFor(model, port.describe(el) ?? { tag: '', attributes: {} });
+      if (!hasIdentity && !clientModule && build === 'production' && model) {
+        const onTheWire = flightElementFor(model, descriptor ?? { tag: '', attributes: {} });
         /*
          * When the markup is on the wire, say so whatever the wrappers
          * contributed. When it is not, only answer for a chain that found
@@ -190,7 +206,7 @@ export function createRscAdapter(port: RscPort): FrameworkAdapter {
            * element's own answer at the outermost end, which reads as though
            * something at the root of the page had been server-rendered.
            */
-          chain.unshift(productionResolution(model, port.describe(el)));
+          chain.unshift(productionResolution(model, descriptor));
         }
       }
 
@@ -206,6 +222,97 @@ export function createRscAdapter(port: RscPort): FrameworkAdapter {
       return resolved;
     },
   };
+}
+
+/**
+ * Folds the wire's client-module reference into the chain, in place.
+ *
+ * ## Why it edits a resolution rather than adding one
+ *
+ * The chain is built nearest-first, so its first non-`absent` entry is the
+ * component that rendered the picked element — which is the same component the
+ * `I` row names. Appending a second entry for it would put one component in the
+ * chain twice under two ids, and the flow's component table is keyed by id, so
+ * the duplicate is not cosmetic: it is two rows a reader has to notice are the
+ * same thing.
+ *
+ * ## The dev upgrade, and why it is not a special case
+ *
+ * When the id is a path (`ClientModuleRef.sourceFile`, development), a
+ * `searchable` resolution becomes `declared`. That is not politeness — a
+ * `searchable` costs a bundle fetch, a source-map decode and a text search, and
+ * the answer they arrive at is the file the wire already stated. `at:
+ * 'declaration'` because a module id names where the module *is*, unlike the
+ * `_debugInfo` stack frame beside it, which names a call site.
+ *
+ * When the id is an integer (production) nothing about the status changes and
+ * only `moduleId` is added: this file cannot open `.next/server`, so claiming a
+ * file here would be inventing one. `mcp-server/rsc.js` finishes it.
+ */
+function foldClientModule(chain: Resolution[], ref: ClientModuleRef): void {
+  const moduleId = String(ref.moduleId);
+  const index = chain.findIndex((resolution) => resolution.kind !== 'absent');
+
+  if (index === -1) {
+    // Nothing on the fiber survived the build, so the wire is the only witness.
+    chain.unshift(
+      ref.sourceFile
+        ? {
+            kind: 'declared',
+            name: clientModuleName(ref, chain),
+            source: ref.sourceFile,
+            at: 'declaration',
+            moduleId,
+          }
+        : {
+            kind: 'absent',
+            name: clientModuleName(ref, chain),
+            reason: 'stripped-by-build',
+            detail:
+              'A production build left this client component nothing but a module id on the ' +
+              `wire (${moduleId}). Its file is in .next/server on the machine that built the ` +
+              'app, which the browser cannot read and the MCP server can.',
+            moduleId,
+          },
+    );
+    return;
+  }
+
+  const held = chain[index];
+  if (held.kind === 'searchable' && ref.sourceFile) {
+    chain[index] = {
+      kind: 'declared',
+      name: held.name || clientModuleName(ref, chain),
+      source: ref.sourceFile,
+      at: 'declaration',
+      moduleId,
+    };
+    return;
+  }
+
+  chain[index] = { ...held, moduleId };
+}
+
+/**
+ * A name for a component the wire identified and the fiber did not.
+ *
+ * The module path's stem first, because in development it is the author's own
+ * file name and `ClientCounter` is what they would call it. A real fiber name
+ * next. The export name only when it is not `default`, which is the majority
+ * and names nothing. `Anonymous` last, and it is `id.ts`'s placeholder on
+ * purpose — a name that identifies nothing must be *marked* as one rather than
+ * quietly hashed into an identity.
+ */
+function clientModuleName(ref: ClientModuleRef, chain: readonly Resolution[]): string {
+  if (ref.sourceFile) {
+    const stem = (ref.sourceFile.split('/').pop() ?? '').replace(/\.[^.]+$/, '');
+    if (stem !== '') return stem;
+  }
+  for (const resolution of chain) {
+    if (resolution.kind !== 'absent' && resolution.name !== '') return resolution.name;
+  }
+  if (ref.exportName !== '' && ref.exportName !== 'default') return ref.exportName;
+  return 'Anonymous';
 }
 
 /**

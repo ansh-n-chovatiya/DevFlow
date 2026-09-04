@@ -28,6 +28,7 @@
 export {
   buildFlightModel,
   buildFromFlight,
+  flightClientModuleFor,
   flightElementFor,
   joinFlightChunks,
   normalizeModulePath,
