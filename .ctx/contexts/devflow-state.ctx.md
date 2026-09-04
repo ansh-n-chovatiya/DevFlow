@@ -245,10 +245,10 @@ Other settled choices worth not re-arguing:
 
 - `ROADMAP_AND_PHASES.md` — the truth about what is done. Status key at line 38;
   Phase 3 preamble at line 268; Work Streams 3.1–3.5 at lines 292–460.
-- `NEXT_SESSION_PROMPT.md` — the previous handoff, **partly stale**: it says 3.2
-  is not started, and 3.2 shipped in `50fb793`; it says `main` is two commits
-  ahead, and it is six; it gives 3152 tests, now 3218. Its non-negotiables,
-  hard-won lessons and Phase 0–2 refusal list are still correct.
+- `NEXT_SESSION_PROMPT.md` — **removed 2026-09-04.** It was a hand-written
+  handoff that went stale between every session, and `.ctx/` now does the job it
+  was doing: `/ctx:resume` for the cheap way back in, the `phase-5-adapters`
+  bundle for the whole picture.
 - `CLAUDE.md` — layout, the five invariants and their gates.
 - `docs/CONTRACTS.md` — **frozen**. §4 is the glossary, §4.5 the forbidden
   strings.
