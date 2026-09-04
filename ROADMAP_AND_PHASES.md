@@ -611,7 +611,7 @@ spans carrying zero component or file identity in any attribute. ADR 0027.
 **What each adapter can honestly deliver differs by build mode**, and is written
 out here rather than hidden behind one checkbox. All three work in development.
 
-- [~] **Vue 3 / Nuxt:** Reactivity proxy inspector and template mapper. Built, wired, merged and **run against a real Vue application** — the inspector half is done, the mapper half is not. See *What the real runs proved* below.
+- [x] **Vue 3 / Nuxt:** Reactivity proxy inspector and template mapper. Both halves. Development resolves through `__vueParentComponent` and `type.__file`; production walks down from `__vue_app__` and resolves through the bundle search to the component's own `.vue` file and line. Verified end to end against real applications on **both** Vite and webpack, and the walk budget is measured rather than guessed. See *What the real runs proved*.
   *Dev:* `__vueParentComponent` on every element, `type.__file` on the component.
   *Production:* element links are stripped and installing the devtools hook does
   not restore them, but an O(tree) walk from `__vue_app__` still resolves —
@@ -619,7 +619,7 @@ out here rather than hidden behind one checkbox. All three work in development.
   needle comes from `instance.render` and never from `type.setup`: through the
   real source map, `setup` resolved to the **wrong file** in 3 of 4 production
   cases, once landing inside `runtime-dom.esm-bundler.js`.
-- [~] **Svelte 5 / SvelteKit:** Runes and signals inspector. Built, wired, merged and **run against real Svelte and SvelteKit applications**, five targets. Development resolves to files; production correctly resolves nothing. See *What the real runs proved*.
+- [x] **Svelte 5 / SvelteKit:** Runes and signals inspector. Development resolves to file, line and column through `__svelte_meta`, which is richer than React's own `_debugSource`. **Production resolves nothing, and that is the runtime's ceiling rather than unfinished work**: the build leaves elements with zero own properties, and enabling source maps was measured to change nothing because the missing half is the element-to-component link. The adapter says so in words, naming `build.sourcemap`. Five targets, verified end to end.
   *Dev:* `__svelte_meta` carries `{loc: {file, line, column}, parent}` — strictly
   richer than React's own `_debugSource`.
   *Production:* **honestly nothing.** Elements have zero own properties; the only
@@ -630,7 +630,7 @@ out here rather than hidden behind one checkbox. All three work in development.
   `sourceMappingURL` until `build.sourcemap: true`. The right answer here is to
   report *absent*, naming the one line of the user's own config that would fix
   it, rather than to guess a file.
-- [~] **Next.js App Router & RSC:** the wire protocol *and* the dev fiber. Built, wired, merged and **run against a real Next.js application**, both builds. A page registers as React *and* RSC, as designed. `mcp-server/rsc.js` still has no caller, and the run confirmed why. See *What the real runs proved*.
+- [~] **Next.js App Router & RSC:** the wire protocol *and* the dev fiber. Development resolves through `_debugInfo`; a page registers as React *and* RSC, as designed, and both tables travel. `mcp-server/rsc.js` is wired and proven against a real `.next/server` tree. **Left at `[~]` for one measured reason:** in production a client component is joined to its module id only when the server passed an `id` or `data-*` prop through to it, and a page whose client props are all non-attribute gets nothing. That is Next's ceiling rather than a missing piece here, but it is a real hole in coverage and a tick would overstate it.
   *Dev:* `_debugInfo`, as above.
   *Production:* client components only, and their numeric module ids resolve
   through `.next/server/*-manifest.js`, which 404s on every served path — so this
