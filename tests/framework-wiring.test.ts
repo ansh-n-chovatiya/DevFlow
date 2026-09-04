@@ -13,6 +13,7 @@ import { resolutionId, resolutionSource } from '../src/core/locate/resolution.js
 import { buildFlowFrameworks } from '../src/core/locate/flow-frameworks.js';
 import { chainsFor, detectFrameworks } from '../src/injected/registry.js';
 import { flightChunks } from '../src/injected/rsc.js';
+import { resolveSvelteElement } from '../src/core/svelte/index.js';
 import { pos1 } from '../src/core/locate/positions.js';
 import type { Step } from '../src/shared/types.js';
 
@@ -211,5 +212,59 @@ describe('flightChunks', () => {
     s.textContent = 'console.log("hello")';
     doc.body.appendChild(s);
     expect(flightChunks(doc)).toEqual([]);
+  });
+});
+
+/*
+ * `ResolvedChain.build` exists *because of* Svelte — `detect()` cannot know the
+ * build, since `window.__svelte` is byte-identical in development and
+ * production and there is no devtools hook. The adapter was declared against
+ * that and then never set the field, so a real `vite dev` run recorded
+ * `build: "unknown"` on a page where every element carried `__svelte_meta`.
+ * Found by driving the built extension against a real Svelte app.
+ */
+describe('the build Svelte reports from its walk', () => {
+  const page = {
+    runtimeGlobal: true,
+    devMetaAnywhere: true,
+    delegatedEventsAnywhere: true,
+    hydrationMarkers: false,
+    sveltekit: false,
+  };
+  const meta = { loc: { file: 'src/lib/CheckoutButton.svelte', line: 10, column: 2 } };
+
+  it('calls a page carrying __svelte_meta a development build', () => {
+    const chain = resolveSvelteElement({ meta, page });
+    expect(chain?.build).toBe('development');
+  });
+
+  /* Metadata stripped is something only a production build does. */
+  it('calls a stripped page a production build', () => {
+    const chain = resolveSvelteElement({
+      meta: undefined,
+      page: { ...page, devMetaAnywhere: false },
+    });
+    expect(chain?.chain[0]?.kind).toBe('absent');
+    expect(chain?.build).toBe('production');
+  });
+
+  /*
+   * The one absence that is not evidence about the build: the markup is
+   * server-rendered and the client runtime may still be arriving, so calling it
+   * production would be a guess that hardens into a stored fact.
+   */
+  it('refuses to guess while the page is not yet hydrated', () => {
+    const chain = resolveSvelteElement({
+      meta: undefined,
+      page: {
+        runtimeGlobal: false,
+        devMetaAnywhere: false,
+        delegatedEventsAnywhere: false,
+        hydrationMarkers: true,
+        sveltekit: true,
+      },
+    });
+    expect(chain?.chain[0]).toMatchObject({ kind: 'absent', reason: 'not-hydrated' });
+    expect(chain?.build).toBe('unknown');
   });
 });

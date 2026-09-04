@@ -152,14 +152,46 @@ export function createRscAdapter(port: RscPort): FrameworkAdapter {
       }
 
       /*
-       * The production arm. It runs only when the walk found no component
-       * identity of any kind, because a chain that *does* have one is not
-       * improved by being told that something else on the page was server
-       * rendered — and `server-rendered` claimed over a real answer is the
-       * confident lie this whole reason code exists to avoid.
+       * The production arm, and its guard used to be `chain.length === 0`.
+       *
+       * On a real App Router page the chain is *never* empty. Next's own client
+       * boundaries — `LayoutRouter`, `RedirectBoundary`, `ErrorBoundary` and
+       * friends — are plain functions in the production bundle, so the walk
+       * yields a `searchable` for each of them; seven were measured on one
+       * page. The arm was therefore unreachable on exactly the page it was
+       * written for, and a click on server-rendered markup answered with
+       * Next's minified wrapper instead of saying a server component rendered
+       * it. Found by running the built extension against a real Next.js app.
+       *
+       * The original worry was right and is kept: `server-rendered` must never
+       * be claimed over a real answer. So the two cases are separated.
+       *
+       * A `declared` resolution *is* a real answer, and nothing is appended
+       * over it. Next's wrappers are not — they are ancestors of the element,
+       * not the thing that rendered it — so when the element's own markup is in
+       * the flight payload, a server component rendered it, and that stays true
+       * however many wrappers sit above. Only the wire decides.
        */
-      if (chain.length === 0 && build === 'production' && model) {
-        chain.push(productionResolution(model, port.describe(el)));
+      const hasIdentity = chain.some((resolution) => resolution.kind === 'declared');
+      if (!hasIdentity && build === 'production' && model) {
+        const onTheWire = flightElementFor(model, port.describe(el) ?? { tag: '', attributes: {} });
+        /*
+         * When the markup is on the wire, say so whatever the wrappers
+         * contributed. When it is not, only answer for a chain that found
+         * nothing at all — otherwise `stripped-by-build` would be appended
+         * beside real, if unresolved, client components.
+         */
+        if (onTheWire || chain.length === 0) {
+          /*
+           * `unshift`, not `push`. The chain is built nearest-first and reversed
+           * below, so the element's own position is the *front* of it. This
+           * statement is about the element — a server component rendered this
+           * markup — while the wrappers above are ancestors, so pushing put the
+           * element's own answer at the outermost end, which reads as though
+           * something at the root of the page had been server-rendered.
+           */
+          chain.unshift(productionResolution(model, port.describe(el)));
+        }
       }
 
       if (chain.length === 0) return null;

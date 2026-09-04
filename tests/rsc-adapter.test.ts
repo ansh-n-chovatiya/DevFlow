@@ -153,7 +153,7 @@ describe('resolutionFor', () => {
    * `Page` and points into `Page`'s compiled code, because it is the call site
    * — which is the answer `core/react/owner.ts` already leads with.
    */
-  it('declares the component at the call site the runtime recorded', () => {
+  it('declares the component at the call site the runtime recorded, and says so', () => {
     const resolution = resolutionFor(readDebugInfo(SERVER_ONLY_DEBUG_INFO)[0]);
     expect(resolution).toEqual({
       kind: 'declared',
@@ -161,6 +161,15 @@ describe('resolutionFor', () => {
       source: CHUNK,
       line: pos1(198),
       column: pos1(264),
+      /*
+       * `at` was missing until a real Next.js run was inspected on disk and the
+       * component's `detail` came back `undefined`. The comment above and this
+       * file's header both argue the frame is a call site; the contract has a
+       * field for saying it, `resolutionSource` turns it into a sentence for
+       * the reader, and nothing set it — so a call site shipped
+       * indistinguishable from a declaration and the sentence was dead code.
+       */
+      at: 'call-site',
     } satisfies Resolution);
   });
 
@@ -407,11 +416,30 @@ describe('createRscAdapter — fromElement in production', () => {
   });
 
   /*
-   * `server-rendered` claimed over a real answer is the confident lie the whole
-   * reason code exists to avoid: a minified-but-present client component is
-   * `searchable`, and the needle path can still find it.
+   * This used to assert that a `searchable` anywhere in the walk suppressed the
+   * production answer entirely, on the reasoning that `server-rendered` claimed
+   * over a real answer is a confident lie.
+   *
+   * Running the built extension against a real Next.js application showed the
+   * rule was too strong. Every element on an App Router page sits under Next's
+   * own client boundaries — `LayoutRouter`, `RedirectBoundary`, `ErrorBoundary`
+   * — which are ordinary functions in the production bundle and yield a
+   * `searchable` each; seven were measured. So the production arm was
+   * unreachable on every page it was written for.
+   *
+   * The two facts are not in competition, which is what the old rule assumed. A
+   * function *above* an element is its ancestor, not necessarily the thing that
+   * rendered it — and if the element's markup is in the flight payload, then a
+   * server component emitted it, however many client boundaries it was passed
+   * through afterwards. So both are reported: the ancestors as `searchable`,
+   * and the element's own origin as `absent`/`server-rendered`, innermost,
+   * where a statement about the element belongs.
+   *
+   * The original worry survives where it was actually right: nothing is
+   * appended over a `declared` resolution, which is a real identity for the
+   * element itself rather than for something above it.
    */
-  it('does not claim server-rendered when the walk found a real component', () => {
+  it('reports server-rendered beside the ancestors, not instead of them', () => {
     const chain = createRscAdapter(
       portFor({
         flight: PROD_FLIGHT,
@@ -424,7 +452,8 @@ describe('createRscAdapter — fromElement in production', () => {
       }),
     ).fromElement({} as Element);
 
-    expect(chain?.chain.map((r) => r.kind)).toEqual(['searchable']);
+    // Outermost first: the wrapper, then the element's own origin.
+    expect(chain?.chain.map((r) => r.kind)).toEqual(['searchable', 'absent']);
   });
 
   /*

@@ -65,6 +65,7 @@ import type {
 import type { CapturedComponent, FrameworkComponentTable } from '../shared/messages.js';
 import type { Framework } from '../core/locate/adapter.js';
 import type { ComponentSource } from '../shared/types.js';
+import { isPlaceholderId } from '../core/locate/id.js';
 import { stripReactRef } from '../core/react/attribution.js';
 import { flowHost, mergeTrailing, stepKey, type Pending } from '../core/flow/index.js';
 import { mergeComponents } from '../core/react/table.js';
@@ -246,12 +247,26 @@ async function captureAndSave(
 
   if (!preShot) await delay(recording['screenshots.settleDelayMs']);
 
+  /*
+   * Every key read below has to be named here.
+   *
+   * `getLocal` answers with `Partial<LocalStorageShape>` whatever it is asked
+   * for, so reading a key that was not requested typechecks perfectly and is
+   * `undefined` forever. `frameworkComponents` and `frameworkMeta` were both
+   * read below and neither was listed, so the union that merges a framework's
+   * component table was unioning against nothing and *replacing* the table on
+   * every step — measured shrinking live across three clicks, losing the best
+   * answer in the recording. React escaped only because its two keys happened
+   * to be here already.
+   */
   const stored = await getLocal([
     'recordedSteps',
     'recordingActive',
     'recordingTabId',
     'reactComponents',
     'reactNeedles',
+    'frameworkComponents',
+    'frameworkMeta',
   ]);
   if (!stored.ok) {
     await reportError(stored.error);
@@ -443,9 +458,16 @@ async function captureAndSave(
    * arrived saying in words why they are not — so merging is a union keyed by
    * id, and there is no queue to wake.
    *
-   * Existing entries win. An id is a hash of the name and where it came from, so
-   * two entries under one id describe one component, and the first was recorded
-   * closer to the interaction that found it.
+   * Existing entries win, **except a placeholder id**. An id is normally a hash
+   * of the name and where the component came from, so two entries under one id
+   * describe one component and the first was recorded closer to the interaction
+   * that found it. An `absent` resolution breaks that: it has no source to hash,
+   * so every unnamed absence on a page collapses onto `nameOnlyId('Anonymous')`.
+   * Holding the first then means a recording that visits a plain Svelte page and
+   * then a SvelteKit one keeps the first page's sentence and silently discards
+   * the second's — which is the one that would have named `build.sourcemap`.
+   * `core/react/table.ts` already guards exactly this with `isPlaceholderId`;
+   * this merge did not, and a real run is what showed it.
    */
   const frameworkTables: Partial<Record<Framework, Record<string, ComponentSource>>> = {
     ...(stored.value.frameworkComponents ?? {}),
@@ -455,7 +477,7 @@ async function captureAndSave(
     const held = frameworkTables[table.framework] ?? {};
     let next = held;
     for (const [id, source] of Object.entries(table.components)) {
-      if (id in held) continue;
+      if (id in held && !isPlaceholderId(id)) continue;
       if (next === held) next = { ...held };
       next[id] = source;
       frameworkChanged = true;
@@ -463,10 +485,35 @@ async function captureAndSave(
     if (next !== held) frameworkTables[table.framework] = next;
   }
 
+  /*
+   * The build, which only the element walk can know.
+   *
+   * `detect()` is a cheap global read and for Svelte it genuinely cannot tell
+   * development from production — `window.__svelte` is byte-identical in both.
+   * So `FRAMEWORK_META` stores what detection knew, and this fills in what the
+   * walk found afterwards. Only ever upgrades an entry that says nothing or
+   * `unknown`: a build already reported by a real walk is not overwritten by a
+   * later one, for the same reason `REACT_META` keeps its first detection.
+   */
+  const walkedBuilds = new Map(
+    (frameworkComponents ?? [])
+      .filter((table) => table.build && table.build !== 'unknown')
+      .map((table) => [table.framework, table.build]),
+  );
+  const heldMeta = stored.value.frameworkMeta ?? null;
+  let metaChanged = false;
+  const nextMeta = (heldMeta ?? []).map((entry) => {
+    const walked = walkedBuilds.get(entry.framework);
+    if (!walked || (entry.build && entry.build !== 'unknown')) return entry;
+    metaChanged = true;
+    return { ...entry, build: walked };
+  });
+
   const written = await setLocal({
     recordedSteps,
     ...tabPatch,
     ...(frameworkChanged ? { frameworkComponents: frameworkTables } : {}),
+    ...(metaChanged ? { frameworkMeta: nextMeta } : {}),
     ...(shotPatch(captured, screenshot, screenshotOriginal) ?? {}),
     // Only when something actually changed: a flow that clicks one button forty
     // times would otherwise rewrite an identical table forty times.

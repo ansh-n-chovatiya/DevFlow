@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+**Svelte and Next.js were recorded end to end against real applications, and
+between them the runs found five more defects.** All three adapters have now
+been driven headed, through the built extension, into the MCP server.
+
+**Svelte, five targets.** Development resolved a three-component chain to
+`src/lib/CheckoutButton.svelte:10`, and the SvelteKit dev chain was filtered of
+its `Pyramid_N`/`render`/`if` frames exactly as designed. Production resolved
+nothing, correctly — every element's own properties came back empty. Building
+SvelteKit again with `build.sourcemap: true` produced eight maps and a
+byte-identical absent row, because the missing half is the element-to-component
+link, not the map.
+
+**Next.js, both builds.** `_debugInfo` was present in dev and gone in
+production. The page registered as React *and* RSC — both tables reached disk
+and `get_step_detail` printed both sections in one reply, which is the design
+claim the separate keys were made for.
+
+**The defect worth naming: `captureAndSave` read two storage keys it never asked
+for.** `getLocal` answers with `Partial<LocalStorageShape>` whatever it is
+handed, so the read typechecked and was `undefined` forever — the merge was
+replacing the framework component table on every step rather than unioning it,
+losing the best answer in a recording. React escaped only because its keys were
+already listed. The guard is now an invariant test that reads the source and
+asserts every key the function reads is one it asked for, because no type can
+catch this and the next reader will do it again.
+
+**The RSC production arm was unreachable on the page it was written for.** Its
+guard assumed a chain with anything in it had a real answer, and on a real App
+Router page Next's own client boundaries always contribute one. A function above
+an element is its ancestor, not necessarily what rendered it — so both facts are
+now reported, with the element's own origin innermost.
+
+Also fixed: `ResolvedChain.build` was declared for Svelte and never set by it;
+RSC never marked its frames `at: 'call-site'`, leaving that sentence dead code;
+and the table merge let every unnamed absence collapse onto one placeholder id.
+
 **A real Vue application was recorded end to end, and it found a shipped bug.**
 `saveFlow` copies a posted payload's flow-level fields by name, and `vue` was
 not one of them — so a real recording arrived at the MCP server with its
