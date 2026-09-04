@@ -178,3 +178,36 @@ jobs:
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish devflow-compiler-plugin to npm
+        if: env.TAG_NAME != ''
+        working-directory: compiler-plugin
+        run: |
+          # A second package, published from the same tag and the same version —
+          # `sync-version.mjs` is what keeps them in step, and
+          # `tests/versions.test.ts` fails the gate above if they drift.
+          #
+          # It has no build step and no lockfile: no dependencies, only a
+          # `@babel/core` peer. So there is nothing here matching the server's
+          # `core.js` check, because there is nothing generated to be missing.
+          VERSION=$(node -p "require('./package.json').version")
+
+          PUBLISHED=$(npm view "devflow-compiler-plugin@$VERSION" version 2>/dev/null || true)
+          if [ -n "$PUBLISHED" ]; then
+            echo "::notice::devflow-compiler-plugin@$VERSION is already on npm — nothing to publish."
+            exit 0
+          fi
+
+          # Same two authentication paths as the server above, for the same
+          # reason: a token bootstraps the first publish, and trusted publishing
+          # takes over once it can be configured on an existing package.
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            echo "Publishing devflow-compiler-plugin@$VERSION with NPM_TOKEN."
+            npm publish --access public --provenance
+          else
+            echo "No NPM_TOKEN — authenticating with trusted publishing (OIDC)."
+            npm install -g npm@latest
+            npm publish --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

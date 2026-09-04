@@ -84,7 +84,7 @@ export type CompiledPosition = NonNullable<ComponentSource['compiled']>;
  * `bundle-search` splits on whether the search got all the way back to an
  * original file:
  *
- *   - `build stamp` — `@devflow/compiler-plugin` wrote the component's own file
+ *   - `build stamp` — `devflow-compiler-plugin` wrote the component's own file
  *     and line onto the component function at build time. No search happened,
  *     and this is here so that no answer can come from the plugin without
  *     saying so: see `ROADMAP_AND_PHASES.md` §1.1, rule 3.

@@ -1,4 +1,11 @@
-# `@devflow/compiler-plugin`
+# `devflow-compiler-plugin`
+
+> **Published having only ever been run against this repository's own fixtures,
+> never a real application's build.** That is a real risk and it is stated here
+> rather than discovered: this is a Babel plugin, so a defect in it breaks your
+> compile, not your DevFlow experience. If it misbehaves, remove it — nothing in
+> DevFlow requires it, and the source-map path it supplements keeps working
+> without it.
 
 A Babel plugin that writes, into each React component function, the file and line
 it was defined in:
@@ -53,7 +60,7 @@ it.
 ## Install
 
 ```sh
-npm install --save-dev @devflow/compiler-plugin
+npm install --save-dev devflow-compiler-plugin
 ```
 
 ### Vite
@@ -64,7 +71,7 @@ npm install --save-dev @devflow/compiler-plugin
 // vite.config.js
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import devflow from '@devflow/compiler-plugin';
+import devflow from 'devflow-compiler-plugin';
 
 export default defineConfig({
   plugins: [react({ babel: { plugins: [devflow] } })],
@@ -73,7 +80,7 @@ export default defineConfig({
 
 ### Anything else that runs Babel
 
-Add `@devflow/compiler-plugin` to the `plugins` list of your Babel config —
+Add `devflow-compiler-plugin` to the `plugins` list of your Babel config —
 **but note that this package is ESM-only.** A CommonJS `babel.config.js` cannot
 `require()` it, so use `babel.config.mjs`, or pass the imported plugin inline the
 way the Vite example above does. That is the one thing that stops this

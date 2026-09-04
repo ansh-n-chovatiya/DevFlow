@@ -1051,7 +1051,7 @@ function describeDebugSource(
 /**
  * The build stamp, from the component function or from the wrapper around it.
  *
- * The function first, deliberately. `@devflow/compiler-plugin` stamps the value
+ * The function first, deliberately. `devflow-compiler-plugin` stamps the value
  * a module binds, so `const Fast = memo(Cart)` puts a stamp on the memo object
  * naming the line `Cart` was *memoised* on, while `Cart` itself carries one
  * naming the line it was *written* on. Reading the inner function first takes

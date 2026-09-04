@@ -226,6 +226,43 @@ keep, whether to capture screenshots, and how much of a response body to store.
 
 ---
 
+## The optional compiler plugin
+
+**You almost certainly do not need this.** DevFlow reads your page's own bundles
+and source maps, and that is the path it is built and tested around. Everything
+in this README works with nothing installed in your application.
+
+It exists for the builds that path cannot answer for — a bundle shipping no
+source map, a map hosted somewhere the browser will not fetch, a compiled body
+that genuinely appears in more than one place. The plugin writes each
+component's own file and line onto the component function at build time, so the
+answer is stamped rather than searched for.
+
+```sh
+npm install --save-dev devflow-compiler-plugin
+```
+
+```js
+// babel.config.js
+module.exports = { plugins: ['devflow-compiler-plugin'] };
+```
+
+Every attribution says which path answered it — a stamped one reads
+`build stamp` on the card — so you can always tell the two apart.
+
+**Two things to know before you reach for it.**
+
+It is **Babel only**. SWC takes no Babel plugin at all, and SWC is what Next.js
+and `@vitejs/plugin-react-swc` use — so a large share of React projects cannot
+load it whatever their bundling problem is.
+
+And it is **not the fix for poor attribution generally**. The common failure is
+a lazy chunk that never loaded, and a chunk that did not load carries no stamp
+either. Check what DevFlow actually says about a component before assuming a
+build-time stamp would have helped.
+
+---
+
 ## About the demo
 
 Everything above is real footage, not a mockup. The recording is scripted and
@@ -251,11 +288,8 @@ The demo lives in a separate repository under `projects/devflow/`.
   Python or Go backend joins with no adapter to install.
 - [`CLAUDE.md`](./CLAUDE.md) — the invariants and the gates that enforce them.
 - [`docs/CORE.md`](./docs/CORE.md) — the engine the extension and the server share.
-- [`compiler-plugin/`](./compiler-plugin/README.md) — an **optional** Babel plugin
-  that stamps each component's file and line at build time, for the bundles the
-  normal path cannot answer for. Nothing requires it, and it covers Babel builds
-  only — SWC, which Next.js and `@vitejs/plugin-react-swc` use, takes no Babel
-  plugin at all.
+- [`compiler-plugin/`](./compiler-plugin/README.md) — the optional Babel plugin,
+  covered in its own section above.
 
 ### Building
 

@@ -119,7 +119,7 @@ export interface ComponentSource {
   /**
    * Which of the three paths answered.
    *
-   * `'plugin'` is `@devflow/compiler-plugin`'s build stamp, and it is here so
+   * `'plugin'` is `devflow-compiler-plugin`'s build stamp, and it is here so
    * that no recording can depend on the plugin without saying so — see
    * `ROADMAP_AND_PHASES.md` §1.1, rule 3.
    *
@@ -1249,7 +1249,7 @@ export interface PickedComponent {
    */
   debugSource?: { source: string; line: Pos1; column: Pos1 } | null;
   /**
-   * `@devflow/compiler-plugin`'s stamp, when the app was built with it.
+   * `devflow-compiler-plugin`'s stamp, when the app was built with it.
    *
    * Beats `debugSource` wherever both are present, and for a reason that is not
    * about which is newer: `debugSource` is where the JSX element was *written*,

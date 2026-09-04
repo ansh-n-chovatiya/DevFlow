@@ -2,6 +2,24 @@
 
 ## 4.0.0 — 2026-09-04
 
+**The compiler plugin is published, as `devflow-compiler-plugin`.** It was
+`private: true` and scoped to `@devflow`, a scope nobody here owns. It is now
+unscoped, publishable, and released from the same tag and the same version as
+the server — `sync-version.mjs` keeps them in step and `tests/versions.test.ts`
+fails the gate if they drift.
+
+**It ships having only ever been run against this repository's own fixtures**,
+never a real application's build. That is stated at the top of its own README
+and in the test that used to assert it was private, because this is a Babel
+plugin: a defect in it breaks your compile rather than your DevFlow experience.
+If it misbehaves, remove it — nothing requires it, and the source-map path it
+supplements keeps working without it.
+
+**It is Babel only, and it is not the general fix for poor attribution.** SWC
+takes no Babel plugin at all, and SWC is what Next.js and
+`@vitejs/plugin-react-swc` use. The commonest attribution failure is a lazy
+chunk that never loaded, and a chunk that did not load carries no stamp either.
+
 **The MCP server publishes as `devflow-server`.** The npm account that owned
 `devflow-mcp-server` was lost and cannot be recovered, so that package is frozen
 at 3.0.0 forever — as `flowsnap-mcp` is at 2.7.1. Neither breaks; neither will

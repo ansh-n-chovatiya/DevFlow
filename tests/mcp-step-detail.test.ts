@@ -205,7 +205,7 @@ function writeBudgetFlow(): void {
 }
 
 /**
- * The same journey recorded on an app built with `@devflow/compiler-plugin`.
+ * The same journey recorded on an app built with `devflow-compiler-plugin`.
  *
  * A separate flow rather than a field on the one above, because the claim is a
  * contrast: the detail flow must stay silent about provenance and this one must

@@ -17,7 +17,7 @@
  * of them is why it exists rather than being a call into the other:
  *
  *   - **It prefers a build stamp, then `_debugSource`.** A picked component
- *     carries whatever `@devflow/compiler-plugin` stamped on it and whatever
+ *     carries whatever `devflow-compiler-plugin` stamped on it and whatever
  *     React recorded on the fiber; either is an exact original position, free,
  *     with no bundle to search. The order is the one `core/react/table.ts`
  *     uses, and it has to be: the panel and a recorded flow naming different
