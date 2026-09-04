@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+**A real Vue application was recorded end to end, and it found a shipped bug.**
+`saveFlow` copies a posted payload's flow-level fields by name, and `vue` was
+not one of them — so a real recording arrived at the MCP server with its
+component table and lost it on the way to disk, while every fixture written
+straight onto disk kept it and passed. The comment on that line already warned
+that a reader added without its line there is the same bug `state` had. It was
+right. `tests/framework-end-to-end.test.ts` starts at a `POST /flows` and ends
+at the tool output; removing the line again turns four of its five assertions
+red.
+
+**What the run showed.** In a development build every step carried a
+three-component chain resolving to real `.vue` files, outermost first. In a
+production build the element's own properties came back empty — the build
+strips every link — and the chain still resolved through the walk down from
+`__vue_app__`, with names intact but no files, reported as `pending` rather
+than dressed up. `get_step_detail` now prints
+`vue: CheckoutButton  src/components/CheckoutButton.vue` through the same
+renderer React uses.
+
 **A recording on a Vue, Svelte or Next.js page now carries that framework's
 components all the way to the MCP server.** The page agent runs all three
 adapters, their chains reach the step as `element.frameworks`, the flow gains
