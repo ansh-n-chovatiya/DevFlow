@@ -751,6 +751,17 @@ boundaries to their files under `node_modules`, each correctly flagged
 Names stay minified to single letters in both cases, because that is what the
 build left; the files are right.
 
+**Vue on webpack + `vue-loader`, which was the widest untested assumption.**
+Every Vue result above came through `@vitejs/plugin-vue`, and `__file` and
+`__name` injection are *that plugin's* behaviour rather than Vue's — so the
+adapter's dev path and the survival of names through minification both rested on
+one build tool. Measured on a real webpack 5 build: development keeps `__file`
+and resolves all three components `via: debug-source`; production strips `__file`
+exactly as Vite does, keeps `__name` for every component, and the bundle search
+resolves `CheckoutButton.vue:6`, `CartPanel.vue:5` and `App.vue:5` — the same
+answers, through terser output instead of esbuild's. Nothing needed changing.
+The claim now rests on two build tools rather than one.
+
 #### What is wired, and what the `[~]` still stands for
 
 The chain named here in the previous revision is closed. A recording made on a
