@@ -43,8 +43,62 @@ export function suggestFlowName(steps: Step[], now: number): string {
   const title = steps.find((step) => step.title?.trim())?.title?.trim();
   if (title) return title.slice(0, 80);
 
+  // `Flow`, not `Recording`: CONTRACTS §4.1 makes *flow* the noun for one
+  // recording and lists "recording (as a noun)" among the words it is not. The
+  // string ends up in the library's list of names, which is exactly the place
+  // the product has to be calling the thing by one word.
   const host = flowHost(steps);
-  return host || `Recording — ${formatDateTime(now, now)}`;
+  return host || `Flow — ${formatDateTime(now, now)}`;
+}
+
+/**
+ * What the popup's one confirmation dialog is asking.
+ *
+ * There is one dialog and there are two questions, and until this existed the
+ * dialog only knew how to ask the first of them: pressing `Start recording` on
+ * top of an unsaved flow raised a sheet headed *Discard this flow?* over a
+ * button reading *Discard flow*, and the only thing on it that mentioned
+ * recording was one clause in the middle of the body. The commonest reading is
+ * that Start did not register and something else is being offered instead — so
+ * people pressed *Keep it*, which cancels the recording they asked for.
+ *
+ * Both questions genuinely delete the same steps, so both keep the danger
+ * styling; what differs is what the reader gets for pressing it.
+ */
+export interface ConfirmPrompt {
+  title: string;
+  body: string;
+  /** The label that backs out. */
+  cancel: string;
+  /** The label that goes ahead, and says what going ahead does. */
+  confirm: string;
+}
+
+/** Why the dialog is open: the user asked to delete, or asked to record again. */
+export type ConfirmReason = 'discard' | 'start';
+
+export function confirmPrompt(reason: ConfirmReason, count: number): ConfirmPrompt {
+  if (reason === 'start') {
+    return {
+      title: 'Start recording over this flow?',
+      body:
+        count === 1
+          ? 'The one recorded step has not been saved to the library, and starting a new flow deletes it. This cannot be undone.'
+          : `The ${count} recorded steps have not been saved to the library, and starting a new flow deletes them. This cannot be undone.`,
+      cancel: 'Cancel',
+      confirm: 'Start recording',
+    };
+  }
+
+  return {
+    title: 'Discard this flow?',
+    body:
+      count === 1
+        ? 'The one recorded step will be deleted. This cannot be undone.'
+        : `All ${count} recorded steps will be deleted. This cannot be undone.`,
+    cancel: 'Keep it',
+    confirm: 'Discard flow',
+  };
 }
 
 export interface PopupInput {

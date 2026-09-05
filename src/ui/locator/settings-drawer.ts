@@ -164,12 +164,26 @@ export function mountSettingsDrawer(root: Document = document): DrawerController
     paint();
   }
 
+  /**
+   * The opener says whether the thing it opens is open.
+   *
+   * Written from here rather than from the click handler because the panel opens
+   * this drawer from two other places — the first-run strip's `Set project root`
+   * and the card's source-lookup advice — and a state kept only where the button
+   * is pressed is a state that is wrong every other way in.
+   */
+  const setExpanded = (open: boolean): void => {
+    root.getElementById(DRAWER_IDS.open)?.setAttribute('aria-expanded', String(open));
+  };
+
   const close = (): void => {
     aside.hidden = true;
+    setExpanded(false);
   };
 
   const open = (): void => {
     aside.hidden = false;
+    setExpanded(true);
     // Storage is the truth and the drawer has been shut: a value changed on the
     // options page while this panel sat idle should be on screen the moment it
     // opens, not one repaint later.

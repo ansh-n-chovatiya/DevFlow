@@ -160,7 +160,12 @@
     </main>
 
     <footer id="footer" class="popup__footer hidden">
-      <span class="storage__reading label">
+      <!--
+        The reading can be missing — `getBytesInUse` is allowed to decline — and
+        it hides on its own when it is. The footer around it does not, because it
+        also holds the only route to the Library.
+      -->
+      <span id="storage-reading" class="storage__reading label">
         <span data-icon="hard-drive"></span>
         <span id="storage-text"></span>
       </span>
@@ -170,17 +175,33 @@
       </button>
     </footer>
 
-    <dialog id="discard-dialog" class="dialog">
+    <!--
+      One dialog, two questions — see `confirmReplacingSteps` in main.ts. Its
+      heading and its two button labels are written by whichever caller opened
+      it: `Discard flow` asks about deleting, `Start recording` asks about
+      replacing, and a dialog that said "Discard this flow?" over the second one
+      read as though Start had not registered.
+    -->
+    <dialog
+      id="discard-dialog"
+      class="dialog"
+      aria-labelledby="discard-title"
+      aria-describedby="discard-body"
+    >
       <form method="dialog">
         <div class="dialog__header">
-          <h2 class="dialog__title">Discard this flow?</h2>
+          <h2 id="discard-title" class="dialog__title">Discard this flow?</h2>
         </div>
         <div class="dialog__body">
           <p id="discard-body"></p>
         </div>
         <div class="dialog__footer">
-          <button class="btn btn--secondary" type="submit" value="cancel">Keep it</button>
-          <button class="btn btn--danger" type="submit" value="discard">Discard flow</button>
+          <button id="discard-cancel" class="btn btn--secondary" type="submit" value="cancel">
+            Keep it
+          </button>
+          <button id="discard-confirm" class="btn btn--danger" type="submit" value="discard">
+            Discard flow
+          </button>
         </div>
       </form>
     </dialog>

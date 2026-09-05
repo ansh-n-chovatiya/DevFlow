@@ -308,7 +308,35 @@ describe('treeRow', () => {
 
     expect(row.querySelector('.tree-rail')).toBeNull();
     expect(row.classList.contains('active')).toBe(true);
-    expect(row.getAttribute('role')).toBe('listitem');
+  });
+
+  /*
+   * The row used to carry `role="listitem"`, to match a `role="list"` on the
+   * container. An explicit role replaces the implicit one, so every row of both
+   * trees announced as a list item that does nothing and none of them appeared
+   * in the button list a screen-reader user navigates by — a whole surface
+   * unreachable, with nothing visibly wrong.
+   */
+  it('stays a button, so the tree is reachable by button navigation', () => {
+    const rows = visibleRows([named('CartSummary')], NOTHING_HIDDEN, -1, '');
+    const row = treeRow(
+      { entry: rows[0], group: 'sibling', position: 1, active: false, query: '', hidden: NOTHING_HIDDEN },
+      handlers,
+    );
+
+    expect(row.tagName).toBe('BUTTON');
+    expect(row.getAttribute('role')).toBeNull();
+    expect(row.getAttribute('aria-current')).toBeNull();
+  });
+
+  it('marks the selected row with aria-current, not only with a colour', () => {
+    const rows = visibleRows([named('CartSummary')], NOTHING_HIDDEN, -1, '');
+    const row = treeRow(
+      { entry: rows[0], group: 'sibling', position: 1, active: true, query: '', hidden: NOTHING_HIDDEN },
+      handlers,
+    );
+
+    expect(row.getAttribute('aria-current')).toBe('true');
   });
 });
 

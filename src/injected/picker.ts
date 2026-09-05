@@ -442,7 +442,23 @@ class Picker {
 
     const ancestry = collectAncestors(picked);
     if (ancestry.length === 0) {
-      return { kind: 'error', error: 'Found a fiber but no component function to locate.' };
+      /*
+       * React owns this element and every node above it is a host node, so the
+       * walk came back with nothing that has code to search for.
+       *
+       * The sentence says that without naming the internal it walked. A fiber is
+       * React's own word for a node in its tree, and it appeared here because
+       * this branch is written from the walk's point of view — but the person
+       * reading it is holding a mouse, not a debugger, and "no fiber" is a fact
+       * they can neither confirm nor act on. `shared/errors.ts` is the house
+       * standard: say what happened, then say what to do next.
+       */
+      return {
+        kind: 'error',
+        error:
+          'React rendered this element, but there is no component around it to locate. ' +
+          'Pick a different element and try again.',
+      };
     }
 
     const sibling = collectSiblings(picked);

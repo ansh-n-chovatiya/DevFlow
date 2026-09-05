@@ -368,13 +368,31 @@
           uses, which are not the words the code does.
         -->
         <section id="ancestry-section" class="tree-section" hidden>
-          <h2 class="tree-heading">Parent tree</h2>
-          <div id="ancestry-list" class="tree-list" role="list"></div>
+          <h2 id="ancestry-heading" class="tree-heading">Parent tree</h2>
+          <!--
+            A group, not a list. Every row in here is a `<button>` that locates
+            the component it names, and `role="list"` obliges its children to be
+            `listitem`s — which overrides the button role rather than adding to
+            it, so the whole tree disappeared from the "next button" navigation
+            most screen-reader users move through a panel with. The heading names
+            the group; the rows stay buttons.
+          -->
+          <div
+            id="ancestry-list"
+            class="tree-list"
+            role="group"
+            aria-labelledby="ancestry-heading"
+          ></div>
         </section>
 
         <section id="sibling-section" class="tree-section" hidden>
-          <h2 class="tree-heading">Siblings</h2>
-          <div id="sibling-list" class="tree-list" role="list"></div>
+          <h2 id="sibling-heading" class="tree-heading">Siblings</h2>
+          <div
+            id="sibling-list"
+            class="tree-list"
+            role="group"
+            aria-labelledby="sibling-heading"
+          ></div>
         </section>
 
         <p id="tree-empty" class="hint hint-muted" hidden>No components match that filter.</p>
@@ -405,12 +423,20 @@
     -->
     <footer class="status-bar">
       <div class="status-group">
+        <!--
+          Both open a drawer over `main` rather than navigating, so both say so:
+          `aria-expanded` is the only thing that tells a reader the second press
+          shuts what the first one opened. Kept in step by `setHistoryOpen` in
+          main.ts and by the drawer controller in settings-drawer.ts.
+        -->
         <button
           id="history-btn"
           class="btn btn--ghost btn--icon btn--compact"
           type="button"
           title="Recent"
           aria-label="Recent"
+          aria-controls="history-drawer"
+          aria-expanded="false"
         >
           <span data-icon="clock"></span>
         </button>
@@ -420,6 +446,8 @@
           type="button"
           title="Settings"
           aria-label="Settings"
+          aria-controls="settings-drawer"
+          aria-expanded="false"
         >
           <span data-icon="settings"></span>
         </button>

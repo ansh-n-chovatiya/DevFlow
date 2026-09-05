@@ -198,6 +198,9 @@ export interface StatusAction {
  * action the reader has.
  */
 export const STATUS_ACTION: Record<Exclude<ComponentStatus, 'resolved'>, StatusAction | null> = {
+  // Two causes named because the record cannot say which, and a surface that
+  // *can* say overrides this through `COMPILED_ONLY_CAUSE` below rather than
+  // leaving the reader to work out which of the two sentences is theirs.
   'compiled-only': {
     text:
       'Your build is not serving source maps for that bundle — or reading them is ' +
@@ -229,9 +232,52 @@ export const STATUS_ACTION: Record<Exclude<ComponentStatus, 'resolved'>, StatusA
   pending: null,
 };
 
-/** The advice for one component, or null when there is none to give. */
-export function actionFor(source: ComponentSource): StatusAction | null {
+/**
+ * The two halves of `compiled-only`, for a surface that knows which one it is.
+ *
+ * `compiled-only` is the one status with two unrelated causes: `locate.ts`
+ * returns it when `react.useSourceMaps` is off *and* when the bundle it found
+ * ships no map annotation, and the record it writes is identical either way —
+ * same `via`, same `compiled`, no `source`. Nothing on `ComponentSource`
+ * separates them, so `STATUS_ACTION` above can only name both and offer neither
+ * a control, which is a sentence about a switch with no switch beside it.
+ *
+ * A surface that owns the switch knows the answer without asking the record:
+ * the panel passes `react.useSourceMaps` into the locate that produced this
+ * card. When it says so, the advice stops hedging — and in the half where the
+ * cause *is* the switch, the advice becomes the switch, which is the whole
+ * reason `StatusAction` carries a control at all.
+ */
+const COMPILED_ONLY_CAUSE: Record<'lookup-off' | 'no-map-served', StatusAction> = {
+  'lookup-off': {
+    text: 'Reading source maps is switched off, so the search stopped at the bundle. Turn it back on, then pick it again.',
+    control: { kind: 'enable-source-lookup', label: 'Turn on source lookup', icon: 'settings' },
+  },
+  'no-map-served': {
+    text:
+      'Your build is not serving source maps for that bundle. Serve the .map files ' +
+      'to get the file it was written in.',
+    control: null,
+  },
+};
+
+/**
+ * The advice for one component, or null when there is none to give.
+ *
+ * `sourceLookupOff` is deliberately three-valued. `undefined` is a surface that
+ * cannot know — the flow review holds a stored record and no idea what the
+ * setting was when it was written — and it keeps the hedged sentence, because
+ * hedging is honest there. A boolean is a surface that does know, and each half
+ * of it is a different, definite thing to do.
+ */
+export function actionFor(
+  source: ComponentSource,
+  sourceLookupOff?: boolean,
+): StatusAction | null {
   if (source.status === 'resolved') return null;
+  if (source.status === 'compiled-only' && sourceLookupOff !== undefined) {
+    return COMPILED_ONLY_CAUSE[sourceLookupOff ? 'lookup-off' : 'no-map-served'];
+  }
   return STATUS_ACTION[source.status];
 }
 
@@ -376,6 +422,16 @@ export interface ResultCardOptions {
    * a button rather than a button that does nothing.
    */
   readonly onEnableSourceLookup?: () => void;
+  /**
+   * Whether `react.useSourceMaps` was off for the locate that produced this card.
+   *
+   * Only a surface that ran the locate can answer, and only for a `compiled-only`
+   * record does the answer change anything — see `COMPILED_ONLY_CAUSE`. Omitted
+   * means "I do not know", not "it was on": a card that guessed would offer a
+   * switch that is already on, or blame a build that is serving its maps
+   * perfectly well.
+   */
+  readonly sourceLookupOff?: boolean;
 }
 
 /**
@@ -533,7 +589,7 @@ function ambiguity(matchCount: number, resourcesSearched?: number): HTMLElement 
  * which switch is off.
  */
 function actionBlock(options: ResultCardOptions): HTMLElement | null {
-  const action = actionFor(options.source);
+  const action = actionFor(options.source, options.sourceLookupOff);
   if (!action) return null;
 
   const banner = make('div', 'banner banner--info result-card__action');

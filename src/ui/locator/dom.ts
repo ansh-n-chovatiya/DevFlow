@@ -360,8 +360,20 @@ export function treeRow(input: TreeRowInput, handlers: RowHandlers): HTMLElement
 
   const row = make('button', 'tree-item');
   row.type = 'button';
-  row.setAttribute('role', 'listitem');
-  if (active) row.classList.add('active');
+  /*
+   * No `role="listitem"`. It used to carry one, to match a `role="list"` on the
+   * container, and an explicit role *replaces* the implicit one rather than
+   * adding to it — so every row of both trees announced as a list item with no
+   * hint that it does anything, and none of them appeared in the button list a
+   * screen-reader user navigates a panel by. The container is a labelled group
+   * now (`src/panel.html`) and the rows are simply buttons.
+   */
+  if (active) {
+    row.classList.add('active');
+    // The selected row is an accent bar and a tinted background, which is
+    // nothing at all to a reader who is being told the rows one at a time.
+    row.setAttribute('aria-current', 'true');
+  }
   row.title = `Locate ${item.name}`;
 
   if (group === 'ancestry') {

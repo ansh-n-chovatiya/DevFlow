@@ -256,6 +256,15 @@ async function startPick(): Promise<void> {
     // A cancelled pick keeps whatever was already on screen. Losing a resolved
     // answer because the picker was armed by accident is the worse outcome.
     restoreAfterPick();
+    /*
+     * And it says so. The panel's own Cancel, and Escape pressed while the panel
+     * has focus, both bump the generation first and never reach this line — so
+     * the two ways in are Escape on the page and `PICK_TIMEOUT_MS` running out
+     * two minutes later. Untold, the second is a panel that silently disarmed
+     * itself: the view drops back to whatever it was, the page stops answering
+     * the crosshair, and nothing anywhere says why.
+     */
+    showToast({ message: 'Picking stopped — nothing was picked.', tone: 'neutral' });
     return;
   }
 
@@ -392,6 +401,19 @@ function renderCard(source: ComponentSource): void {
     source: withoutAmbiguity(source),
     link: editorLink(),
     resourcesSearched: state.resourcesSearched,
+    /*
+     * The panel is the one surface that can tell the two causes of
+     * `compiled-only` apart, so it is the one that has to say which.
+     *
+     * A card that cannot know hedges — "not serving source maps, *or* reading
+     * them is switched off" — and offers no control, because either half of
+     * that sentence might be the wrong thing to act on. Here the setting is in
+     * scope and the switch is in this panel's own drawer, so the answer is
+     * definite and the fix is one click rather than a hunt through Settings.
+     * The flow review leaves this unset and keeps the hedge, which is correct:
+     * it is reading a stored flow and cannot know what the setting was.
+     */
+    sourceLookupOff: !state.settings['react.useSourceMaps'],
     onCopyPath: (path) => void copyPath(path),
     onOpenEditor: (url) => void openInEditor(url),
     onOpenSources: openInSources,
@@ -654,6 +676,18 @@ async function enableSourceLookup(): Promise<void> {
 
   showToast({ message: 'Source lookup turned on', tone: 'success' });
 
+  /*
+   * Adopted here rather than waited for.
+   *
+   * `subscribe` only hears about the write through `storage.onChanged`, and it
+   * then re-reads the whole store before calling back — so the locate started
+   * on the next line would have read the *old* value and come back saying
+   * source lookup is switched off, one line under a toast saying it had just
+   * been turned on. The write has already landed; this is the same settings
+   * object the subscription is about to deliver.
+   */
+  adopt({ ...state.settings, [key]: true });
+
   // The point of the control is the answer, not the setting: the component that
   // could not be looked up is still on screen, and it can be now.
   if (state.activeGroup !== null && state.activeIndex >= 0) {
@@ -678,9 +712,15 @@ function syncSetupHint(): void {
 function retry(): void {
   if (state.activeGroup !== null && state.activeIndex >= 0) {
     void locate(state.activeGroup, state.activeIndex);
-  } else {
-    reset();
+    return;
   }
+
+  // Nothing has been located, so the failure was the pick itself — a page with
+  // no React under the cursor, or a worker that did not answer — and the only
+  // thing there is to retry is arming the picker again. Falling through to the
+  // idle view left the panel's primary action looking like a button that did
+  // nothing: the error vanished and no picker was armed.
+  void startPick();
 }
 
 function reset(): void {
@@ -722,6 +762,17 @@ function renderHistory(): void {
       row.append(name, label);
       row.addEventListener('click', () => {
         state.source = entry.source;
+        /*
+         * The restored answer belongs to no row of the tree on screen.
+         *
+         * Left pointing at the last locate, the trees kept a different
+         * component's row marked active, hovering the restored card drew the
+         * page highlight around that other component, and `Retry` would have
+         * re-located it — three views of one selection disagreeing about which
+         * component is selected.
+         */
+        state.activeGroup = null;
+        state.activeIndex = -1;
         // A stored entry never recorded how many bundles were read, and the
         // ambiguity sentence works without it.
         state.resourcesSearched = undefined;
@@ -739,16 +790,33 @@ function renderHistory(): void {
   toggle(el('history-empty'), state.history.length === 0);
 }
 
+/**
+ * The one place the Recent drawer opens and shuts.
+ *
+ * `hidden` and the opener's `aria-expanded` are the same fact told twice, and
+ * five call sites each setting `hidden` on its own is how the second one falls
+ * behind: a screen reader would keep announcing a collapsed button over an open
+ * drawer.
+ */
+function setHistoryOpen(open: boolean): void {
+  el('history-drawer').hidden = !open;
+  el('history-btn').setAttribute('aria-expanded', String(open));
+  if (open) renderHistory();
+}
+
 function openHistory(): void {
   drawer?.close();
-  const aside = el('history-drawer');
-  aside.hidden = !aside.hidden;
-  if (!aside.hidden) renderHistory();
+  setHistoryOpen(el('history-drawer').hidden);
 }
 
 function closeDrawers(): void {
   drawer?.close();
-  el('history-drawer').hidden = true;
+  setHistoryOpen(false);
+}
+
+/** Either drawer covers `main` outright, so it also owns the keyboard. */
+function anyDrawerOpen(): boolean {
+  return drawer?.isOpen() === true || !el('history-drawer').hidden;
 }
 
 // ── Theme ────────────────────────────────────────────────────────────────────
@@ -803,7 +871,7 @@ function wire(): void {
   });
 
   el('setup-hint-open').addEventListener('click', () => {
-    el('history-drawer').hidden = true;
+    setHistoryOpen(false);
     drawer?.open();
   });
   el('setup-hint-dismiss').addEventListener('click', () => {
@@ -819,12 +887,12 @@ function wire(): void {
   // The settings drawer wires its own opener; this only keeps the two drawers
   // from being open at once, which no single controller can see.
   el(DRAWER_IDS.open).addEventListener('click', () => {
-    el('history-drawer').hidden = true;
+    setHistoryOpen(false);
   });
   el('history-btn').addEventListener('click', openHistory);
   el('architecture-btn').addEventListener('click', () => void readArchitecture());
   el('history-close').addEventListener('click', () => {
-    el('history-drawer').hidden = true;
+    setHistoryOpen(false);
   });
   el('history-clear').addEventListener('click', () => {
     state.history = [];
@@ -859,13 +927,23 @@ function wire(): void {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
-    const drawerOpen = drawer?.isOpen() === true || !el('history-drawer').hidden;
+    const drawerOpen = anyDrawerOpen();
     closeDrawers();
     // The page agent only sees Escape while the page has focus, so a panel that
     // has it has to cancel for itself.
     if (!drawerOpen && state.view === 'picking') void cancelPick();
     return;
   }
+
+  /*
+   * A drawer covers the whole of `main`, so nothing behind it is a target.
+   *
+   * Without this, `P` armed the picker underneath an open Settings drawer — the
+   * page went into pick mode, the panel stayed on the drawer, and the click that
+   * followed was swallowed by a picker the user could not see they had started.
+   * Escape is handled above precisely because it is the way *out* of a drawer.
+   */
+  if (anyDrawerOpen()) return;
 
   // ⌘K / Ctrl-K focuses the filter. Handled before the typing guard below, so it
   // still works when the caret is already in the field.

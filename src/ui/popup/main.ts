@@ -40,9 +40,11 @@ import { formatAgo, formatBytes, formatElapsed, formatRelative } from '../format
 import { hydrateIcons, setIcon } from '../icons.js';
 import { initTheme } from '../theme.js';
 import {
+  confirmPrompt,
   derivePopupView,
   suggestFlowName,
   THUMBNAIL_LIMIT,
+  type ConfirmReason,
   type NoticeView,
   type PopupView,
 } from './view.js';
@@ -103,11 +105,15 @@ const dom = {
   empty: el('s-empty'),
 
   footer: el('footer'),
+  storageReading: el('storage-reading'),
   storageText: el('storage-text'),
   library: el<HTMLButtonElement>('btn-library'),
 
   discardDialog: el<HTMLDialogElement>('discard-dialog'),
+  discardTitle: el('discard-title'),
   discardBody: el('discard-body'),
+  discardCancel: el<HTMLButtonElement>('discard-cancel'),
+  discardConfirm: el<HTMLButtonElement>('discard-confirm'),
 };
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -262,7 +268,17 @@ function render(view: PopupView): void {
 
   show(dom.empty, view.body === 'empty');
 
-  show(dom.footer, view.storage !== null);
+  /*
+   * The footer is hidden only while the popup is still a skeleton.
+   *
+   * It used to be gated on the storage reading, which `bytesInUse()` answers
+   * `null` for whenever Chrome sets `lastError` — and `Library` is in that
+   * footer. A profile whose `getBytesInUse` declined left the popup with no
+   * route to the saved flows at all, over a figure nobody opened it to read.
+   * The reading hides on its own; the way out does not.
+   */
+  show(dom.footer, view.body !== 'loading');
+  show(dom.storageReading, view.storage !== null);
   if (view.storage) {
     dom.storageText.textContent = `${formatBytes(view.storage.usedBytes)} stored`;
   }
@@ -414,8 +430,35 @@ async function beginRecording(): Promise<void> {
  * passes through it on its way to a new recording, and has to know the answer
  * rather than act on it — hence the resolver rather than a second listener.
  */
-let discardAsksFor: 'discard' | 'start' = 'discard';
+let discardAsksFor: ConfirmReason = 'discard';
 let settleStart: ((confirmed: boolean) => void) | null = null;
+
+/**
+ * Open the one dialog on behalf of one of its two callers.
+ *
+ * The heading and both button labels are written here, from `confirmPrompt`,
+ * rather than left as the markup's defaults: one sheet asking two questions in
+ * the words of only the first is a sheet that misreports what pressing its
+ * primary button will do.
+ */
+function askConfirm(reason: ConfirmReason, count: number): void {
+  const prompt = confirmPrompt(reason, count);
+  discardAsksFor = reason;
+  dom.discardTitle.textContent = prompt.title;
+  dom.discardBody.textContent = prompt.body;
+  dom.discardCancel.textContent = prompt.cancel;
+  dom.discardConfirm.textContent = prompt.confirm;
+  /*
+   * Cleared before every open, for the reason `ui/viewer/dialogs.ts` already
+   * writes down: `returnValue` is only written when a *button* closes a dialog,
+   * so dismissing with Escape leaves whatever the last answer was. This is one
+   * element reused by both questions, and once anything here had been confirmed,
+   * Escape on the next sheet read as "yes" — the flow the user had just decided
+   * to keep was deleted by the key they pressed to keep it.
+   */
+  dom.discardDialog.returnValue = '';
+  dom.discardDialog.showModal();
+}
 
 /**
  * Ask before a new recording deletes the last one.
@@ -434,12 +477,7 @@ function confirmReplacingSteps(): Promise<boolean> {
   const count = state.steps.length;
   if (count === 0) return Promise.resolve(true);
 
-  discardAsksFor = 'start';
-  dom.discardBody.textContent =
-    count === 1
-      ? 'The one recorded step has not been saved to the library, and starting a new flow deletes it. This cannot be undone.'
-      : `The ${count} recorded steps have not been saved to the library, and starting a new flow deletes them. This cannot be undone.`;
-  dom.discardDialog.showModal();
+  askConfirm('start', count);
 
   return new Promise((resolve) => {
     settleStart = resolve;
@@ -588,12 +626,7 @@ dom.settings.addEventListener('click', () => {
  * it asks first — and says how much is about to be lost.
  */
 dom.clear.addEventListener('click', () => {
-  const count = state.steps.length;
-  dom.discardBody.textContent =
-    count === 1
-      ? 'The one recorded step will be deleted. This cannot be undone.'
-      : `All ${count} recorded steps will be deleted. This cannot be undone.`;
-  dom.discardDialog.showModal();
+  askConfirm('discard', state.steps.length);
 });
 
 dom.discardDialog.addEventListener('close', () => {
