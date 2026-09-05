@@ -29,6 +29,32 @@
  * shipped. `core/a11y` skips a node with no backdrop and the step's note says
  * how many were skipped, so a missing finding is never read as a passing one.
  *
+ * ## What this does not walk, and why that is a unit of work rather than a line
+ *
+ * The walk descends `el.children`, so an open shadow root is never entered and
+ * nothing a web component renders is ever audited. That is a real gap and it is
+ * named here rather than half-closed, because pushing `el.shadowRoot.children`
+ * onto the queue is the one line of it that is easy. Every reading taken per
+ * node is document-scoped and would answer *wrongly* rather than not at all
+ * across the boundary: `hiddenFromAT`'s `closest` stops at the shadow root, so
+ * an `aria-hidden="true"` host would stop hiding its own subtree and every
+ * unnamed control inside a closed drawer would be reported — the exact defect
+ * that function's header records fixing; `readName` resolves `aria-labelledby`
+ * through `ownerDocument.getElementById`, and ids inside a shadow root are
+ * scoped to it, so the name would come from whatever element in the outer
+ * document happened to share the id; `resolveBackdrop` climbs `parentElement`,
+ * which is null at the top of a root, so contrast would silently stop being
+ * measured there; and `sampleFocus` reads `document.activeElement`, which is
+ * retargeted to the *host*, and finds modals with a `document` query that a
+ * dialog inside a root never matches.
+ *
+ * Closing it honestly is five shadow-aware readings, a decision about whether
+ * shadow children spend the same `nodeCap` as the light DOM — they would
+ * displace the top-of-tree nodes the breadth-first order exists to keep — and
+ * the fixtures for each. `core/dom/walk.ts` does not shorten it: `climb` crosses
+ * a boundary *upward*, out of a root to its host, which is the direction the
+ * component join already needs and the opposite of the one this would.
+ *
  * ## Why the name is approximated here rather than solved
  *
  * The accname specification is a document of its own. What this computes is the
@@ -50,6 +76,29 @@ const MIN_TEXT_LENGTH = 1;
 
 /** Longest name or label kept — a report is read, not stored. */
 const LABEL_CAP = 80;
+
+/**
+ * The elements HTML lets `disabled` mean anything on.
+ *
+ * `A11yNode.disabled` is documented as "a native `disabled`, not
+ * `aria-disabled`", and `core/a11y` spends it twice: it suppresses
+ * `keyboard-unreachable`, and it raises `aria-disabled-contradiction` against an
+ * `aria-disabled="false"`. Read as a bare `hasAttribute` on any tag, the very
+ * common hand-rolled `<div role="button" tabindex="0" disabled>` claimed a
+ * native disabled state it does not have — the attribute is inert on a `div` —
+ * so a fully keyboard-reachable control was reported as contradicting itself,
+ * and `isFocusable` answered false about an element the browser will happily
+ * focus.
+ */
+const NATIVELY_DISABLEABLE = new Set([
+  'button',
+  'fieldset',
+  'input',
+  'optgroup',
+  'option',
+  'select',
+  'textarea',
+]);
 
 /** The roles this file recognises from a tag alone. */
 const IMPLICIT_ROLE: Record<string, string> = {
@@ -202,14 +251,27 @@ function isModal(el: Element): boolean {
   return (role === 'dialog' || role === 'alertdialog') && el.getAttribute('aria-modal') === 'true';
 }
 
-/** Whether any ancestor hides this from assistive technology. */
+/**
+ * Whether this element, or anything above it, hides it from assistive
+ * technology.
+ *
+ * `closest` rather than a bounded climb, and the bound is what was wrong: this
+ * used to stop after `BACKDROP_CLIMB` ancestors, a constant declared for the
+ * *backdrop* search, where giving up early is the documented answer because a
+ * colour nobody can resolve must not be guessed. `aria-hidden` is not that
+ * shape — it is inherited by the whole subtree with no depth limit in the
+ * specification — and twelve levels is well inside an ordinary app's wrapper
+ * depth.
+ *
+ * Both directions were wrong, and both quietly. A closed drawer marked
+ * `aria-hidden="true"` reported every unnamed icon button beneath it as a real
+ * `no accessible name` violation on a panel nobody can see; and
+ * `aria-hidden-focusable` — the check that exists for focusable content left
+ * behind a modal, which is the deepest thing on such a page — could not fire at
+ * all.
+ */
 function hiddenFromAT(el: Element): boolean {
-  let node: Element | null = el;
-  for (let climbed = 0; node && climbed < BACKDROP_CLIMB; climbed += 1) {
-    if (node.getAttribute('aria-hidden') === 'true') return true;
-    node = node.parentElement;
-  }
-  return false;
+  return el.closest('[aria-hidden="true"]') !== null;
 }
 
 /**
@@ -270,14 +332,21 @@ export function sampleA11y(nodeCap: number): { sample: A11ySample; elements: Ele
     }
     const el = queue.shift() as Element;
     walked += 1;
-    for (const child of Array.from(el.children)) queue.push(child);
+    /*
+     * Bounded per node, as `render.ts` bounds its sibling chain and for its
+     * reason: `Array.from(el.children)` on a virtualised list materialises
+     * fifty thousand elements the walk will never reach, and it does so before
+     * `nodeCap` gets a chance to bite.
+     */
+    const children = el.children;
+    for (let i = 0; i < children.length && i < nodeCap; i += 1) queue.push(children[i]);
 
     elements.push(el);
     const tag = el.tagName.toLowerCase();
     const rawTabIndex = el.getAttribute('tabindex');
     const parsedTabIndex = rawTabIndex === null ? null : Number.parseInt(rawTabIndex, 10);
     const tabIndex = parsedTabIndex !== null && Number.isFinite(parsedTabIndex) ? parsedTabIndex : null;
-    const disabled = el.hasAttribute('disabled');
+    const disabled = NATIVELY_DISABLEABLE.has(tag) && el.hasAttribute('disabled');
 
     const aria: Record<string, string> = {};
     for (const attribute of Array.from(el.attributes)) {

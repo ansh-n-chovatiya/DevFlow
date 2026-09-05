@@ -294,12 +294,28 @@ export function resolveDeclaredThrough(resolution: Resolution, map: PreparedMap)
   const original = lookupOriginal(map, generated.line, generated.column);
   if (!original) return resolution;
 
+  /*
+   * `at` and `moduleId` survive the upgrade, and both used to be dropped here.
+   *
+   * A map lookup moves a position from a compiled chunk to the `.tsx` it came
+   * from. It does not turn a **call site into a declaration**: the frame this
+   * came from is named `Page` because that is where `<ServerOnlyWidget/>` was
+   * written, and resolving `188:263` to `app/page.tsx:11:5` is still that call
+   * site said in the author's own file. Losing `at` made `resolutionSource`'s
+   * "this is where the component was used, not where it was defined" sentence
+   * disappear at exactly the moment there was a real file to print it beside —
+   * so the one resolution a reader could act on was the one that did not say
+   * what it was. `moduleId` is a join key `ComponentSource` carries on every
+   * status for the same reason.
+   */
   return {
     kind: 'declared',
     name: resolution.name,
     source: original.source,
     line: toOneBased(original.line),
     column: toOneBased(original.column),
+    ...(resolution.at === undefined ? {} : { at: resolution.at }),
+    ...(resolution.moduleId === undefined ? {} : { moduleId: resolution.moduleId }),
   };
 }
 

@@ -103,16 +103,31 @@ const text = (value: unknown, cap = MAX_TEXT): string | null => {
   return trimmed ? trimmed.slice(0, cap) : null;
 };
 
+/**
+ * The widest instant a `Date` can hold. Past it, `toISOString()` **throws**.
+ *
+ * The check is here rather than at the renderer because this is the edge: a
+ * delivery is relayed or replayed by whatever the user pointed at this port, so
+ * `"timestamp": 1e20` is an ordinary shape to survive, and it reached
+ * `describeProductionError` as a plausible number and took the tool down with a
+ * `RangeError`. A time this module cannot describe is `null`, which every
+ * caller already prints as "unknown".
+ */
+const MAX_DATE_MS = 8.64e15;
+
+const inDateRange = (ms: number): boolean => Number.isFinite(ms) && Math.abs(ms) <= MAX_DATE_MS;
+
 /** A timestamp in whichever of the three shapes a provider used, or null. */
 function millis(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
     // Seconds or milliseconds. A ten-digit number is seconds until roughly the
     // year 2286, and a thirteen-digit one is milliseconds since 2001.
-    return value > 1e11 ? value : value * 1000;
+    const ms = value > 1e11 ? value : value * 1000;
+    return inDateRange(ms) ? ms : null;
   }
   if (typeof value === 'string') {
     const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : null;
+    return inDateRange(parsed) ? parsed : null;
   }
   return null;
 }
@@ -256,7 +271,13 @@ export function describeProductionError(error: {
   level: string | null;
   lastSeenMs: number | null;
 }): string {
-  const when = error.lastSeenMs ? new Date(error.lastSeenMs).toISOString().slice(0, 10) : 'unknown';
+  // `inDateRange` again, because this reads a stored row as well as a freshly
+  // parsed delivery, and a row written before that check existed is still on
+  // somebody's disk.
+  const when =
+    error.lastSeenMs && inDateRange(error.lastSeenMs)
+      ? new Date(error.lastSeenMs).toISOString().slice(0, 10)
+      : 'unknown';
   return (
     `${error.type}${error.culprit ? ` in ${error.culprit}` : ''}  ` +
     `${error.count} event${error.count === 1 ? '' : 's'} in production` +

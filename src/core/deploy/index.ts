@@ -228,7 +228,19 @@ export function suspectFiles(input: {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-const when = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+/**
+ * An ISO day, or `'an unknown date'`.
+ *
+ * A recording's `timestamp` arrives over loopback and `POST /flows` validates
+ * its id and that `steps` is an array; a finite number outside `Date`'s
+ * ±8.64e15 range makes `toISOString()` throw a `RangeError`, so one bad flow
+ * took the whole comparison down rather than costing it a date.
+ */
+const MAX_DATE_MS = 8.64e15;
+const when = (ms: number) =>
+  Number.isFinite(ms) && Math.abs(ms) <= MAX_DATE_MS
+    ? new Date(ms).toISOString().slice(0, 10)
+    : 'an unknown date';
 
 /** One recording's line at the top of the report. */
 const describeRecording = (recording: DeployRecording, role: string): string =>

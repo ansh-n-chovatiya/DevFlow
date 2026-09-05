@@ -115,7 +115,12 @@ const ROLE_STATES: Record<string, ReadonlySet<string>> = {
   radio: new Set(['aria-checked', 'aria-disabled', 'aria-required']),
   switch: new Set(['aria-checked', 'aria-disabled']),
   tab: new Set(['aria-selected', 'aria-expanded', 'aria-disabled']),
-  option: new Set(['aria-selected', 'aria-disabled']),
+  // `aria-checked` is on `option` because WAI-ARIA 1.2 lists it there: a
+  // multi-selectable listbox whose rows carry a checkbox marks them
+  // `aria-checked`, and that is the ordinary spelling of the pattern. Leaving it
+  // out made every one of those rows a finding saying the spec forbids what the
+  // spec requires.
+  option: new Set(['aria-selected', 'aria-checked', 'aria-disabled']),
   textbox: new Set(['aria-required', 'aria-invalid', 'aria-disabled', 'aria-readonly']),
   combobox: new Set(['aria-expanded', 'aria-required', 'aria-invalid', 'aria-disabled']),
   heading: new Set([]),
@@ -124,6 +129,25 @@ const ROLE_STATES: Record<string, ReadonlySet<string>> = {
 
 /** The states this audit will comment on at all. */
 const JUDGED_STATES = ['aria-checked', 'aria-selected', 'aria-pressed', 'aria-expanded'] as const;
+
+/**
+ * Roles whose keyboard reachability belongs to their container, not to them.
+ *
+ * Every one of these is a *managed* item of a composite widget — an `option` in
+ * a listbox, a `menuitem` in a menu, a `tab` in a tablist, a `radio` in a
+ * radiogroup — and both of the patterns ARIA defines for those make the item
+ * itself untabbable on purpose: roving `tabindex` leaves every item but the
+ * active one at `-1`, and `aria-activedescendant` leaves them with no `tabindex`
+ * at all while the container holds focus and the arrow keys move the selection.
+ *
+ * `A11ySample` is a flat list with no parent links, so this module cannot see
+ * the container that owns the item and cannot tell the correct pattern from a
+ * genuinely stranded widget. Judging anyway produced a finding on *every* row of
+ * *every* correct listbox, menu and tablist on the page — which is the "cries
+ * wolf" failure `ROLE_STATES` is deliberately small for, arriving through a
+ * different check.
+ */
+const CONTAINER_MANAGED_ROLES = new Set(['option', 'menuitem', 'tab', 'radio']);
 
 /** How the accessible name was arrived at — see refusal 2 in the header. */
 export type NameSource = 'aria-label' | 'aria-labelledby' | 'native-label' | 'alt' | 'title' | 'text';
@@ -203,12 +227,25 @@ function luminance([r, g, b]: readonly [number, number, number]): number {
   return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
 }
 
-/** The WCAG ratio, always ≥ 1, rounded to two places for reporting. */
-export function contrastRatio(reading: ContrastReading): number {
+/** The WCAG ratio, always ≥ 1, unrounded. What the threshold is judged against. */
+function exactContrastRatio(reading: ContrastReading): number {
   const a = luminance(reading.fg);
   const b = luminance(reading.bg);
   const [light, dark] = a > b ? [a, b] : [b, a];
-  return Math.round(((light + 0.05) / (dark + 0.05)) * 100) / 100;
+  return (light + 0.05) / (dark + 0.05);
+}
+
+/**
+ * The WCAG ratio, always ≥ 1, rounded to two places **for reporting**.
+ *
+ * Rounding is a presentation decision and the comparison is not made on it:
+ * 4.496:1 rounds to `4.5` and fails 1.4.3, and judging the rounded number let
+ * that pass as though it met a criterion it misses. The reported figure stays
+ * rounded — two places is what a person can act on — and `exactContrastRatio`
+ * is what decides.
+ */
+export function contrastRatio(reading: ContrastReading): number {
+  return Math.round(exactContrastRatio(reading) * 100) / 100;
 }
 
 /**
@@ -244,7 +281,7 @@ export function auditA11y(before: A11ySample | null, after: A11ySample): A11yFin
     if (node.contrast) {
       const ratio = contrastRatio(node.contrast);
       const needed = contrastThreshold(node.contrast);
-      if (ratio < needed) {
+      if (exactContrastRatio(node.contrast) < needed) {
         findings.push({
           check: 'contrast',
           wcag: '1.4.3 Contrast (Minimum)',
@@ -275,7 +312,14 @@ export function auditA11y(before: A11ySample | null, after: A11ySample): A11yFin
       });
     }
 
-    if (role && INTERACTIVE_ROLES.has(role) && !node.focusable && !node.ariaHidden && !node.disabled) {
+    if (
+      role &&
+      INTERACTIVE_ROLES.has(role) &&
+      !CONTAINER_MANAGED_ROLES.has(role) &&
+      !node.focusable &&
+      !node.ariaHidden &&
+      !node.disabled
+    ) {
       findings.push({
         check: 'keyboard-unreachable',
         wcag: '2.1.1 Keyboard',
@@ -333,7 +377,13 @@ export function auditA11y(before: A11ySample | null, after: A11ySample): A11yFin
       });
     }
 
-    const supported = role ? ROLE_STATES[role] : undefined;
+    /*
+     * `Object.hasOwn`, because `role` is an attribute value off somebody else's
+     * page and `ROLE_STATES` is an object literal: `role="constructor"` reads
+     * `Object.prototype.constructor`, which is truthy and has no `.has`, so the
+     * whole audit threw on one attribute a page can set for free.
+     */
+    const supported = role && Object.hasOwn(ROLE_STATES, role) ? ROLE_STATES[role] : undefined;
     if (supported) {
       for (const state of JUDGED_STATES) {
         if (state in node.aria && !supported.has(state)) {

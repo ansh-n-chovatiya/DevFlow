@@ -269,18 +269,55 @@ function readHooks(fiber: RenderFiber): Reading[] {
  * The key is the context's `displayName` when it has one and its position when
  * it does not — the list's order is the order the component's `useContext`
  * calls run in, which the rules of hooks make stable across renders.
+ *
+ * ## A `displayName` is not an identity
+ *
+ * React neither guarantees one is unique nor requires one to be set, and two
+ * contexts sharing a name is ordinary — a library's and an app's both called
+ * `Theme`, or two of the same library's. `changesBetween` resolves a key by the
+ * *first* match in the other reading, so under one name the second context was
+ * compared against the first's value: the one that changed and the one that did
+ * not were both reported as changed, and the unchanged one carried the other's
+ * before and after. Wrong data with a plausible label on it, which is the shape
+ * of defect this whole feature is least able to afford.
+ *
+ * So a name that repeats within one component's dependency list is qualified by
+ * its position, on the same stable order that already backs the unnamed
+ * fallback. A name that does not repeat is left exactly as it was, because the
+ * key is what the reader sees and the common case should not pay for the rare
+ * one.
+ *
+ * The identity that would settle it outright is the context object itself, and
+ * it is deliberately not used: matching on it across the two samples needs a map
+ * that outlives them both, and this file holds no module-level state — see the
+ * header.
  */
 function readContexts(fiber: RenderFiber): Reading[] {
-  const out: Reading[] = [];
+  const read: { key: string; value: unknown; position: number }[] = [];
   let dep: ContextDependency | null | undefined = fiber.dependencies?.firstContext;
   for (let i = 0; dep && i < CONTEXT_WALK_CAP; i++, dep = dep.next) {
     if (typeof dep !== 'object') break;
     const context = dep.context;
     if (!context) continue;
     const declared = typeof context.displayName === 'string' ? context.displayName.trim() : '';
-    out.push([declared ? declared.slice(0, 60) : `context ${i + 1}`, dep.memoizedValue]);
+    read.push({
+      key: declared ? declared.slice(0, 60) : `context ${i + 1}`,
+      value: dep.memoizedValue,
+      position: i + 1,
+    });
   }
-  return out;
+
+  const once = new Set<string>();
+  const repeated = new Set<string>();
+  for (const entry of read) {
+    if (once.has(entry.key)) repeated.add(entry.key);
+    once.add(entry.key);
+  }
+
+  return read.map((entry): Reading => [
+    repeated.has(entry.key) ? `${entry.key} (context ${entry.position})` : entry.key,
+    entry.value,
+  ]);
 }
 
 // ── The walk ─────────────────────────────────────────────────────────────────

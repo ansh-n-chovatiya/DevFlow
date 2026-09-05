@@ -150,8 +150,20 @@ export interface Forensics {
   coverage: ForensicCoverage;
 }
 
-/** An ISO day, because this is read by a model on a machine, not by a locale. */
-const day = (ms: number): string => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : 'unknown');
+/**
+ * An ISO day, because this is read by a model on a machine, not by a locale.
+ *
+ * `Number.isFinite` is not the whole guard: a finite millisecond count outside
+ * `Date`'s ±8.64e15 range makes `toISOString()` throw a `RangeError`, and these
+ * numbers come from a graph fed by flows `POST /flows` barely validates. A time
+ * that cannot be described is `'unknown'`, which is what the caller was already
+ * prepared to print.
+ */
+const MAX_DATE_MS = 8.64e15;
+const day = (ms: number): string =>
+  Number.isFinite(ms) && Math.abs(ms) <= MAX_DATE_MS
+    ? new Date(ms).toISOString().slice(0, 10)
+    : 'unknown';
 
 /**
  * The order a reader wants: what the graph has never seen, newest first, then

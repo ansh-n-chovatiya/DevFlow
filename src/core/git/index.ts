@@ -258,9 +258,20 @@ export function unquotePath(raw: string): string {
     }
     const next = body[++i];
     if (next === undefined) break;
+    /*
+     * All seven of git's named escapes, not the three that are easy to
+     * remember. `quote_c_style` writes `\a \b \f \n \r \t \v` before it falls
+     * back to octal, so a path containing a form feed used to come back with a
+     * literal `f` in it — a path that matches no source file and does not look
+     * mangled enough for anybody to notice it had been.
+     */
     if (next === 'n') out += '\n';
     else if (next === 't') out += '\t';
     else if (next === 'r') out += '\r';
+    else if (next === 'a') out += '\u0007';
+    else if (next === 'b') out += '\b';
+    else if (next === 'f') out += '\f';
+    else if (next === 'v') out += '\v';
     else if (next >= '0' && next <= '7') {
       // Git escapes a non-ASCII byte as three octal digits, one per byte of
       // UTF-8, so the bytes are gathered and decoded together rather than one
