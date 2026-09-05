@@ -856,6 +856,42 @@ function resolvePick(name, sourceFile) {
 }
 
 /**
+ * A key for a pick that resolved to no existing row, that no row already holds.
+ *
+ * `componentId(name, sourceFile)` is the first candidate and is free nearly
+ * every time. There is one case where it is not, and that case used to be a
+ * permanent failure rather than a bad answer:
+ *
+ *   1. `{ name: 'Row' }` is picked, resolves to nothing, and mints
+ *      `sha('Row|')` as a provisional row.
+ *   2. A flow, or a later pick, gives that row `src/a.tsx`. Its key no longer
+ *      describes it, which is ordinary — the key is minted once.
+ *   3. A second `Row`, in `src/b.tsx`, becomes a row of its own.
+ *   4. `{ name: 'Row' }` is picked again. `resolvePick` sees two same-named
+ *      rows, neither unsourced, and refuses to guess between them — which is
+ *      correct. The insert then lands on `sha('Row|')`, which step 1's row
+ *      still holds, and throws `UNIQUE constraint failed`.
+ *
+ * `arkgTry` swallowed the throw, so the endpoint answered `{ stored: false }`
+ * and the pick was silently dropped — and so was every later bare-name pick of
+ * that component, for the life of the database, because nothing about the
+ * collision goes away.
+ *
+ * Salting until the key is free keeps `resolvePick`'s decision rather than
+ * overturning it: this pick is *not* any of the rows it looked at, so it gets a
+ * row of its own — provisional, and therefore still adoptable by the flow that
+ * eventually names its file, which is what a provisional row is for. The shape
+ * stays 16 lowercase hex so `MINTED_HERE` still reads it as minted here.
+ */
+function freeComponentId(name, sourceFile) {
+  let candidate = componentId(name, sourceFile);
+  for (let salt = 1; salt <= 64 && componentRow(candidate); salt += 1) {
+    candidate = componentId(name, `${sourceFile ?? ''}#${salt}`);
+  }
+  return candidate;
+}
+
+/**
  * Which existing row a *flow* component is, when its own id names none.
  *
  * Far narrower than `resolvePick`, and deliberately: the flow's id is real
@@ -1410,8 +1446,23 @@ export function ingestFlow(flowJson, git = null) {
       }
     }
 
-    /** A component id as it arrived in the flow, as the row it stands for now. */
-    const resolvedNode = (id) => nodeFor.get(id) ?? canonicalId(id);
+    /**
+     * A component id as it arrived in the flow, as the row it stands for now.
+     *
+     * `canonicalId` over the mapped value as well as the unmapped one, because
+     * `nodeFor` records the row an id landed on *at the moment that component
+     * was iterated* and a later iteration can merge that row away. Two entries
+     * with one name and one file are exactly the wrapper-and-wrapped case
+     * `reconcileIdentity` exists to fold, `older()` breaks its tie on the id, so
+     * whichever was iterated first loses whenever it sorts second — and every
+     * `calls`, `renders`, `subscribes_to` and `caused_by` edge is written after
+     * the loop, against the stale id. `repointEdges` has already run by then, so
+     * nothing repairs them: `getAppArchitecture` shows the surviving component
+     * with an empty `calls` list, and `renders` gains the self-loop the
+     * `from !== to` guard below was written to prevent, because it was comparing
+     * two ids that had become one.
+     */
+    const resolvedNode = (id) => canonicalId(nodeFor.get(id) ?? id);
 
     // ── API endpoint nodes from network calls ─────────────────────────────────
     const selectEndpoint = sql('SELECT * FROM arkg_api_endpoints WHERE id = ?');
@@ -1853,10 +1904,19 @@ export function ingestComponentPick(pick, git = null) {
   db.transaction(() => {
     const asserted = typeof pick.id === 'string' && pick.id ? canonicalId(pick.id) : null;
     const matched = (asserted && componentRow(asserted)) || resolvePick(name, sourceFile);
-    const compId = matched ? matched.id : (pick.id ?? componentId(name, sourceFile));
+    const compId = matched ? matched.id : (pick.id ?? freeComponentId(name, sourceFile));
     if (matched) recordAlias(pick.id, compId, now);
 
-    const existing = matched ?? null;
+    /*
+     * The row this key already names, if any, and not just the one `resolvePick`
+     * matched. A caller-asserted `pick.id` reaches here having been checked
+     * against `canonicalId` and not against the table, and `freeComponentId`
+     * gives up after 64 salts — so this is what makes the insert below
+     * unreachable whenever the primary key is taken. Before it, a taken key was
+     * a `UNIQUE constraint failed` inside a transaction, which `arkgTry` turned
+     * into a pick that was dropped without a word.
+     */
+    const existing = matched ?? componentRow(compId);
     if (!existing) {
       // The first sample counts. Dropping it here would leave a component that
       // is only ever picked once reporting no timing at all.

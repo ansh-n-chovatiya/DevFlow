@@ -41,7 +41,21 @@ function parse(argv) {
       case '--mode': options.mode = next(); break;
       case '--base': options.base = next(); break;
       case '--out': options.out = next(); break;
-      case '--timeout': options.timeoutMs = Number(next()); break;
+      /*
+       * Only a number this can act on. `Number(next())` is `NaN` for a missing
+       * or unparseable value, and `NaN` is not `undefined` — so it survived the
+       * default in `regressionCheck` and reached `setTimeout`, which treats it
+       * as zero. Every replay was then killed before it started, every verdict
+       * was "the runner produced nothing readable", and without `--strict` the
+       * job exited 0: a regression gate reporting green because its own
+       * argument was mistyped.
+       */
+      case '--timeout': {
+        const asked = Number(next());
+        if (Number.isFinite(asked) && asked > 0) options.timeoutMs = asked;
+        else options.badTimeout = true;
+        break;
+      }
       case '--strict': options.strict = true; break;
       case '--help': case '-h': options.help = true; break;
       default:
@@ -64,6 +78,14 @@ export async function regressionCommand(argv) {
   }
   if (options.mode !== 'mocked' && options.mode !== 'live') {
     process.stderr.write(`devflow-mcp regression: --mode takes "mocked" or "live"\n`);
+    return 2;
+  }
+  if (options.badTimeout) {
+    process.stderr.write(
+      'devflow-mcp regression: --timeout takes a positive number of milliseconds. Refusing rather ' +
+        'than falling back to the default: a run under a timeout nobody meant is a verdict nobody ' +
+        'should read.\n',
+    );
     return 2;
   }
   if (process.env.DEVFLOW_REPLAY !== '1') {

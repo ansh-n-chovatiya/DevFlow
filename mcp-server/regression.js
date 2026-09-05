@@ -162,6 +162,12 @@ function run(executable, args, cwd, timeoutMs) {
       child.kill('SIGKILL');
     }, timeoutMs);
 
+    // Decoded by the stream rather than per read: `stdout` is parsed as the
+    // runner's JSON report, which carries the flow's own name and every failure
+    // message, and appending an undecoded chunk replaces whatever multi-byte
+    // character the read boundary fell inside. See `replay.js`'s `runCommand`.
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (chunk) => (stdout += chunk));
     child.stderr?.on('data', (chunk) => (stderr += chunk));
     child.on('error', (error) => {

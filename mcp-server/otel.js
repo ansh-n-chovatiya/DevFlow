@@ -149,6 +149,74 @@ const MAX_AGE_MS = 24 * 60 * 60 * 1000;
  */
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
+/**
+ * How deep a parent chain may be.
+ *
+ * `buildSpanTree` and `flattenTree` in `core/otel` walk a span tree by
+ * recursion, so the depth of a chain is a depth of JavaScript stack frames.
+ * Measured on this build: a 1,000-deep chain is fine and a 5,000-deep one is
+ * `RangeError: Maximum call stack size exceeded`. The byte ceiling does not
+ * bound it — one 4MB delivery holds around 18,000 minimal spans, which is three
+ * times the overflow point arranged as a single chain — and neither does
+ * `MAX_SPANS`, because 50,000 rows in a line are still 50,000 frames.
+ *
+ * A real trace is tens of spans deep at the very worst; the deepest thing a
+ * service legitimately produces is a recursive resolver, and those are dozens.
+ * 256 is two orders of magnitude above anything observed and two below anything
+ * that overflows, which is the room to be wrong in both directions.
+ *
+ * It is enforced twice, and the two are not redundant. A delivery whose own
+ * spans form an over-deep chain is refused here, where the sender can be told.
+ * A chain assembled across many individually-shallow deliveries — the same
+ * trace id, one span at a time — is invisible from a single request, so
+ * `spansForTraces` bounds what it hands back as well. Rows written by a build
+ * that predates this cap are on disk already and reach only that second guard.
+ */
+const MAX_SPAN_DEPTH = 256;
+
+/**
+ * The spans of one batch whose parent chain stays inside `MAX_SPAN_DEPTH`.
+ *
+ * Depth is counted through the batch only. A parent that is not in it is a root
+ * as far as this delivery is concerned, which is the same reading
+ * `buildSpanTree` takes of an absent parent, and the store-side guard is what
+ * covers the chain the two halves make together.
+ *
+ * Cycle-safe by the visited set rather than by trusting the ids: a span that is
+ * its own ancestor is not a tree at all, and it reaches the same unbounded walk.
+ */
+function withinDepth(spans) {
+  const byId = new Map();
+  for (const span of spans) if (!byId.has(span.spanId)) byId.set(span.spanId, span);
+
+  const depths = new Map();
+  const depthOf = (span) => {
+    const path = [];
+    let cursor = span;
+    let depth = 0;
+    const seen = new Set();
+
+    while (cursor && !depths.has(cursor.spanId) && !seen.has(cursor.spanId)) {
+      seen.add(cursor.spanId);
+      path.push(cursor.spanId);
+      const parentId = cursor.parentSpanId;
+      cursor = parentId ? byId.get(parentId) : undefined;
+      if (path.length > MAX_SPAN_DEPTH) break;
+    }
+    depth = cursor && depths.has(cursor.spanId) ? depths.get(cursor.spanId) : 0;
+    for (let i = path.length - 1; i >= 0; i -= 1) depths.set(path[i], (depth += 1));
+    return depths.get(span.spanId);
+  };
+
+  const kept = [];
+  let tooDeep = 0;
+  for (const span of spans) {
+    if (depthOf(span) > MAX_SPAN_DEPTH) tooDeep += 1;
+    else kept.push(span);
+  }
+  return { kept, tooDeep };
+}
+
 // ── Schema ────────────────────────────────────────────────────────────────────
 
 /**
@@ -358,7 +426,32 @@ export function spansForTraces(traceIds) {
     ).all(...chunk);
     for (const row of rows) out.push(readRow(row));
   }
-  return out;
+
+  /*
+   * The second half of `MAX_SPAN_DEPTH`, and the half that is the guarantee.
+   *
+   * Everything downstream of here recurses on the parent chain — core's
+   * `buildSpanTree` settles depths and `flattenTree` walks the forest, both by
+   * recursion — and this is the one funnel all three readers come through, so
+   * it is where the set that will actually be walked can be bounded. The ingest
+   * check cannot stand in for it: a chain built one shallow delivery at a time
+   * under one trace id is invisible from any single request, and rows written
+   * before that check existed are already on disk.
+   *
+   * Said on stderr rather than dropped quietly. This is not an ordinary state —
+   * no real trace is 256 deep — so it is worth a line naming the trace, and a
+   * reader who finds a span missing from `get_backend_trace` has somewhere to
+   * look.
+   */
+  const bounded = withinDepth(out);
+  if (bounded.tooDeep) {
+    process.stderr.write(
+      `DevFlow: ${bounded.tooDeep} held span(s) sit deeper than ${MAX_SPAN_DEPTH} in their parent ` +
+        'chain and were left out — a trace that deep is a loop or a fabrication, and walking it ' +
+        'overflows the stack.\n',
+    );
+  }
+  return bounded.kept;
 }
 
 const parse = (text) => (text === null || text === undefined ? null : JSON.parse(text));
@@ -530,12 +623,23 @@ export function handleOtlpPost(bodyText, contentType) {
     );
   }
 
-  storeSpans(reading.spans);
+  /*
+   * Refused before the rows are written, and counted as a rejection the
+   * exporter can read rather than dropped in silence — `partialSuccess` is
+   * OTLP's own channel for exactly this, and the sender is looking at its own
+   * error log rather than at this source.
+   */
+  const bounded = withinDepth(reading.spans);
+  storeSpans(bounded.kept);
 
-  const rejectedSpans = Object.values(reading.skipped).reduce((a, b) => a + b, 0);
+  const skipped = bounded.tooDeep
+    ? { ...reading.skipped, 'parent chain deeper than 256': bounded.tooDeep }
+    : reading.skipped;
+
+  const rejectedSpans = Object.values(skipped).reduce((a, b) => a + b, 0);
   if (rejectedSpans === 0) return { status: 200, body: { partialSuccess: {} } };
 
-  const why = Object.entries(reading.skipped)
+  const why = Object.entries(skipped)
     .filter(([, count]) => count > 0)
     .map(([reason, count]) => `${reason}: ${count}`)
     .join(', ');

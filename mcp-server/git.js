@@ -103,7 +103,17 @@ function run(cwd, args) {
       return;
     }
 
-    let stdout = '';
+    /*
+     * The chunks are kept and decoded once, at the end.
+     *
+     * `stdout += chunk` decodes each socket read on its own, so a path with a
+     * multi-byte character in it — which `core.quotePath=false` is set precisely
+     * to let through as itself — is silently replaced when the read boundary
+     * falls inside that character. The result is a filename `matchSourceFile`
+     * can never match, reported as a commit that did not touch the file.
+     */
+    const chunks = [];
+    let bytes = 0;
     let over = false;
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
@@ -111,8 +121,9 @@ function run(cwd, args) {
 
     child.stdout.on('data', (chunk) => {
       if (over) return;
-      stdout += chunk;
-      if (stdout.length > OUTPUT_CAP) {
+      chunks.push(chunk);
+      bytes += chunk.length;
+      if (bytes > OUTPUT_CAP) {
         over = true;
         child.kill('SIGKILL');
       }
@@ -126,7 +137,7 @@ function run(cwd, args) {
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve(code === 0 && !over ? stdout : null);
+      resolve(code === 0 && !over ? Buffer.concat(chunks).toString('utf8') : null);
     });
   });
 }

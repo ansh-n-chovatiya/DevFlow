@@ -900,10 +900,24 @@ function spanLines(hop, indent, cap) {
   return lines;
 }
 
-/** One whole span tree as indented lines \u2014 `get_backend_trace`'s half of `spanLines`. */
+/**
+ * One whole span tree as indented lines \u2014 `get_backend_trace`'s half of `spanLines`.
+ *
+ * An explicit stack rather than recursion. The depth here is the depth of a
+ * parent chain that arrived over an unauthenticated port, and a chain a few
+ * thousand deep is a `RangeError` rather than a long answer. `otel.js` bounds
+ * that chain at both ends now, but this walk costs nothing to make incapable of
+ * overflowing at all, and it is the one of the three walks over a span tree
+ * that lives in this package.
+ *
+ * Children are pushed in reverse so they come off the stack in order, which is
+ * the order `buildSpanTree` sorted them into and the order the work happened in.
+ */
 function flattenSpanLines(roots) {
   const lines = [];
-  const walk = (node) => {
+  const stack = [...roots].reverse();
+  while (stack.length) {
+    const node = stack.pop();
     const span = node.span;
     lines.push(
       ...spanLines(
@@ -927,9 +941,8 @@ function flattenSpanLines(roots) {
         SPAN_LINE,
       ),
     );
-    for (const child of node.children) walk(child);
-  };
-  for (const root of roots) walk(root);
+    for (let i = node.children.length - 1; i >= 0; i -= 1) stack.push(node.children[i]);
+  }
   return lines.join('\n');
 }
 
@@ -943,6 +956,18 @@ function flattenSpanLines(roots) {
  * no recording to join to yet. Re-sending a recording is therefore how a trace
  * that arrived late gets joined at all — the same property `changed_in` has,
  * and for the same reason.
+ *
+ * ## Nothing in here may fail the save
+ *
+ * `POST /flows` calls this *after* `saveFlow` has returned, so the recording is
+ * already on disk and readable — which is the whole of what that endpoint
+ * answers for. The reads either side of it are guarded (`otelTry`, `arkgTry`)
+ * and the join in the middle was not, so a throw from it reached the handler's
+ * outer catch and answered a successful save with a 500. The extension then
+ * reports the send as failed and offers a retry, which stores a second copy of
+ * a recording that was never lost. That is a worse outcome than losing the
+ * trace index, and it is reachable: `joinTrace` and `projectTrace` are handed
+ * spans that arrived from off this machine over an unauthenticated port.
  */
 function ingestSpansFor(flow, flowId, git) {
   const calls = tracedCallsOf(flow);
@@ -951,7 +976,14 @@ function ingestSpansFor(flow, flowId, git) {
   const spans = otelTry('read held spans', (o) => o.spansForTraces(calls.map((c) => c.traceId)), []);
   if (!spans || !spans.length) return;
 
-  const { joined } = joinTrace({ calls, spans });
+  let joined;
+  try {
+    ({ joined } = joinTrace({ calls, spans }));
+  } catch (error) {
+    log(`spans: joining this recording's traces failed (${error.message}) — the flow is saved`);
+    return;
+  }
+
   for (const join of joined) {
     arkgTry('trace ingest', (a) => a.ingestTrace(projectTrace(join), flowId, joinableSha(git)));
   }
@@ -1278,6 +1310,14 @@ function generateMarkdown(flow, dir) {
      */
     ...(flow.git ? { commit: describeCommit(flow.git) } : {}),
     limits: renderingFor(flow).limits,
+    /*
+     * `core/export/markdown.ts` takes no clock of its own — it is the pure half,
+     * and it is bundled into `core.js` precisely so this process can import it.
+     * This process is the half that has one. Absent, the writer leaves the
+     * `Exported` line out rather than guessing, so not passing it here would
+     * quietly drop a line `flow.md` has always carried.
+     */
+    now: new Date(),
   });
 }
 
@@ -1821,6 +1861,33 @@ function extensionOrigin(req) {
   return !origin || /^(chrome|moz)-extension:\/\//.test(origin);
 }
 
+/**
+ * A whole request body, as text, refused past `limit` bytes.
+ *
+ * The buffers are kept and decoded **once**, at the end. Appending each chunk to
+ * a string instead — `body += chunk` — decodes every socket read on its own, and
+ * a multi-byte UTF-8 character split across two reads then decodes as two
+ * replacement characters, one on each side of the cut. Nothing throws: the JSON
+ * still parses, the byte count is still right, and the corruption lands inside a
+ * string value where it is only ever seen by whoever reads the recording. A
+ * flow carries exactly the text that breaks this way — a `£` in a response body,
+ * an em dash in a console message, an accented name in an element label — and a
+ * 500MB ceiling means many reads per POST.
+ *
+ * `tooLarge` rather than a thrown error, because every caller answers it with
+ * its own 413 naming its own ceiling.
+ */
+async function readBody(req, limit) {
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of req) {
+    bytes += chunk.length;
+    if (bytes > limit) return { tooLarge: true };
+    chunks.push(chunk);
+  }
+  return { tooLarge: false, text: Buffer.concat(chunks).toString('utf8') };
+}
+
 const httpServer = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, DELETE, OPTIONS');
@@ -1985,22 +2052,18 @@ const httpServer = http.createServer(async (req, res) => {
     }
 
     try {
-      let body = '';
-      let bytes = 0;
-      for await (const chunk of req) {
-        bytes += chunk.length;
-        if (bytes > MAX_CONFIG_BYTES) {
-          res.writeHead(413, { 'Content-Type': 'application/json' });
-          res.end(
-            JSON.stringify({
-              error: `A settings file may not exceed ${MAX_CONFIG_BYTES} bytes.`,
-            }),
-          );
-          req.destroy();
-          return;
-        }
-        body += chunk;
+      const read = await readBody(req, MAX_CONFIG_BYTES);
+      if (read.tooLarge) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: `A settings file may not exceed ${MAX_CONFIG_BYTES} bytes.`,
+          }),
+        );
+        req.destroy();
+        return;
       }
+      const body = read.text;
 
       let sent;
       try {
@@ -2113,22 +2176,17 @@ const httpServer = http.createServer(async (req, res) => {
     }
 
     try {
-      let body = '';
-      let bytes = 0;
-      for await (const chunk of req) {
-        bytes += chunk.length;
-        // Read before anything has vouched for it, so it needs its own ceiling:
-        // an unbounded concatenation is a page away from exhausting the heap of
-        // the process the user's Claude session depends on.
-        if (bytes > MAX_BODY_BYTES) {
-          res.writeHead(413, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Flow too large.' }));
-          req.destroy();
-          return;
-        }
-        body += chunk;
+      // Read before anything has vouched for it, so it needs its own ceiling:
+      // an unbounded concatenation is a page away from exhausting the heap of
+      // the process the user's Claude session depends on.
+      const read = await readBody(req, MAX_BODY_BYTES);
+      if (read.tooLarge) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Flow too large.' }));
+        req.destroy();
+        return;
       }
-      const flow = JSON.parse(body);
+      const flow = JSON.parse(read.text);
 
       if (!flow.id || !Array.isArray(flow.steps)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2310,20 +2368,15 @@ const httpServer = http.createServer(async (req, res) => {
     }
 
     try {
-      let body = '';
-      let bytes = 0;
-      for await (const chunk of req) {
-        bytes += chunk.length;
-        if (bytes > MAX_WEBHOOK_BYTES) {
-          res.writeHead(413, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: `A crash delivery may not exceed ${MAX_WEBHOOK_BYTES} bytes.` }));
-          req.destroy();
-          return;
-        }
-        body += chunk;
+      const read = await readBody(req, MAX_WEBHOOK_BYTES);
+      if (read.tooLarge) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `A crash delivery may not exceed ${MAX_WEBHOOK_BYTES} bytes.` }));
+        req.destroy();
+        return;
       }
 
-      const parsed = parseSentryDelivery(body);
+      const parsed = parseSentryDelivery(read.text);
       if (!parsed.ok) {
         /*
          * The reason travels. A relay that is working and a relay that is
@@ -2360,24 +2413,19 @@ const httpServer = http.createServer(async (req, res) => {
     }
 
     try {
-      let body = '';
-      let bytes = 0;
-      for await (const chunk of req) {
-        bytes += chunk.length;
-        if (bytes > MAX_SPAN_BYTES) {
-          res.writeHead(413, { 'Content-Type': 'application/json' });
-          res.end(
-            JSON.stringify({ error: `A span delivery may not exceed ${MAX_SPAN_BYTES} bytes.` }),
-          );
-          req.destroy();
-          return;
-        }
-        body += chunk;
+      const read = await readBody(req, MAX_SPAN_BYTES);
+      if (read.tooLarge) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({ error: `A span delivery may not exceed ${MAX_SPAN_BYTES} bytes.` }),
+        );
+        req.destroy();
+        return;
       }
 
       const answer = otelTry(
         'ingest delivery',
-        (o) => o.handleOtlpPost(body, req.headers['content-type'] ?? ''),
+        (o) => o.handleOtlpPost(read.text, req.headers['content-type'] ?? ''),
         { status: 503, body: { error: 'Span ingest is unavailable.' } },
       );
       res.writeHead(answer.status, { 'Content-Type': 'application/json' });
@@ -2436,24 +2484,19 @@ const httpServer = http.createServer(async (req, res) => {
     }
 
     try {
-      let body = '';
-      let bytes = 0;
-      for await (const chunk of req) {
-        bytes += chunk.length;
-        if (bytes > MAX_PICK_BYTES) {
-          res.writeHead(413, { 'Content-Type': 'application/json' });
-          res.end(
-            JSON.stringify({ error: `A component pick may not exceed ${MAX_PICK_BYTES} bytes.` }),
-          );
-          req.destroy();
-          return;
-        }
-        body += chunk;
+      const read = await readBody(req, MAX_PICK_BYTES);
+      if (read.tooLarge) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({ error: `A component pick may not exceed ${MAX_PICK_BYTES} bytes.` }),
+        );
+        req.destroy();
+        return;
       }
 
       let sent;
       try {
-        sent = JSON.parse(body);
+        sent = JSON.parse(read.text);
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'A component pick must be a JSON object.' }));
@@ -2544,26 +2587,21 @@ const httpServer = http.createServer(async (req, res) => {
     }
 
     try {
-      let body = '';
-      let bytes = 0;
-      for await (const chunk of req) {
-        bytes += chunk.length;
-        if (bytes > MAX_ARCHITECTURE_BYTES) {
-          res.writeHead(413, { 'Content-Type': 'application/json' });
-          res.end(
-            JSON.stringify({
-              error: `An architecture reading may not exceed ${MAX_ARCHITECTURE_BYTES} bytes.`,
-            }),
-          );
-          req.destroy();
-          return;
-        }
-        body += chunk;
+      const read = await readBody(req, MAX_ARCHITECTURE_BYTES);
+      if (read.tooLarge) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: `An architecture reading may not exceed ${MAX_ARCHITECTURE_BYTES} bytes.`,
+          }),
+        );
+        req.destroy();
+        return;
       }
 
       let sent;
       try {
-        sent = JSON.parse(body);
+        sent = JSON.parse(read.text);
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'An architecture reading must be a JSON object.' }));
@@ -7161,7 +7199,16 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         flow = await readFlow(args.id);
       } catch (error) {
-        return text(error.message);
+        /*
+         * `readFailure`, as every other tool here. This returned
+         * `text(error.message)` — so a mistyped id came back as a *successful*
+         * result reading `ENOENT: no such file or directory, open
+         * '/Users/…/.devflow/flows/xyz/flow.json'`: no `isError` for the client
+         * to see, an absolute path from this machine, and nothing telling the
+         * reader that `list_flows` is the next call. A flow too new for this
+         * build lost its "update the server" sentence to the same line.
+         */
+        return readFailure(error, args.id);
       }
 
       /*

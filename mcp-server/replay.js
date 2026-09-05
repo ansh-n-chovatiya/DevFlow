@@ -180,6 +180,19 @@ export function runCommand({ executable, args, cwd, timeoutMs }) {
     let stderr = '';
     let timedOut = false;
 
+    /*
+     * Decoded by the stream, not by `String(chunk)` per read.
+     *
+     * The runner's JSON report carries the flow's own name and every failure
+     * message, which is user text — and decoding each read on its own replaces
+     * any multi-byte character the read boundary happens to fall inside. The
+     * report still parses, so the corruption arrives as a mangled test title in
+     * an otherwise correct verdict. `setEncoding` holds the partial character
+     * back until the rest of it arrives.
+     */
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+
     const keep = (buffer, chunk) =>
       buffer.length >= OUTPUT_CAP ? buffer : buffer + String(chunk).slice(0, OUTPUT_CAP - buffer.length);
 
