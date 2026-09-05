@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.1.0 — 2026-09-05
 
 A full audit of the extension, the engine and the server, fixing what it found.
 Grouped by what it means for somebody using DevFlow rather than by module.
