@@ -486,6 +486,29 @@ export function approximateBytes(steps: Step[]): number {
 // ── Writing ──────────────────────────────────────────────────────────────────
 
 /**
+ * A fresh id for a flow about to be archived.
+ *
+ * The format was `flow_<ms>`, and two archives that land in the same
+ * millisecond then share an id. What that costs is not a duplicate row: the
+ * second `setLocal` writes its steps over the first flow's — one id, one
+ * `savedFlow_` key — and the index ends up listing two entries that both open
+ * the second recording, which one Delete then sweeps together. The first flow
+ * is destroyed with nothing said anywhere, and `saveAsFlow`'s rollback below
+ * assumes the opposite in as many words.
+ *
+ * A counter cannot close it. The two surfaces that archive — the popup and a
+ * viewer tab — are separate documents with separate module state, so anything
+ * held in this module is per-page and the collision is between pages. Randomness
+ * is shared by construction, and `features/` is the impure half where
+ * `Math.random` is allowed; `core/` is where it would not be. The id is opaque
+ * everywhere it travels — concatenated into a storage key, never parsed, never
+ * ordered on, since the library sorts by `createdAt` — so lengthening it is free.
+ */
+function newFlowId(): string {
+  return `flow_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
  * Archive the recording in progress under a name.
  *
  * Archiving is the moment a flow stops changing, so it is also the moment its
@@ -497,7 +520,7 @@ export function approximateBytes(steps: Step[]): number {
 export async function saveAsFlow(name: string, steps: Step[]): Promise<Result<FlowMeta>> {
   if (steps.length === 0) return err(flowError('STORAGE_WRITE', 'nothing to save'));
 
-  const id = `flow_${Date.now()}`;
+  const id = newFlowId();
   const numbered = renumber(steps);
   // The recording's own snapshot, read before anything else can start a new
   // one. It is still in local storage: stopping a recording does not clear it,
@@ -536,7 +559,7 @@ export async function saveAsFlow(name: string, steps: Step[]): Promise<Result<Fl
      *
      * Left behind, that key is megabytes of a 10 MB budget that nothing can
      * reach: it is not in the index, so the library never lists it and no row
-     * can delete it; the id is `flow_<ms>` and never recurs, so no later save
+     * can delete it; the id never recurs — see `newFlowId` — so no later save
      * overwrites it. The user is told "there is no room", and the space is
      * occupied by a key nothing can name — which is the failure they were
      * already having, made permanent.
@@ -552,6 +575,34 @@ export async function saveAsFlow(name: string, steps: Step[]): Promise<Result<Fl
   }
 
   return ok(meta);
+}
+
+/**
+ * An archived flow's framework tables, pruned to the steps that survive an edit.
+ *
+ * The stored shape is what `buildFlowFrameworks` already returned, so the
+ * presence it was built from is taken back off it and the one rule is run
+ * again. Re-running it rather than writing a second prune here is the whole
+ * point: the rule lives in `core/locate/flow-frameworks.ts`, and two copies of
+ * it is exactly how the React table came to be pruned on an edit while Vue's
+ * kept shipping the source paths of code no remaining step points at.
+ */
+function prunedFrameworks(
+  steps: Step[],
+  stored: Partial<Record<Framework, FlowComponents>>,
+): Partial<Record<Framework, FlowComponents>> {
+  const entries = Object.entries(stored) as [Framework, FlowComponents][];
+
+  return buildFlowFrameworks(
+    steps,
+    entries.map(([framework, table]) => ({
+      framework,
+      detected: true,
+      ...(table.version === undefined ? {} : { version: table.version }),
+      ...(table.build === undefined ? {} : { build: table.build }),
+    })),
+    Object.fromEntries(entries.map(([framework, table]) => [framework, table.components])),
+  );
 }
 
 /**
@@ -578,8 +629,13 @@ export async function updateFlowSteps(id: string, steps: Step[]): Promise<Result
    */
   // The steps are read alongside the React table because the thumbnail decision
   // below needs the picture this edit is replacing, not just its step count.
-  const stored = await getLocal([savedFlowKey(id), savedFlowReactKey(id)]);
+  const stored = await getLocal([savedFlowKey(id), savedFlowReactKey(id), savedFlowFrameworksKey(id)]);
   const react = stored.ok ? (stored.value[savedFlowReactKey(id)] as FlowReact | undefined) : undefined;
+  const frameworks = stored.ok
+    ? (stored.value[savedFlowFrameworksKey(id)] as
+        | Partial<Record<Framework, FlowComponents>>
+        | undefined)
+    : undefined;
   const previous = stored.ok && Array.isArray(stored.value[savedFlowKey(id)])
     ? (stored.value[savedFlowKey(id)] as Step[])
     : null;
@@ -587,6 +643,12 @@ export async function updateFlowSteps(id: string, steps: Step[]): Promise<Result
   const written = await setLocal({
     [savedFlowKey(id)]: numbered,
     ...(react ? { [savedFlowReactKey(id)]: { ...react, components: pruneComponents(numbered, react.components) } } : {}),
+    // The same rule one framework over. `buildFlowFrameworks` is the rule —
+    // "a flow that dropped steps must not ship a table describing components no
+    // remaining step mentions" — and it is reused rather than restated, because
+    // a second copy of a pruning rule is how React's table came to be pruned on
+    // an edit and Vue's did not.
+    ...(frameworks ? { [savedFlowFrameworksKey(id)]: prunedFrameworks(numbered, frameworks) } : {}),
   });
   if (!written.ok) return written;
 
@@ -653,7 +715,7 @@ export async function deleteFlow(id: string): Promise<Result<DeletedFlow>> {
   const record = await readFlowRecord(id);
   if (!record.ok) return record;
 
-  const { meta, steps, react } = record.value;
+  const { meta, steps, react, frameworks, state, renders } = record.value;
   if (!meta) return err(flowError('STORAGE_WRITE', `no flow ${id}`));
 
   if (steps !== null) {
@@ -687,26 +749,65 @@ export async function deleteFlow(id: string): Promise<Result<DeletedFlow>> {
   });
 
   // `steps: []` is the ghost case, and the caller reads it as "there is nothing
-  // here to offer an undo for".
-  return ok({ meta, steps: steps ?? [], react });
+  // here to offer an undo for". Everything else the delete took travels back
+  // whole, because the undo has to put all of it back — see `RestorableRest`.
+  return ok({ meta, steps: steps ?? [], react, frameworks, state, renders });
 }
 
 /** Everything a delete took, which is everything an undo has to put back. */
-export interface DeletedFlow {
+export interface DeletedFlow extends RestorableRest {
   meta: FlowMeta;
   steps: Step[];
   react: FlowReact | null;
 }
 
-/** Put a deleted flow back, for the undo on the toast. */
+/**
+ * The three records a flow keeps beside its steps and its React table.
+ *
+ * They were deleted with the flow and not put back, so an undo returned the
+ * recording with its state stores, its render summary and every non-React
+ * framework table silently gone — and gone for good, since the flow that came
+ * back then looked exactly like one recorded by a build that never captured
+ * any of them. Every flow archived by a current build carries a state and a
+ * render record, so that was not an edge case; it was the ordinary undo.
+ */
+export interface RestorableRest {
+  frameworks: Partial<Record<Framework, FlowComponents>>;
+  state: FlowState | null;
+  renders: FlowRenders | null;
+}
+
+/**
+ * Put a deleted flow back, for the undo on the toast.
+ *
+ * `rest` is required, and that is the whole of the design: a call that leaves it
+ * out restores a flow whose state, render summary and non-React framework tables
+ * are gone — and gone indistinguishably, because what comes back then looks
+ * exactly like a flow archived by a build that never captured any. Every field
+ * of it is on the `DeletedFlow` the matching `deleteFlow` returned, so the undo
+ * hands that result straight back and has nothing to assemble.
+ *
+ * This briefly bridged the gap with a module-level map of the last few deletes,
+ * so an old three-argument call site could still restore everything. Making the
+ * argument mandatory is what a bridge like that costs to remove later: state
+ * that lives between calls is not shared with the tab that did not make the
+ * delete, is never cleared on any path that does not undo, and reads as though
+ * `restoreFlow` knows things it was not told.
+ */
 export async function restoreFlow(
   meta: FlowMeta,
   steps: Step[],
-  react: FlowReact | null = null,
+  react: FlowReact | null,
+  rest: RestorableRest,
 ): Promise<Result<void>> {
   const written = await setLocal({
     [savedFlowKey(meta.id)]: steps,
     ...(react ? { [savedFlowReactKey(meta.id)]: react } : {}),
+    ...(Object.keys(rest.frameworks).length
+      ? { [savedFlowFrameworksKey(meta.id)]: rest.frameworks }
+      : {}),
+    ...(rest.state ? { [savedFlowStateKey(meta.id)]: rest.state } : {}),
+    ...(rest.renders ? { [savedFlowRendersKey(meta.id)]: rest.renders } : {}),
   });
   if (!written.ok) return written;
 

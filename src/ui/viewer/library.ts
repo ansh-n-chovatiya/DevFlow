@@ -187,7 +187,16 @@ export function mountLibrary(app: App, onSaveCurrent: () => void): { paint: () =
       message: `Deleted “${row.name}”.`,
       undo: () => {
         void (async () => {
-          const back = await restoreFlow(removed.value.meta, removed.value.steps, removed.value.react);
+          // The delete's own result is handed back whole: it carries the state,
+          // the render summary and the framework tables the delete also took,
+          // and an undo that puts back only the steps and the React table is a
+          // loss nothing afterwards can tell from a flow that never had them.
+          const back = await restoreFlow(
+            removed.value.meta,
+            removed.value.steps,
+            removed.value.react,
+            removed.value,
+          );
           if (!back.ok) {
             showToast({ message: back.error.message, tone: 'danger' });
             return;

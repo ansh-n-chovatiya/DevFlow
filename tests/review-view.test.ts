@@ -11,6 +11,7 @@ import type {
 import { detailText, pathText, STATUS_DETAIL } from '../src/ui/components/result-card.js';
 import {
   ALSO_ON_LIMIT,
+  activeAfterDelete,
   deriveReviewView,
   firstVisibleIndex,
   STATUS_WORD,
@@ -712,5 +713,52 @@ describe('firstVisibleIndex', () => {
   it('reports nothing to select when the filter hides everything', () => {
     expect(firstVisibleIndex(steps, 'errors')).toBeNull();
     expect(firstVisibleIndex([], 'all')).toBeNull();
+  });
+});
+
+/**
+ * Where the highlight goes after a deletion.
+ *
+ * The active index addresses the whole flow, so a deletion moves it. Leaving it
+ * alone put the mark on the wrong card — and, at the end of a flow, one past the
+ * end, where `Delete` found no step and did nothing at all.
+ */
+describe('activeAfterDelete', () => {
+  const steps = (types: string[]): Step[] =>
+    types.map(
+      (type, at) =>
+        ({ type, action: String(at), url: 'u', timestamp: at + 1, screenshot: null }) as unknown as Step,
+    );
+
+  it('leaves a selection above the gap where it is', () => {
+    expect(activeAfterDelete(steps(['click', 'click']), 'all', 2, 0)).toBe(0);
+  });
+
+  it('follows a selection below the gap down by the one that went', () => {
+    // Three steps, the last one selected, the first deleted: the step the user
+    // chose is now at index 1, and the mark has to travel with it.
+    expect(activeAfterDelete(steps(['click', 'click']), 'all', 0, 2)).toBe(1);
+  });
+
+  it('re-seats onto the step that took the gap when the selected one went', () => {
+    expect(activeAfterDelete(steps(['click', 'click']), 'all', 0, 0)).toBe(0);
+  });
+
+  it('falls back to the step before the gap at the end of a flow', () => {
+    // The regression: deleting the last step left the index past the end, and
+    // pressing Delete again did nothing with nothing on screen to say why.
+    expect(activeAfterDelete(steps(['click', 'click']), 'all', 2, 2)).toBe(1);
+    expect(activeAfterDelete([], 'all', 0, 0)).toBeNull();
+  });
+
+  it('re-seats onto a step the filter actually shows', () => {
+    // Deleting the only visible click must not land the mark on a navigation
+    // the filter is hiding.
+    expect(activeAfterDelete(steps(['navigate', 'click']), 'click', 0, 0)).toBe(1);
+    expect(activeAfterDelete(steps(['navigate']), 'click', 0, 0)).toBeNull();
+  });
+
+  it('has nothing to move when nothing was selected', () => {
+    expect(activeAfterDelete(steps(['click']), 'all', 0, null)).toBeNull();
   });
 });

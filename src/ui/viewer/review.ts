@@ -35,11 +35,11 @@
  */
 
 import { compactBody } from '../../core/schema/index.js';
-import { statusClass, withImportedScreenshot } from '../../core/flow/index.js';
+import { renumber, statusClass, withImportedScreenshot } from '../../core/flow/index.js';
 import { describeTrace } from '../../core/trace/index.js';
 import { ACCEPT, firstImage, importScreenshot } from '../../features/screenshots/import.js';
 import { getLocal } from '../../chrome/storage.js';
-import { deleteFlow, renameFlow } from '../../features/flows/store.js';
+import { deleteFlow, renameFlow, restoreFlow } from '../../features/flows/store.js';
 import { sendToWorker } from '../../shared/messages.js';
 import type { ConsoleEntry, NetworkCall, Step } from '../../shared/types.js';
 import { resultCard } from '../components/result-card.js';
@@ -54,6 +54,7 @@ import { clone, el, find, show } from './dom.js';
 import { openExport } from './export-dialog.js';
 import { openSend } from './send-dialog.js';
 import {
+  activeAfterDelete,
   deriveReviewView,
   firstVisibleIndex,
   type StepCardView,
@@ -266,8 +267,42 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
       return;
     }
 
+    const name = flow.name;
     app.navigate(LIBRARY);
-    showToast({ message: `Deleted “${flow.name}”.` });
+
+    // No steps means this row was a ghost — see library.ts, which deletes the
+    // same flow with the same words and has always offered the way back. One
+    // destructive action reached from two places should not be undoable from
+    // only one of them: the button here is the *more* dangerous of the two,
+    // because it is pressed while looking at the flow rather than at a list.
+    if (removed.value.steps.length === 0) {
+      showToast({ message: `Removed “${name}”.` });
+      return;
+    }
+
+    showToast({
+      message: `Deleted “${name}”.`,
+      undo: () => {
+        void (async () => {
+          // The delete's own result, handed back whole — the same call the
+          // library makes, for the same reason: it carries the state, the
+          // render summary and the framework tables the delete also took, and
+          // an undo that puts back only the steps and the React table restores
+          // a flow nothing afterwards can tell from one that never had them.
+          const back = await restoreFlow(
+            removed.value.meta,
+            removed.value.steps,
+            removed.value.react,
+            removed.value,
+          );
+          if (!back.ok) {
+            showToast({ message: back.error.message, tone: 'danger' });
+            return;
+          }
+          await app.reload();
+        })();
+      },
+    });
   }
 
   /** The flow name, edited where it sits rather than in a dialog. */
@@ -510,6 +545,16 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
     const entry = { index, step, before: flow.steps[index + 1] ?? null };
     app.state.undo.push(entry);
 
+    // Moved before the write, so the paint `editSteps` makes is already
+    // highlighting the right card. See `activeAfterDelete` for what the stale
+    // index cost: Delete stopped working, silently, at the end of every flow.
+    app.state.activeIndex = activeAfterDelete(
+      flow.steps.filter((_, at) => at !== index),
+      app.state.filter,
+      index,
+      app.state.activeIndex,
+    );
+
     void editSteps((steps) => {
       steps.splice(index, 1);
       return steps;
@@ -524,22 +569,28 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
   }
 
   function undoDelete(entry?: UndoEntry): void {
-    const { undo } = app.state;
+    const { flow, undo } = app.state;
     const target = entry ?? undo[undo.length - 1];
-    if (!target) return;
+    if (!flow || !target) return;
 
     const at = undo.indexOf(target);
     if (at === -1) return;
     undo.splice(at, 1);
 
+    // Re-anchored on the step this one used to sit in front of. Splicing at the
+    // remembered index put a step back in the wrong place as soon as an earlier
+    // step had been deleted too — undoing the older of two deletions reordered
+    // the flow, and the export then renumbered that wrong order into "step 5 is
+    // the thing that happened last".
+    const anchor = target.before ? flow.steps.indexOf(target.before) : -1;
+    const where = anchor !== -1 ? anchor : Math.min(target.index, flow.steps.length);
+
+    // Ctrl+Z has no toast and no other acknowledgement, so the highlight landing
+    // on the restored step is what says the undo worked — and it is where the
+    // step went, which the index alone stopped being once the list shifted.
+    app.state.activeIndex = where;
+
     void editSteps((steps) => {
-      // Re-anchored on the step this one used to sit in front of. Splicing at
-      // the remembered index put a step back in the wrong place as soon as an
-      // earlier step had been deleted too — undoing the older of two deletions
-      // reordered the flow, and the export then renumbered that wrong order into
-      // "step 5 is the thing that happened last".
-      const anchor = target.before ? steps.indexOf(target.before) : -1;
-      const where = anchor !== -1 ? anchor : Math.min(target.index, steps.length);
       steps.splice(where, 0, target.step);
       return steps;
     });
@@ -1013,9 +1064,20 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
       cascade.addEventListener('click', () => {
         const flow = app.state.flow;
         if (!flow) return;
-        openCascade(
+        /*
+         * Renumbered, because `stepNumber` is stamped at capture and goes stale
+         * the moment a step is deleted — `core/flow`'s own note says so, and
+         * every other path out of a flow already renumbers.
+         *
+         * `buildCascade` finds its step by `stepNumber ?? position`, and the
+         * card asks for the position it is drawn under. Delete one step and the
+         * two disagree for every card below it: the lookup missed, `openCascade`
+         * answered false, and the button did nothing whatsoever — no picture, no
+         * sentence, on every remaining step of the flow.
+         */
+        const drew = openCascade(
           {
-            steps: flow.steps,
+            steps: renumber(flow.steps),
             stores: flow.state?.stores ?? [],
             // Component id → the name a person reads. The cascade falls back to
             // the id when a component is not in the table, which is what a
@@ -1026,6 +1088,14 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
           },
           card.number,
         );
+
+        // A refusal is still an answer, and a button that does nothing is not
+        // one. `openCascade` returns false when there was nothing it could
+        // draw; saying so is the difference between "this step has no story"
+        // and "this feature is broken".
+        if (!drew) {
+          showToast({ message: `There is nothing to draw for step ${card.number}.` });
+        }
       });
     } else {
       cascade.remove();
@@ -1230,17 +1300,13 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
       return;
     }
 
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'e') {
+    // Through the button, and only outside a text field, like the three above
+    // it. Ctrl+E is "move to end of line" in every text field on macOS, and
+    // this branch answered it by swallowing the keystroke and opening a dialog
+    // over the note the user was in the middle of typing.
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'e' && !typing) {
       event.preventDefault();
-      const { flow } = app.state;
-      if (flow) {
-      openExport({
-        steps: flow.steps,
-        title: flow.name,
-        react: flow.react,
-        settings: flow.settings,
-      });
-    }
+      dom.exportButton.click();
       return;
     }
 
@@ -1272,11 +1338,14 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
 
     if ((event.key === 'e' || event.key === 'E') && app.state.activeIndex !== null) {
       event.preventDefault();
-      document
-        .querySelector<HTMLButtonElement>(
-          `.step[data-index="${app.state.activeIndex}"] [data-action="annotate"]`,
-        )
-        ?.click();
+      // The button is removed on a step with no picture to annotate, so the key
+      // aimed at nothing and did nothing. The shortcut list promises this key
+      // works; when it cannot, it owes the same sentence the editor itself gives.
+      const button = document.querySelector<HTMLButtonElement>(
+        `.step[data-index="${app.state.activeIndex}"] [data-action="annotate"]`,
+      );
+      if (button) button.click();
+      else showToast({ message: 'This step has no screenshot to annotate.' });
       return;
     }
 
@@ -1289,7 +1358,18 @@ export function mountReview(app: App, onSaveCurrent: () => void): { paint: () =>
       return;
     }
 
-    if (event.key === 'Escape' && app.state.filter !== 'all') setFilter('all');
+    // The menu is a panel rather than a `<dialog>`, so nothing dismisses it for
+    // us: opening it and pressing Escape left it hanging over the flow with
+    // `aria-expanded="true"` and no way out but a click elsewhere. It is the
+    // nearer of the two things Escape can close here, so it goes first.
+    if (event.key === 'Escape') {
+      if (!dom.menu.classList.contains('hidden')) {
+        closeMenu();
+        dom.more.focus();
+      } else if (app.state.filter !== 'all') {
+        setFilter('all');
+      }
+    }
   });
 
   dom.zoomClose.addEventListener('click', () => dom.zoomDialog.close());

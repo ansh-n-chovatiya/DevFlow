@@ -66,18 +66,26 @@ interface Session {
   id: string | undefined;
   options: ExportOptions;
   busy: boolean;
-  /** An archived flow's frozen table. Absent for the live recording, whose
-   *  table `sendFlow` reads back itself after its final resolve pass. */
-  react: FlowReact | undefined;
+  /**
+   * An archived flow's frozen table. `undefined` for the live recording, whose
+   * table `sendFlow` reads back itself after its final resolve pass.
+   *
+   * `null` is kept rather than folded into `undefined`, here and on `state` and
+   * `renders` below, because it is the other answer: an archived flow that has
+   * no table of its own. Folded together, `sendFlow` reads the *live*
+   * recording's back for it and the user sends a week-old flow carrying this
+   * afternoon's components — see `sendFlow`'s `archivedReact`.
+   */
+  react: FlowReact | null | undefined;
   /** When the flow was recorded, so a re-send is not dated to the re-send. */
   recordedAt: number | undefined;
   /** An archived flow's stamp; `undefined` for the live recording, whose stamp
    *  `sendFlow` reads from storage. */
   settings: Overrides | undefined;
   /** An archived flow's frozen state, on the same split as `react`. */
-  state: FlowState | undefined;
+  state: FlowState | null | undefined;
   /** An archived flow's frozen render summary, on the same split again. */
-  renders: FlowRenders | undefined;
+  renders: FlowRenders | null | undefined;
   /** An archived flow's frozen framework tables, on the same split again. */
   frameworks: Partial<Record<Framework, FlowComponents>> | undefined;
   /** What `export.send*` says this dialog opens on — see the export dialog. */
@@ -101,7 +109,9 @@ function paint(): void {
   const view = deriveSendView({
     steps: session.steps,
     options: session.options,
-    react: session.react,
+    // The estimate only asks whether there is a table to price, so the two
+    // absences the send path keeps apart are one absence here.
+    react: session.react ?? undefined,
     target: { url: session.target, probe: session.probe },
     // Both feed the context estimate, which is the walkthrough rendered rather
     // than guessed: the stamp supplies the body and console caps it is rendered
@@ -373,6 +383,9 @@ export interface OpenSendOptions {
   frameworks?: Partial<Record<Framework, FlowComponents>>;
 }
 
+/** See the export dialog: the settings read is a window a double-click fits in. */
+let opening = false;
+
 export function openSend({
   steps,
   name,
@@ -388,6 +401,8 @@ export function openSend({
     showToast({ message: 'There is nothing to send yet.' });
     return;
   }
+  if (opening) return;
+  opening = true;
 
   void (async () => {
     const [stored, settingsNow] = await Promise.all([
@@ -407,11 +422,14 @@ export function openSend({
         stored.ok ? stored.value.sendOptionsAgainst : undefined,
       ),
       busy: false,
-      react: react ?? undefined,
+      // Passed through exactly as given: `null` travels, because it is the
+      // archived flow's own "there is none" and `undefined` is the live
+      // recording's "read yours". See `Session.react`.
+      react,
       recordedAt: recordedAt ?? undefined,
       settings: settings ?? undefined,
-      state: state ?? undefined,
-      renders: renders ?? undefined,
+      state,
+      renders,
       frameworks,
       // Read from the same `load()` the four switches came from, so the address
       // on screen and the defaults beside it describe one moment.
@@ -423,5 +441,7 @@ export function openSend({
     paint();
     dom.dialog.showModal();
     probeTarget();
-  })();
+  })().finally(() => {
+    opening = false;
+  });
 }

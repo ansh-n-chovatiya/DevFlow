@@ -336,11 +336,26 @@ export interface OpenExportOptions {
   settings?: Overrides | null;
 }
 
+/**
+ * True from the first press until the dialog is actually on screen.
+ *
+ * Opening reads two stores before it can call `showModal`, and that gap is long
+ * enough to double-click through: the second press built a second session over
+ * the first and then called `showModal` on a dialog that was already open, which
+ * throws `InvalidStateError` out of a floating promise nobody is catching.
+ * `dialog.open` cannot see that press, because during the gap the dialog is
+ * genuinely closed — and testing it once the dialog *is* open would refuse the
+ * deliberate replace-the-session case above, which is a different question.
+ */
+let opening = false;
+
 export function openExport({ steps, title, react, settings }: OpenExportOptions): void {
   if (steps.length === 0) {
     showToast({ message: 'There is nothing to export yet.' });
     return;
   }
+  if (opening) return;
+  opening = true;
 
   void (async () => {
     /*
@@ -381,5 +396,7 @@ export function openExport({ steps, title, react, settings }: OpenExportOptions)
     dom.filename.value = session.filename;
     paint();
     dom.dialog.showModal();
-  })();
+  })().finally(() => {
+    opening = false;
+  });
 }

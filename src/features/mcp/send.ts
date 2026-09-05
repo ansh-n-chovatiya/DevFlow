@@ -277,6 +277,16 @@ export function walkthroughFor(
       ...(carries && react ? { react: { ...react, components } } : {}),
       settings: describeStamp(settings),
       limits,
+      /*
+       * Read here rather than in `core/export/markdown.ts`, which is bundled
+       * into `mcp-server/core.js` and may not have a clock. `features/` is
+       * where the clock lives, so this is the nearest caller entitled to one.
+       *
+       * Left absent, the writer omits the `Exported` line rather than inventing
+       * a time — which is the right default and the wrong answer here, since
+       * the walkthrough is the thing a person reads next to a bug report.
+       */
+      now: new Date(),
     },
   );
 }
@@ -406,8 +416,18 @@ export async function sendFlow(
   steps: Step[],
   id = `flow-${Date.now()}`,
   include: ExportOptions = SEND_EVERYTHING,
-  /** An archived flow's frozen table. Omitted for the live recording, whose
-   *  table is read back here so it includes whatever the resolve below found. */
+  /**
+   * An archived flow's frozen table.
+   *
+   * Undefined and `null` are different answers, and every `archived*` argument
+   * below reads them the same way: undefined is "the caller has nothing to say,
+   * this is the live recording", and the value is read back here so it includes
+   * whatever the resolve above found; `null` is an archived flow saying it has
+   * no table of its own. Collapsing the two — which `??` does — hands an
+   * archived flow the *current* recording's components, so a flow from last
+   * week arrives at Claude naming source files nothing in it ever touched.
+   * Silently wrong context is worse for this product than absent context.
+   */
   archivedReact?: FlowReact | null,
   /** When the flow was *recorded*. Defaults to now, which is only right for the
    *  live recording — an archived flow has its own, older, `createdAt`. */
@@ -415,7 +435,7 @@ export async function sendFlow(
   /** An archived flow's frozen stamp. Omitted for the live recording, whose
    *  stamp is read back here — the same split as `archivedReact`. */
   archivedSettings?: Overrides | null,
-  /** An archived flow's frozen state, on the same split as `archivedReact`. */
+  /** An archived flow's frozen state, on `archivedReact`'s undefined/null split. */
   archivedState?: FlowState | null,
   /** An archived flow's frozen render summary, on the same split again. */
   archivedRenders?: FlowRenders | null,
@@ -472,8 +492,13 @@ export async function sendFlow(
   // Not read at all when React is switched off for this send — `sending` has no
   // refs left, so the table would prune to nothing, but not touching storage is
   // the clearer promise.
-  const react = include.react ? (archivedReact ?? (await readCurrentReact(sending))) : null;
-  const state = archivedState ?? (await readCurrentState());
+  //
+  // `=== undefined` rather than `??` throughout, because `null` is an archived
+  // flow's own answer and not an absent one — see `archivedReact`.
+  const react = include.react
+    ? (archivedReact === undefined ? await readCurrentReact(sending) : archivedReact)
+    : null;
+  const state = archivedState === undefined ? await readCurrentState() : archivedState;
   /*
    * Not behind an include switch, for the reason `state` is not: what is sent
    * is bounded by `recording.renders`, which is the switch that decides whether
@@ -481,7 +506,9 @@ export async function sendFlow(
    * bytes. It is dropped along with the steps' own lists when React is switched
    * off, because without the component table it names nothing.
    */
-  const renders = include.react ? (archivedRenders ?? (await readCurrentRenders())) : null;
+  const renders = include.react
+    ? (archivedRenders === undefined ? await readCurrentRenders() : archivedRenders)
+    : null;
   // The recording's own time, not the moment Send was pressed. The server
   // prints this as "Recorded" and orders `list_flows` by it, so stamping now
   // dated a week-old flow to this afternoon and pushed it above the recording

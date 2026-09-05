@@ -119,8 +119,30 @@ async function readRecordingState(): Promise<RecordingState> {
     : 'idle';
 }
 
+/**
+ * Which read is the current one.
+ *
+ * Every `reload` awaits storage several times, and the route can change under
+ * it: leave flow A for flow B while A's read is still in the air and B's — from
+ * a warm cache — finishes first. A's read then landed second, wrote *its* flow
+ * into `state.flow` and painted, so the review screen showed flow A under a hash
+ * that said B, with no further event coming to correct it. The same race turned
+ * a Back to the library into a review screen that had quietly repopulated
+ * itself.
+ *
+ * A counter rather than an abort: none of these reads can be cancelled, so the
+ * question is not whether the work finishes but whether its answer is still the
+ * one being asked for. A stale pass drops its result and paints nothing.
+ */
+let generation = 0;
+
 async function reload(): Promise<void> {
+  generation += 1;
+  const mine = generation;
+  const current = (): boolean => generation === mine;
+
   const [steps, recording] = await Promise.all([readCurrent(), readRecordingState()]);
+  if (!current()) return;
 
   if (steps.ok) {
     state.current = { steps: steps.value, recording };
@@ -137,6 +159,7 @@ async function reload(): Promise<void> {
 
   if (state.route.view === 'library') {
     const [flows, used] = await Promise.all([listFlows(), bytesInUse()]);
+    if (!current()) return;
 
     state.flows = flows.ok ? flows.value : [];
     state.usedBytes = used;
@@ -154,26 +177,34 @@ async function reload(): Promise<void> {
       return;
     }
 
-    state.flow = {
-      id: null,
-      name: CURRENT_FLOW_NAME,
-      steps: state.current.steps,
-      createdAt: state.current.steps[0]?.timestamp ?? null,
+    const steps = state.current.steps;
+    const [react, frameworks, stamp] = await Promise.all([
       // Re-read on every reload rather than held: the resolver writes to this
       // key while the recording runs, so a cached copy would go stale on screen.
-      react: await readCurrentReact(state.current.steps),
+      readCurrentReact(steps),
       // The other adapters' tables, re-read on the same terms and for the same
       // reason: the resolver fills these in while the recording runs too.
-      ...(await readCurrentFrameworks(state.current.steps)),
-      // Read at send time instead, like the stamp below it: the recording may
-      // still be running, and a store discovered after this tab opened belongs
-      // to the flow whether or not the review screen has heard of it.
-      state: null,
+      readCurrentFrameworks(steps),
       // Re-read alongside the component table, and for the same reason: the
       // recording may still be running, and the export and send paths both need
       // the stamp the *worker* is capturing under rather than one this tab
       // happened to read when it opened.
-      settings: await readRecordingStamp(),
+      readRecordingStamp(),
+    ]);
+    if (!current()) return;
+
+    state.flow = {
+      id: null,
+      name: CURRENT_FLOW_NAME,
+      steps,
+      createdAt: steps[0]?.timestamp ?? null,
+      react,
+      ...frameworks,
+      // Read at send time instead, like the stamp beside it: the recording may
+      // still be running, and a store discovered after this tab opened belongs
+      // to the flow whether or not the review screen has heard of it.
+      state: null,
+      settings: stamp,
     };
     state.missing = false;
     paint();
@@ -181,6 +212,8 @@ async function reload(): Promise<void> {
   }
 
   const flow = await readFlow(state.route.id);
+  if (!current()) return;
+
   if (!flow.ok) {
     state.missing = true;
     showToast({ message: flow.error.message, tone: 'danger' });

@@ -329,6 +329,41 @@ export function firstVisibleIndex(steps: Step[], filter: StepFilter): number | n
   return at === -1 ? null : at;
 }
 
+/**
+ * Where the highlight belongs once a step has been removed.
+ *
+ * The active index addresses the whole list, so a deletion moves it: every step
+ * after the gap has shifted down by one, and the step that was highlighted may
+ * be the one that has just gone.
+ *
+ * Leaving it where it was is not a cosmetic slip. Deleting the last step of a
+ * flow left the index one past the end, and `Delete` — which acts on the active
+ * index — then found no step there and did nothing at all, with no highlight on
+ * screen to say why. Deleting a step *above* the highlighted one left the mark
+ * on the step below the one the user had chosen, so the next Delete removed
+ * something they had not selected.
+ *
+ * `steps` is the list **after** the deletion. The re-seat prefers the step that
+ * has taken the gap's place, falls back to the one before it, and answers `null`
+ * only when the filter now shows nothing — the same rule `firstVisibleIndex`
+ * follows, and for the same reason: the highlight must sit on a card the user
+ * can actually see.
+ */
+export function activeAfterDelete(
+  steps: Step[],
+  filter: StepFilter,
+  deleted: number,
+  active: number | null,
+): number | null {
+  if (active === null) return null;
+  if (active < deleted) return active;
+  if (active > deleted) return active - 1;
+
+  for (let at = deleted; at < steps.length; at += 1) if (passes(steps[at], filter)) return at;
+  for (let at = deleted - 1; at >= 0; at -= 1) if (passes(steps[at], filter)) return at;
+  return null;
+}
+
 function passes(step: Step, filter: StepFilter): boolean {
   switch (filter) {
     case 'all':
