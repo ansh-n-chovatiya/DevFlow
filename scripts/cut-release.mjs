@@ -80,7 +80,18 @@ console.log(`Bumping version: ${currentVersion} → ${newVersion}`);
 const changelogPath = resolve(root, 'CHANGELOG.md');
 const changelog = readFileSync(changelogPath, 'utf8');
 
-const unreleasedMatch = changelog.match(/^##\s+Unreleased\s*\n([\s\S]*?)(?=\n##\s+|$)/m);
+/*
+ * The same section shape `scripts/check-changelog.mjs` reads, and its header
+ * carries why every character of it matters. The short version: `\s*` after the
+ * heading ate the blank line, and a bare `$` under `/m` is the end of a *line* —
+ * so between them an **empty** `## Unreleased` above a version heading captured
+ * that heading and passed the emptiness test below. This is the check standing
+ * between a release and notes describing nothing, so it cutting an empty
+ * section is the one thing it may not do.
+ */
+const UNRELEASED = /^##[ \t]+Unreleased[ \t]*\r?\n([\s\S]*?)(?=^##[ \t]|$(?![\s\S]))/m;
+
+const unreleasedMatch = changelog.match(UNRELEASED);
 if (!unreleasedMatch || unreleasedMatch[1].trim().length === 0) {
   console.error(`Cannot cut release ${newVersion}: CHANGELOG.md has no ## Unreleased section or it is empty.`);
   console.error('Please add release notes under ## Unreleased describing what changed.');
@@ -106,16 +117,25 @@ pkg.version = newVersion;
 writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
 // 6. Update package-lock.json if present
+//
+// Only the *read* is allowed to fail quietly, which is what "if present" means.
+// The write was inside the same `try`, so a failure to save it — a full disk, a
+// read-only checkout — was swallowed as though the file had simply been absent:
+// step 9 then committed a lockfile still naming the old version, and nothing
+// downstream compares it, so the tag shipped with the two out of step.
 const lockPath = resolve(root, 'package-lock.json');
+let lock = null;
 try {
-  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+  lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+} catch {
+  // Absent, or not JSON. Neither is a reason to refuse to cut a release.
+}
+if (lock) {
   lock.version = newVersion;
   if (lock.packages?.['']) {
     lock.packages[''].version = newVersion;
   }
   writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
-} catch {
-  // Ignore if package-lock is missing
 }
 
 // 7. Synchronize version to manifest & mcp-server

@@ -5,6 +5,7 @@
 import { globSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripComments } from './lib/strip-comments.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -75,6 +76,14 @@ const FORBIDDEN = [
   [/\bcreateDocumentFragment\b/, 'creates nodes — use a primitive from components.ts'],
   [/\.className\b/, 'sets a class — the class belongs in components.ts'],
   [/\bclassList\./, 'sets a class — the class belongs in components.ts'],
+  /*
+   * The third way to set a class, and it was the only one not listed.
+   * `components.ts` itself uses it (`svg.setAttribute('class', 'brand__mark')`,
+   * because SVG has no `className` to assign), so it is plainly the shape
+   * somebody reaching for a class in the drawer would land on — and it was the
+   * one shape that passed.
+   */
+  [/\bsetAttribute\(\s*["']class["']/, 'sets a class — the class belongs in components.ts'],
   [/\b(?:inner|outer)HTML\b/, 'writes markup — the markup belongs in components.ts'],
   [/\binsertAdjacent(?:HTML|Element)\b/, 'writes markup — the markup belongs in components.ts'],
   [/\bclass=["']/, 'carries a class — every node on this page is built in components.ts'],
@@ -114,9 +123,28 @@ for (const name of [...knownOwned].sort()) {
  * have left the second view entirely unguarded, which is the one place a second
  * way of drawing a setting could grow back.
  */
+const DRAWER = 'src/ui/locator/settings-drawer.ts';
+const drawer = globSync(DRAWER, { cwd: root });
+
+/*
+ * Named by literal path, so a rename or a move drops it from the scan and the
+ * gate goes on printing a pass — the one thing the paragraph above says must
+ * not happen. A glob that matched nothing is therefore an error rather than an
+ * empty list.
+ */
+if (drawer.length === 0) {
+  console.error(
+    `${DRAWER} is not there, and this gate names it by path. Either the second settings view ` +
+      'moved — point this at it — or it is gone, in which case delete this line. A missing file ' +
+      'silently narrows the scan to the options page, which is how the drawer grows a second way ' +
+      'of drawing a setting.',
+  );
+  process.exit(1);
+}
+
 const others = [
   ...globSync('src/ui/settings/**/*.ts', { cwd: root }),
-  ...globSync('src/ui/locator/settings-drawer.ts', { cwd: root }),
+  ...drawer,
   'src/settings.html',
 ]
   .map((file) => file.split('\\').join('/'))
@@ -125,15 +153,25 @@ const others = [
 
 for (const file of others) {
   const text = readFileSync(resolve(root, file), 'utf8');
+  /*
+   * Comments blanked whole-file and character-wise, rather than cut at the
+   * first `//` on each line.
+   *
+   * `line.replace(/\/\/.*$/, '')` deletes from a `//` that is inside a string
+   * literal, so `const help = 'https://example.com'; row.className = 'x';` was
+   * truncated at `https:` and the breach after it was never scanned — a false
+   * *pass*, in the gate whose whole job is to catch that one line. `check-brand`
+   * had already met and solved this; the fix is its scanner, now shared.
+   * Offsets and newlines are preserved, so the numbers below stay the editor's.
+   */
+  const scanned = stripComments(text, file.endsWith('.html'));
+  const lines = text.split('\n');
 
-  text.split('\n').forEach((line, index) => {
-    // Strip comments to ignore non-executable mentions of forbidden patterns.
-    const code = line.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
-
+  scanned.split('\n').forEach((code, index) => {
     for (const [pattern, why] of FORBIDDEN) {
       if (pattern.test(code)) {
         console.error(`${file}:${index + 1}  ${why}`);
-        console.error(`    ${line.trim()}`);
+        console.error(`    ${lines[index].trim()}`);
         failed++;
       }
     }

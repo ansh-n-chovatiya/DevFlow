@@ -44,33 +44,28 @@ jobs:
           GITHUB_BASE_REF: ${{ github.base_ref }}
           BEFORE_SHA: ${{ github.event.before }}
 
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint
-        run: npm run lint
-
-      # A design system is only a system while nothing bypasses it.
-      - name: No colour outside the tokens
-        run: npm run lint:tokens
-
-      # The graph config works on the machine that made it whether or not it is
-      # committed, so local runs prove nothing. This is the step that notices a
-      # clone would come up without CLAUDE.md or the PreToolUse hook.
-      - name: Graph config is committed
-        run: npm run lint:graphify
-
-      # `pretest` builds `mcp-server/core.js` first. It is generated rather than
-      # committed, and two suites need it on disk — one spawns the real server,
-      # which imports it, and one reads it. Hooked onto `test` rather than added
-      # as a step here: this job is not the only caller, and a clean checkout
-      # failing where every machine with a previous build passes is a failure
-      # that only ever shows up in CI.
-      - name: Test
-        run: npm test
-
-      - name: Build
-        run: npm run build
+      # One step, not eight, because the list is not this file's to keep.
+      #
+      # This job used to enumerate the gates, and it had drifted: `verify` runs
+      # eight checks and CI ran four of them, so `lint:settings-ui`,
+      # `lint:brand`, `lint:vocab` and `lint:locate` were green here no matter
+      # what they would have said. That is the worst kind of gap — a repository
+      # whose contributors reasonably believe CI runs the gate, and a branch
+      # that goes red only on the next person's machine. Naming the gates twice
+      # guarantees the copies diverge; the only question is when.
+      #
+      # `npm run verify` is the done-gate `package.json` defines and the one
+      # `npm run package` runs before it writes a zip, so a gate added there is
+      # now enforced here the same day. It ends with `npm run build`, which is
+      # what the packaging steps below read out of `dist/`. Its `pretest` builds
+      # `mcp-server/core.js` first — generated rather than committed, and needed
+      # on disk by two suites, one of which spawns the real server.
+      #
+      # The changelog gate stays its own step above: it needs two commits to
+      # compare, which is not a question a single working tree can answer, and
+      # `verify` deliberately does not include it.
+      - name: Verify
+        run: npm run verify
 
       # The version lives in two files. Catch drift here rather than at tag
       # time, where the release workflow would refuse to publish.

@@ -35,6 +35,17 @@ function callArgs(text, open) {
   return text.slice(open + 1);
 }
 
+/**
+ * A colour written out by hand, inside a call's arguments.
+ *
+ * A hex, or three numbers in a row — which is what a channel triple is, in every
+ * syntax: `255 0 0`, `255, 0, 0`, `0 0% 40%`. Nothing legitimate looks like
+ * that: `color-mix(in srgb, var(--accent) 40%, transparent)` carries one number,
+ * and `rgb(var(--rgb) / 0.5)` carries one. Three is somebody typing a colour.
+ */
+const LITERAL_CHANNELS =
+  /#[0-9a-f]{3,8}\b|\d+(?:\.\d+)?%?\s*[, ]\s*\d+(?:\.\d+)?%?\s*[, ]\s*\d+(?:\.\d+)?%?/i;
+
 /** Scans file content for un-tokenized color declarations. */
 function findings(source) {
   const found = [];
@@ -47,7 +58,15 @@ function findings(source) {
 
       if (text.endsWith('(')) {
         const args = callArgs(line, match.index + text.length - 1);
-        if (args.includes('var(--')) continue;
+        /*
+         * A token in the arguments exempts the call — but only when the
+         * arguments hold no hand-written colour beside it. `args.includes` on
+         * its own let `rgb(255 0 0 / var(--alpha))` through: a fully hardcoded
+         * channel triple, passing because one token appeared somewhere inside
+         * the parentheses. The exemption is for a colour *built* from tokens,
+         * not for one that merely mentions one.
+         */
+        if (args.includes('var(--') && !LITERAL_CHANNELS.test(args)) continue;
       }
 
       found.push({
@@ -64,7 +83,10 @@ function findings(source) {
 const files = [
   ...globSync('src/**/*.css', { cwd: root }),
   ...globSync('src/**/*.html', { cwd: root }),
-  ...globSync('public/*.css', { cwd: root }),
+  // `**`, as `check-brand.mjs` already reads this directory. A stylesheet added
+  // under `public/<anything>/` was outside a non-recursive glob and therefore
+  // outside the gate, with nothing to say so.
+  ...globSync('public/**/*.css', { cwd: root }),
 ]
   .map((file) => file.split('\\').join('/'))
   .filter(

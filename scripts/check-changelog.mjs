@@ -95,7 +95,25 @@ if (shipped.length === 0) {
 const changelog = readFileSync(resolve(root, 'CHANGELOG.md'), 'utf8');
 const headings = [...changelog.matchAll(/^## (.+)$/gm)].map((match) => match[1].trim());
 
-const unreleasedMatch = changelog.match(/^##\s+Unreleased\s*\n([\s\S]*?)(?=\n##\s+|$)/m);
+/*
+ * The section between `## Unreleased` and the next `## `, and every character
+ * of this is load-bearing. `cut-release.mjs` reads the same shape.
+ *
+ * `[ \t]*` and not `\s*` after the heading: `\s` includes the newline, so the
+ * greedy form ate the blank line separating the heading from what follows and
+ * started the capture one line late.
+ *
+ * `$(?![\s\S])` and not `$`: under `/m` — which the leading `^` needs, because
+ * the heading is never the first line of the file — a bare `$` matches the end
+ * of a *line*, so the lazy group stopped at the first break. The two together
+ * meant an **empty** `## Unreleased` sitting above a version heading captured
+ * that heading and read as a section with content in it, which is the one
+ * answer this gate exists to never give: the release would be cut from nothing
+ * and this work folded under the next version's name.
+ */
+const UNRELEASED = /^##[ \t]+Unreleased[ \t]*\r?\n([\s\S]*?)(?=^##[ \t]|$(?![\s\S]))/m;
+
+const unreleasedMatch = changelog.match(UNRELEASED);
 const hasUnreleasedContent = unreleasedMatch && unreleasedMatch[1].trim().length > 0;
 
 if (hasUnreleasedContent) {
@@ -111,9 +129,25 @@ if (hasUnreleasedContent) {
  * would fail the one commit whose whole job is to write the changelog. The top
  * heading naming the version in `package.json` is what says that is what
  * happened.
+ *
+ * ## And the release commit *only*
+ *
+ * That heading test alone is true of every commit after a release until
+ * somebody opens a new `## Unreleased` — which is exactly the window this gate
+ * is for. It made the gate a no-op for the whole of it: a change to `src/` with
+ * no entry passed, printing "was just cut, so there is nothing pending", and
+ * was then folded into the next release under somebody else's heading. That is
+ * the failure the file's own header opens with, produced by the escape written
+ * to protect one commit from it.
+ *
+ * So the escape also requires that the shipped files are only ones a release
+ * cut writes. `scripts/cut-release.mjs` stages seven files and exactly one of
+ * them is under `src/` or `public/`; anything else in `shipped` is somebody's
+ * work riding along, and it needs an entry.
  */
+const RELEASE_WRITES = ['public/manifest.json'];
 const version = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version;
-if (headings[0]?.startsWith(version)) {
+if (headings[0]?.startsWith(version) && shipped.every((file) => RELEASE_WRITES.includes(file))) {
   console.log(`changelog: ${version} was just cut, so there is nothing pending`);
   process.exit(0);
 }
