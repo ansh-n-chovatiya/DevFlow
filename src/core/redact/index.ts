@@ -13,6 +13,16 @@
  * is most of what identifies a step, and one that had its query stripped would
  * be unreadable as a record of where the user was. `…/callback?code=[redacted]`
  * still says exactly what happened.
+ *
+ * A URL is taken apart by hand rather than by `new URL`, and that is the one
+ * decision here worth stating up front. Every credential this module missed was
+ * missed because the parser was in the way: a relative `/api/me?access_token=…`
+ * — which is what most applications hand `fetch`, and every one of those is
+ * redacted through here — threw and came back untouched; a `file:` page's
+ * opaque origin rebuilt as the literal string `null`; a hash route carrying its
+ * own query was read as one parameter named `/callback?code`. Splitting on the
+ * first `#` and the first `?` is what a URL parser does with those characters
+ * anyway, and it answers for a string that is not yet a URL.
  */
 
 /**
@@ -48,7 +58,10 @@ function maskParams(raw: string): string | null {
     if (eq < 0) return part;
 
     const name = part.slice(0, eq);
-    if (!SECRET_PARAM.test(decodeURIComponent(name))) return part;
+    // `decodeOrRaw`, never a bare `decodeURIComponent`: a lone `%` in a
+    // parameter name throws, and this runs inside the page's own `fetch` — so
+    // the throw took out the application's request as well as the redaction.
+    if (!SECRET_PARAM.test(decodeOrRaw(name))) return part;
 
     masked = true;
     return `${name}=${MASK}`;
@@ -58,32 +71,90 @@ function maskParams(raw: string): string | null {
 }
 
 /**
+ * A fragment masked as a query when it looks like one.
+ *
+ * Two shapes, and only the second needed adding: `#access_token=…` is an
+ * implicit-flow grant and is a query string entire, while `#/callback?code=…`
+ * is a hash *route* carrying one. Read whole, the second's first parameter name
+ * is `/callback?code`, which matches nothing and left the grant in the
+ * recording — the exact leak this module exists to stop, on the routing style
+ * half the single-page apps in the world use.
+ */
+function maskFragment(raw: string): string | null {
+  const query = raw.indexOf('?');
+  if (query < 0) return maskParams(raw);
+
+  const masked = maskParams(raw.slice(query + 1));
+  return masked === null ? null : `${raw.slice(0, query + 1)}${masked}`;
+}
+
+/** `scheme://` and the authority that follows it, for a URL that has one. */
+const AUTHORITY = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/?#]*)/;
+
+/**
+ * The password half of `https://user:hunter2@host/…`, masked.
+ *
+ * Rarer than a query parameter and worth more: it is a password, in the clear,
+ * in a string that is written to storage and POSTed to the MCP server. The
+ * username stays — it names the request the way the path does — and a bare
+ * `https://user@host/` is left alone, since a name on its own is not a secret.
+ */
+function maskUserinfo(base: string): string {
+  const found = AUTHORITY.exec(base);
+  if (!found) return base;
+
+  const authority = found[2];
+  const at = authority.lastIndexOf('@');
+  if (at < 0) return base;
+
+  const colon = authority.slice(0, at).indexOf(':');
+  if (colon < 0) return base;
+
+  const rebuilt = `${authority.slice(0, colon)}:${MASK}${authority.slice(at)}`;
+  return `${found[1]}${rebuilt}${base.slice(found[0].length)}`;
+}
+
+/**
  * A URL safe to write into a recording.
  *
- * Anything unparseable is returned untouched: this is a redactor, not a
- * validator, and a URL it cannot read is one it cannot find a credential in
- * either. Fragments are treated as a query string only when they look like one
- * — an implicit-flow token lands in `#access_token=…`, while a single-page
- * app's route is `#/orders/42` and must survive intact, now that route changes
- * are recorded as their own steps.
+ * Split by hand rather than through `new URL`, for two reasons that both cost a
+ * credential. **A relative URL does not parse at all** — `new URL('/api/me?
+ * access_token=…')` throws — and the recorder redacts every `fetch` and
+ * `XMLHttpRequest` URL a page issues, which on most applications means a path
+ * and a query with no origin in front of it. Those were returned untouched.
+ * And a URL whose origin is opaque — `file:///report.html?token=…`, which is a
+ * page somebody can record — rebuilt from `origin + pathname` as the literal
+ * string `null/report.html`, mangling the one field that says where the step
+ * happened.
+ *
+ * A URL it cannot make sense of is still returned untouched: this is a
+ * redactor, not a validator. Fragments are treated as a query string only when
+ * they look like one — an implicit-flow token lands in `#access_token=…`, while
+ * a single-page app's route is `#/orders/42` and must survive intact, now that
+ * route changes are recorded as their own steps.
  */
 export function redactUrl(url: string): string {
   if (typeof url !== 'string' || !url) return url;
 
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return url;
-  }
+  const hashAt = url.indexOf('#');
+  const head = hashAt < 0 ? url : url.slice(0, hashAt);
+  const fragment = hashAt < 0 ? '' : url.slice(hashAt + 1);
 
-  const query = parsed.search ? maskParams(parsed.search.slice(1)) : null;
-  const hash = parsed.hash ? maskParams(parsed.hash.slice(1)) : null;
-  if (query === null && hash === null) return url;
+  const queryAt = head.indexOf('?');
+  const base = queryAt < 0 ? head : head.slice(0, queryAt);
+  const query = queryAt < 0 ? '' : head.slice(queryAt + 1);
 
-  const rebuiltQuery = query === null ? parsed.search : `?${query}`;
-  const rebuiltHash = hash === null ? parsed.hash : `#${hash}`;
-  return `${parsed.origin}${parsed.pathname}${rebuiltQuery}${rebuiltHash}`;
+  const maskedBase = maskUserinfo(base);
+  const maskedQuery = queryAt < 0 ? null : maskParams(query);
+  const maskedFragment = hashAt < 0 ? null : maskFragment(fragment);
+
+  if (maskedBase === base && maskedQuery === null && maskedFragment === null) return url;
+
+  return (
+    maskedBase +
+    (queryAt < 0 ? '' : `?${maskedQuery ?? query}`) +
+    (hashAt < 0 ? '' : `#${maskedFragment ?? fragment}`)
+  );
 }
 
 /**
@@ -137,29 +208,36 @@ function scan(raw: string, into: string[], seen: Set<string>): void {
  *
  * The counterpart to `redactUrl`, and deliberately not its inverse: this
  * reports, it does not change anything, so it is free to flag what masking
- * would be wrong to touch. Empty for a URL that is clean, unparseable, or whose
- * credentials have already been masked at capture — which is the ordinary case,
- * and is why a non-empty answer is worth putting in front of somebody.
+ * would be wrong to touch. Empty for a URL that is clean, that carries no query
+ * at all, or whose credentials have already been masked at capture — which is
+ * the ordinary case, and is why a non-empty answer is worth putting in front of
+ * somebody.
  *
  * Names come back in the spelling and order they appear in, deduplicated
  * case-insensitively across the query and the fragment. A fragment is read only
  * when it looks like a query string, for `redactUrl`'s reason: `#access_token=…`
  * is an implicit-flow grant and `#/orders/42` is a route.
+ *
+ * Split exactly as `redactUrl` splits, and by hand for its reasons: the two
+ * have to agree about what a URL's query *is*, or the warning is raised about
+ * the one shape the redactor cannot reach and stays silent about a shape it
+ * can.
  */
 export function credentialParams(url: string): readonly string[] {
   if (typeof url !== 'string' || !url) return [];
 
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return [];
-  }
+  const hashAt = url.indexOf('#');
+  const head = hashAt < 0 ? url : url.slice(0, hashAt);
+  const queryAt = head.indexOf('?');
 
   const found: string[] = [];
   const seen = new Set<string>();
-  if (parsed.search) scan(parsed.search.slice(1), found, seen);
-  if (parsed.hash) scan(parsed.hash.slice(1), found, seen);
+  if (queryAt >= 0) scan(head.slice(queryAt + 1), found, seen);
+  if (hashAt >= 0) {
+    const fragment = url.slice(hashAt + 1);
+    const query = fragment.indexOf('?');
+    scan(query < 0 ? fragment : fragment.slice(query + 1), found, seen);
+  }
   return found;
 }
 
