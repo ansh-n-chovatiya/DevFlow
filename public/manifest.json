@@ -75,7 +75,6 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "viewer.html",
         "fonts/ibm-plex-sans-latin-600.woff2"
       ],
       "matches": [

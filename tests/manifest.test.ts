@@ -219,6 +219,32 @@ describe('what the merge deleted', () => {
   });
 
   /*
+   * The same argument, one resource over, and it took a second reading to see.
+   *
+   * `viewer.html` was web-accessible to `<all_urls>` and never needed to be:
+   * every route to it is `chrome.tabs.create` or a `location.href` from another
+   * extension page, and a top-level navigation the extension makes itself is
+   * governed by nothing here. What the entry bought was the ability for *any*
+   * site to frame the flow review — a page that renders every recorded step,
+   * its screenshots, its request and response bodies and its console, and that
+   * carries "Delete all flows" and "Send" — and to detect the extension by
+   * asking for it.
+   *
+   * The font stays, and the difference is the whole rule: `content.css` is
+   * injected into the page, so the `@font-face` in it is fetched *by the page's
+   * own document*, which is exactly what this list is for.
+   */
+  it('exposes nothing to pages but what a page actually loads', () => {
+    const exposed = (manifest.web_accessible_resources ?? []).flatMap((entry) => entry.resources);
+    expect(exposed).not.toContain('viewer.html');
+    expect(exposed.some((resource) => resource.endsWith('.html'))).toBe(false);
+    // Named rather than merely "no html": the reason the list is not empty is
+    // the indicator's font, and a change that dropped it would break the pill
+    // on every page silently.
+    expect(exposed).toContain('fonts/ibm-plex-sans-latin-600.woff2');
+  });
+
+  /*
    * The locator declared `extension_pages: "script-src 'self'; object-src
    * 'self'"`, which is character-for-character Chrome's MV3 default. A policy
    * that restates the default enforces nothing and hides the fact that MV3 is

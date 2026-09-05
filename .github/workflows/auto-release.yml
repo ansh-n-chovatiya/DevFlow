@@ -56,12 +56,20 @@ jobs:
     steps:
       - name: Choose the bump from the commit message
         id: bump
+        # The message arrives through the environment, never through the script.
+        #
+        # `${{ }}` is substituted by the expression engine *before* the shell
+        # ever sees the line, so interpolating a commit message into `run:`
+        # pastes somebody else's text into this script. It was going into a
+        # quoted heredoc, which looks safe and is not: a commit whose body
+        # contains a line that is exactly `EOF` closes the heredoc early and
+        # everything after it runs as shell — in a job holding `contents: write`
+        # that hands `secrets: inherit`, NPM_TOKEN included, to the release
+        # workflow. Read from `$MESSAGE` and the text is data the shell never
+        # parses, whatever is in it.
+        env:
+          MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          MESSAGE=$(cat <<'EOF'
-          ${{ github.event.head_commit.message }}
-          EOF
-          )
-
           # Patch is the default because it is the answer that is right most
           # often and wrong most cheaply. A release that should have been minor
           # is a number nobody reads; a release that should have been patch and
