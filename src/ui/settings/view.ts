@@ -172,6 +172,24 @@ interface Dependency {
   readonly reason: string;
 }
 
+/** The settings whose value is a switch, so a dependency can be one of them. */
+type SwitchKey = { [K in SettingKey]: Settings[K] extends boolean ? K : never }[SettingKey];
+
+/**
+ * A capture switch and the budgets that only mean anything while it is on.
+ *
+ * A helper rather than seven more literals, because the whole entry is the same
+ * sentence each time and a hand-copied one is where a block ends up naming the
+ * wrong switch — which is a row that greys itself for a reason that is not true.
+ */
+function budgets(
+  parent: SwitchKey,
+  reason: string,
+  keys: readonly SettingKey[],
+): Dependency[] {
+  return keys.map((key) => ({ key, met: (settings: Settings) => settings[parent], reason }));
+}
+
 const DEPENDENCIES: readonly Dependency[] = [
   {
     key: 'screenshots.quality',
@@ -180,6 +198,30 @@ const DEPENDENCIES: readonly Dependency[] = [
   },
   {
     key: 'screenshots.settleDelayMs',
+    met: (settings) => settings['screenshots.capture'],
+    reason: 'Applies while screenshots are being captured.',
+  },
+  /*
+   * The other three that only exist because a screenshot is being taken.
+   *
+   * They were left out because they are Tier 2 and the two above are Tier 1,
+   * which is a fact about where a row is drawn rather than about what governs
+   * it. The result was an Advanced section where three capture timings stayed
+   * live under a switch that had turned capture off — the same "number with no
+   * effect and no explanation" the table's own comment rejects two rows down.
+   */
+  {
+    key: 'screenshots.minIntervalMs',
+    met: (settings) => settings['screenshots.capture'],
+    reason: 'Applies while screenshots are being captured.',
+  },
+  {
+    key: 'screenshots.precaptureTtlMs',
+    met: (settings) => settings['screenshots.capture'],
+    reason: 'Applies while screenshots are being captured.',
+  },
+  {
+    key: 'screenshots.paintTimeoutMs',
     met: (settings) => settings['screenshots.capture'],
     reason: 'Applies while screenshots are being captured.',
   },
@@ -203,6 +245,32 @@ const DEPENDENCIES: readonly Dependency[] = [
     met: (settings) => settings['recording.domMutations'],
     reason: 'Applies while changes in the page are being recorded.',
   },
+  /*
+   * The three capture blocks that each ship a switch and a set of budgets.
+   *
+   * `recording.a11y` is the one that shows why this is not tidiness: it is the
+   * only capture in the table that is *off by default*, so its budget was a
+   * live control that did nothing on every fresh install — the first Advanced
+   * row a curious user meets, doing nothing, with nothing on screen saying
+   * which switch turns it on.
+   */
+  ...budgets('recording.state', 'Applies while the app’s state is being recorded.', [
+    'recording.stateSettleMs',
+    'recording.stateMaxDepth',
+    'recording.stateMaxKeys',
+    'recording.stateMaxEntries',
+    'recording.stateStringCap',
+    'recording.stateMaxStores',
+    'recording.statePatchOps',
+  ]),
+  ...budgets('recording.renders', 'Applies while re-rendered components are being recorded.', [
+    'recording.renderNodeCap',
+    'recording.renderMaxComponents',
+    'recording.renderMaxChanges',
+  ]),
+  ...budgets('recording.a11y', 'Applies while accessibility is being audited.', [
+    'recording.a11yNodeCap',
+  ]),
   {
     key: 'network.bodyCap',
     met: (settings) => settings['network.captureBodies'],
@@ -574,6 +642,19 @@ export function rangeNote(field: Extract<Field, { type: 'number' }>): string {
   return `Enter a number between ${field.min}${unit} and ${field.max}${unit}.`;
 }
 
+/**
+ * Said when the box was left empty and the default came back.
+ *
+ * An empty number field is not a number, so the commit falls back to the shipped
+ * default — which is a value the user did not type, arriving in a row that then
+ * says nothing about where it came from. The row is allowed to correct an entry
+ * it cannot use; it is not allowed to do it silently.
+ */
+export function emptyNote(field: Extract<Field, { type: 'number' }>): string {
+  const unit = field.unit ? ` ${field.unit}` : '';
+  return `Left empty, so it went back to the default of ${field.default}${unit}.`;
+}
+
 /** Said after a commit moved the value: the row says what it clamped to. */
 export function clampedNote(
   field: Extract<Field, { type: 'number' }>,
@@ -723,6 +804,34 @@ export function commitProblem(field: Field, value: unknown): string | null {
   return isEditorScheme(probe)
     ? null
     : 'Not an app link. An http://, https:// or file:// template is refused when the link is opened.';
+}
+
+/**
+ * A value `resolve()` will not keep, said *before* the write that loses it.
+ *
+ * A string field with a pattern has no nearest legal value to clamp to, so
+ * `resolve()` falls back to the shipped default — and `save()` then *removes*
+ * the key, because a default is not a modification. The two together are a
+ * silent overwrite: typing `127.0.0.1:41777` into the MCP address, without the
+ * scheme, replaced the address the user had stored with the shipped one and
+ * said nothing at all. The same holds for an annotation colour that is not a
+ * hex triple and for a trace origin list that is not addresses.
+ *
+ * So the form refuses it here instead. `resolve()` is still the only validator —
+ * this decides nothing about legality, it reads the field's own pattern and
+ * declines to hand `save()` a value whose only effect would be to delete the
+ * one already there.
+ */
+export function refusedNote(field: Field, value: unknown): string | null {
+  if (field.type !== 'string' || !field.pattern) return null;
+  if (typeof value !== 'string' || field.pattern.test(value)) return null;
+
+  // The shipped default is the one example of the format that is always to
+  // hand, and it is already on screen in the key line under the title.
+  const example = DEFAULTS[field.key as SettingKey];
+  return typeof example === 'string' && example !== ''
+    ? `Not a value this setting accepts, so it was not saved. The default looks like ${example}.`
+    : 'Not a value this setting accepts, so it was not saved.';
 }
 
 /** The `key · default N` line. `N` is the shipped default, never the current value. */

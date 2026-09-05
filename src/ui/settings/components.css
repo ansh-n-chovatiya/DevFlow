@@ -739,6 +739,20 @@ body {
   display: inline-flex;
 }
 
+/*
+ * Except when an administrator fixed the value.
+ *
+ * A managed row is modified — its value is not the shipped default and never
+ * will be — so the rule above showed the button, and `settingRow` disables it
+ * because nobody at this keyboard can reset it. Disabled is not a state this
+ * button has a look for: it is accent text with an underline on hover, so what
+ * a person saw was a live link that did nothing when pressed. Gone is the
+ * honest answer, and the row's note already says who decided.
+ */
+.setting-row[data-modified='true'] .setting-row__reset:disabled {
+  display: none;
+}
+
 .setting-row__reset .icon {
   width: 13px;
   height: 13px;

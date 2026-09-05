@@ -47,6 +47,10 @@ vi.mock('../src/chrome/storage.js', () => ({
   // shipped defaults, which is what these tests have always assumed.
   getSync: () => Promise.resolve({ ok: true as const, value: {} }),
   setSync: () => Promise.resolve({ ok: true as const, value: undefined }),
+  // As above: no policy. Reading the managed area is a `src/chrome/` call now,
+  // so this mock has to answer for it rather than letting it past.
+  getManaged: () => Promise.resolve({ ok: true as const, value: {} }),
+  onStorageChanged: () => () => {},
 }));
 
 vi.mock('../src/ui/toast.js', () => ({

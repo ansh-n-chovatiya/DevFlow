@@ -46,7 +46,18 @@
   /* ── Content ──────────────────────────────────────────────────────────── */
   --fg: #0e1213;
   --fg-muted: #4e5c59;
-  --fg-faint: #75837f;
+  /*
+   * Faint is the quietest of the three, not an illegible one.
+   *
+   * It carries the key line under every setting title, the rail's counts, the
+   * line numbers in the JSON pane and the keys in a change list — all of them
+   * 10-12px, all of them things a person reads rather than glances at. At
+   * #75837f it came to 3.5:1 against `--surface-raised` and 3.3:1 against
+   * `--surface-sunk`, which is under the 4.5:1 small text needs in both themes.
+   * Darkened until the worst of those pairings clears it, and no further: the
+   * ramp `--fg` › `--fg-muted` › this is still three distinct steps.
+   */
+  --fg-faint: #5e6966;
 
   /* ── Accent — every primary action, link and focus ring ───────────────── */
   --accent: #0e7c70;
@@ -258,7 +269,8 @@
 
     --fg: #e4ebe9;
     --fg-muted: #9aa8a5;
-    --fg-faint: #6b7a77;
+    /* Lightened for the same reason the light block's is darkened. */
+    --fg-faint: #80928f;
 
     --accent: #2bb3a3;
     --accent-hover: #38c9b8;
@@ -343,7 +355,8 @@
 
   --fg: #e4ebe9;
   --fg-muted: #9aa8a5;
-  --fg-faint: #6b7a77;
+  /* Lightened for the same reason the light block's is darkened. */
+  --fg-faint: #80928f;
 
   --accent: #2bb3a3;
   --accent-hover: #38c9b8;

@@ -54,6 +54,7 @@ import {
   defaultLabel,
   DRAWER_MANAGED_NOTE,
   DRAWER_MORE,
+  emptyNote,
   highlight,
   RECORDING_NOTE,
   rangeNote,
@@ -296,6 +297,22 @@ function overflow(entries: readonly MenuEntry[]): HTMLElement {
     if (wrap.contains(event.target as Node)) return;
     panel.hidden = true;
     button.setAttribute('aria-expanded', 'false');
+  });
+
+  /*
+   * And Escape closes it, which is the only way out a pointer does not have.
+   *
+   * "Anywhere else" is a click, so a keyboard user who opened the menu and
+   * changed their mind had to Tab through Import, Export and Reset all to
+   * leave it — past a destructive entry, with the panel still open behind
+   * them. Focus goes back to the trigger, where they were.
+   */
+  wrap.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || panel.hidden) return;
+    event.stopPropagation();
+    panel.hidden = true;
+    button.setAttribute('aria-expanded', 'false');
+    button.focus();
   });
 
   wrap.append(button, panel);
@@ -554,6 +571,14 @@ export function settingRow(field: Field, state: RowState, handlers: RowHandlers)
   const built = buildControl(field, state, handlers, root, note);
   control.append(...built.nodes);
 
+  // The control itself, whatever shape it came out as: one input, one trigger,
+  // or five level buttons. Taken before the action and the reset join the row,
+  // because those are their own controls and are not what the row's sentences
+  // are about.
+  const inputs = built.nodes.flatMap((node) =>
+    node.matches('[data-focus]') ? [node] : [...node.querySelectorAll<HTMLElement>('[data-focus]')],
+  );
+
   const unit = make('span', 'setting-row__unit', built.unit);
   unit.hidden = built.unit === '';
   // A number wears its unit inside the field, so `500 steps` reads as one
@@ -567,6 +592,11 @@ export function settingRow(field: Field, state: RowState, handlers: RowHandlers)
     'btn btn--secondary btn--compact setting-row__action',
     () => handlers.onAction(field),
   );
+  // Pressing it repaints the page, so it is a different button by the time the
+  // render finishes — and without a key of its own a keyboard user who tests
+  // the connection lands at the top of the document. Its own key rather than
+  // the control's, because this button survives the render it causes.
+  action.dataset.focus = `${field.key}:action`;
   action.hidden = state.action === null;
   action.disabled = state.action?.busy === true || state.disabled;
   control.append(action);
@@ -595,6 +625,16 @@ export function settingRow(field: Field, state: RowState, handlers: RowHandlers)
   reset.setAttribute('aria-label', `Reset ${field.title} to its default`);
   reset.title = `Reset ${field.title} to its default`;
   reset.disabled = !state.modified || state.locked === true;
+  /*
+   * The control's key, not one of its own.
+   *
+   * A reset repaints, and the button it was pressed from is gone by the end of
+   * that repaint — the row is no longer modified, so CSS takes it out of the
+   * page. Restoring focus to it would restore focus to nothing; the control it
+   * just undid is where the person already was, and `restoreFocus` takes the
+   * first node with this key, which is that control.
+   */
+  reset.dataset.focus = field.key;
   control.append(reset);
 
   head.append(text, control);
@@ -610,6 +650,22 @@ export function settingRow(field: Field, state: RowState, handlers: RowHandlers)
   const consequence = banner('warn', field.consequence ?? '');
   consequence.classList.add('setting-row__consequence');
   consequence.hidden = !consequenceApplies(field, state.value, state.modified);
+
+  /*
+   * The sentences under the control, said to a screen reader too.
+   *
+   * The control carries the title as its `aria-label` and nothing else, so
+   * everything the row explains — what the setting does, what it costs, the
+   * range a number was refused for, the switch that has to be on first — was
+   * on screen and nowhere in the accessibility tree. A hidden slot is not
+   * exposed, which is what makes one list of ids right in every state: the note
+   * and the consequence describe the control exactly while they are shown.
+   */
+  description.id = `desc-${field.key}`;
+  note.id = `note-${field.key}`;
+  consequence.id = `why-${field.key}`;
+  const describedBy = `${description.id} ${note.id} ${consequence.id}`;
+  for (const target of inputs) target.setAttribute('aria-describedby', describedBy);
 
   body.append(head, description, note, consequence);
   root.append(body);
@@ -705,12 +761,17 @@ function buildControl(
        * the row marks itself, keeps the characters the user typed, and only
        * `resolve()` decides what the value actually becomes, at commit.
        */
+      // `data-invalid` draws the red border and nothing else read it, so the
+      // one message that says which numbers are allowed was visual only.
+      input.setAttribute('aria-invalid', 'false');
+
       input.addEventListener('input', () => {
         const parsed = Number(input.value);
         const bad =
           input.value.trim() !== '' &&
           (!Number.isFinite(parsed) || parsed < field.min || parsed > field.max);
         root.dataset.invalid = String(bad);
+        input.setAttribute('aria-invalid', String(bad));
         note.hidden = !bad;
         note.dataset.tone = 'danger';
         note.textContent = bad ? rangeNote(field) : '';
@@ -723,12 +784,17 @@ function buildControl(
         const value = Math.min(field.max, Math.max(field.min, wanted));
 
         root.dataset.invalid = 'false';
+        input.setAttribute('aria-invalid', 'false');
         input.value = String(value);
-        // It clamps on commit, and says what it clamped to.
-        handlers.onCommit(field, value, value === wanted ? null : {
-          text: clampedNote(field, value),
-          tone: 'danger',
-        });
+        // It clamps on commit, and says what it clamped to — and says so about
+        // an empty box too, which lands on the default by a different route and
+        // was the one correction this row used to make without a word.
+        const moved = usable
+          ? value === wanted
+            ? null
+            : { text: clampedNote(field, value), tone: 'danger' as const }
+          : { text: emptyNote(field), tone: 'danger' as const };
+        handlers.onCommit(field, value, moved);
       });
 
       wrap.append(input);
@@ -1608,6 +1674,11 @@ function railRows(props: PageProps, handlers: PageHandlers): HTMLElement[] {
     const button = make('button', 'rail__item');
     button.type = 'button';
     button.dataset.rail = item.id;
+    // The rail is rebuilt on every render and pressing a row causes one, so
+    // without a key the jump also throws the keyboard back to the top of the
+    // document — and the rail is the one control a keyboard user navigates the
+    // page with.
+    button.dataset.focus = `rail:${item.id}`;
     button.disabled = item.muted;
     button.dataset.muted = String(item.muted);
     button.setAttribute('aria-current', String(props.activeRail === item.id));
@@ -1747,6 +1818,9 @@ function renderAdvanced(props: PageProps, handlers: PageHandlers): HTMLElement |
 
   const summary = make('button', 'advanced__summary');
   summary.type = 'button';
+  // A disclosure whose own trigger is replaced by the render it triggers: the
+  // key is what keeps focus on it, so the next Tab is the first row inside.
+  summary.dataset.focus = 'advanced-summary';
   summary.setAttribute('aria-expanded', String(props.model.advanced.expanded));
   summary.addEventListener('click', handlers.onAdvanced);
   summary.append(icon('chevron-right', 'icon advanced__chevron'));
@@ -2016,6 +2090,9 @@ export function pickJsonFile(onPicked: (file: File) => void): void {
     input.remove();
     if (file) onPicked(file);
   });
+  // Dismissing the picker fires no `change`, so without this every cancelled
+  // import left its input behind in the document for the life of the page.
+  input.addEventListener('cancel', () => input.remove());
   document.body.append(input);
   input.click();
 }

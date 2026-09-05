@@ -127,6 +127,13 @@ vi.mock('../src/chrome/storage.js', () => ({
   },
   getSync: () => Promise.resolve({ ok: true as const, value: sync }),
   setSync: () => Promise.resolve({ ok: true as const, value: undefined }),
+  // No policy, which is the ordinary case and what these tests have always run
+  // under. It is named here because reading the managed area now goes through
+  // `src/chrome/` like every other `chrome.*` call; before that it reached
+  // `chrome.storage.managed` directly, past this mock, and jsdom's absence of
+  // the area supplied the same empty answer by accident.
+  getManaged: () => Promise.resolve({ ok: true as const, value: {} }),
+  onStorageChanged: () => () => {},
 }));
 
 vi.mock('../src/features/export/download.js', () => ({

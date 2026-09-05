@@ -112,13 +112,17 @@ export function setLocal(
   return write(chrome.storage.local, items);
 }
 
-export function removeLocal(keys: string | string[]): Promise<Result<void>> {
+function remove(area: chrome.storage.StorageArea, keys: string | string[]): Promise<Result<void>> {
   return new Promise((resolve) => {
-    chrome.storage.local.remove(keys, () => {
+    area.remove(keys, () => {
       const lastError = chrome.runtime.lastError;
       resolve(lastError ? err(flowError('STORAGE_WRITE', lastError.message)) : ok());
     });
   });
+}
+
+export function removeLocal(keys: string | string[]): Promise<Result<void>> {
+  return remove(chrome.storage.local, keys);
 }
 
 export function getSync<T extends Partial<SyncStorageShape>>(defaults: T): Promise<Result<T>> {
@@ -130,6 +134,65 @@ export function getSync<T extends Partial<SyncStorageShape>>(defaults: T): Promi
 
 export function setSync(items: Partial<SyncStorageShape>): Promise<Result<void>> {
   return write(chrome.storage.sync, items);
+}
+
+/**
+ * Removing a sync key is a write, and it is how settings stay sparse.
+ *
+ * A setting put back to its shipped default is deleted rather than stored, so
+ * `remove` is on the same footing as `set` for that mechanism — which is why it
+ * reports `STORAGE_WRITE` the same way. Settings did this against
+ * `chrome.storage.sync` directly for want of this function, which meant one
+ * write path in the extension that could not be exercised without a browser.
+ */
+export function removeSync(keys: string | string[]): Promise<Result<void>> {
+  return remove(chrome.storage.sync, keys);
+}
+
+/**
+ * The `managed` area, which is an administrator's policy and nobody else's.
+ *
+ * Read-only, absent outside an enterprise deployment, and absent in three
+ * different ways: `chrome.storage.managed` undefined, `get` throwing outright,
+ * and `get` rejecting. All three are the ordinary case rather than a failure,
+ * so all three arrive as a `STORAGE_READ` `Result` the caller can read as "no
+ * policy" — the shape every other read in this file has, instead of a
+ * rejection each caller has to remember to catch.
+ *
+ * The promise form rather than the callback form the rest of this file uses,
+ * and that is the difference that matters: a build that refuses this area
+ * refuses it by throwing or rejecting, and a callback that is never invoked is
+ * a `lastError` nobody is ever in a position to read.
+ */
+export function getManaged(): Promise<Result<Record<string, unknown>>> {
+  const area = (chrome.storage as { managed?: chrome.storage.StorageArea }).managed;
+  if (!area) return Promise.resolve(err(flowError('STORAGE_READ', 'no managed area')));
+
+  try {
+    return Promise.resolve(area.get(null)).then(
+      (items) => ok((items ?? {}) as Record<string, unknown>),
+      (error: unknown) => err<Record<string, unknown>>(flowError('STORAGE_READ', error)),
+    );
+  } catch (error) {
+    return Promise.resolve(err(flowError('STORAGE_READ', error)));
+  }
+}
+
+/**
+ * Watch every storage area, and hand back the one way to stop watching.
+ *
+ * There is no `lastError` to convert here — the reason this is in `src/chrome/`
+ * is the other half of the layer's job: nothing outside it names a `chrome.*`
+ * object, so a listener can be installed in a test without a browser. It
+ * returns an unsubscribe rather than exposing add and remove separately
+ * because the caller then cannot hold a reference to the listener it must pass
+ * back, which is how a surface that unmounts leaves one behind.
+ */
+export function onStorageChanged(
+  listener: (changes: Record<string, chrome.storage.StorageChange>, area: string) => void,
+): () => void {
+  chrome.storage.onChanged.addListener(listener);
+  return () => chrome.storage.onChanged.removeListener(listener);
 }
 
 /**

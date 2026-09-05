@@ -28,6 +28,7 @@ import {
   FIELDS,
   fieldFor,
   isMachineKey,
+  isModified,
   loadManaged,
   loadOverrides,
   migrateLegacySettings,
@@ -90,6 +91,7 @@ import {
   lift,
   machineNote,
   normalise,
+  refusedNote,
   settingsModel,
   type Filter,
 } from './view.js';
@@ -264,6 +266,23 @@ function commit(field: Field, raw: unknown, clamped: RowNote | null): void {
   const value = normalise(field, raw);
   const before = state.settings[key];
 
+  /*
+   * Refused before the write, not corrected after it.
+   *
+   * `save()` resolves the value first, and a string that fails its field's
+   * pattern resolves to the *default* — which `save()` then stores as "not
+   * modified" by deleting the key. Writing it would therefore throw away the
+   * address, colour or origin list the user already had, in exchange for a
+   * value nothing kept. Nothing is written, the stored value stays on screen,
+   * and the row says why.
+   */
+  const refused = refusedNote(field, value);
+  if (refused) {
+    extraFor(field.key).note = { text: refused, tone: 'danger' };
+    paint();
+    return;
+  }
+
   const problem = commitProblem(field, value);
   extraFor(field.key).note = problem ? { text: problem, tone: 'danger' } : clamped;
 
@@ -409,7 +428,11 @@ function modifiedFields(): Field[] {
   return (FIELDS as readonly Field[]).filter(
     (field) =>
       !state.managedLocks.has(field.key) &&
-      state.settings[field.key as SettingKey] !== DEFAULTS[field.key as SettingKey],
+      // `isModified`, not `!==`. The console levels are an array, and a fresh
+      // array holding the five shipped levels is not the frozen default by
+      // identity — so the raw comparison listed a setting nobody had changed in
+      // a dialog whose whole job is to name what is about to change.
+      isModified(field.key as SettingKey, state.settings[field.key as SettingKey]),
   );
 }
 
@@ -813,10 +836,21 @@ const page = settingsPage(document.body, {
   },
 
   onResetShown: () => {
+    /*
+     * The same model the page is drawn from, policy and all.
+     *
+     * Without `managed` this built a second model that had never heard of the
+     * administrator's keys, so it counted them as modified and reset them —
+     * writing to `sync` values that `managed` outranks, repainting nothing, and
+     * disagreeing with the number on the button that started it. `settingsModel`
+     * already excludes a locked row from `shownModified` for exactly that
+     * reason; this is the call that was not letting it.
+     */
     const model = settingsModel({
       settings: state.settings,
       query: state.query,
       advancedOpen: state.advancedOpen,
+      managed: state.managedLocks,
     });
     resetKeys(model.shownModified);
   },

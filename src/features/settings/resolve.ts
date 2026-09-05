@@ -94,6 +94,26 @@ export function resolveField(field: Field, value: unknown): unknown {
       return kept;
     }
   }
+
+  /*
+   * Unreachable in a well-typed build, which is precisely what it is for.
+   *
+   * This function returns `unknown`, so a member added to the `Field` union
+   * without a `case` above compiles clean and silently resolves *every*
+   * override of that setting to `undefined` — the setting stops working, in the
+   * extension and in the copy bundled into `mcp-server/core.js` alike, with
+   * nothing anywhere failing to say so. A settings table is the one place in
+   * this repo where a missing branch is invisible rather than loud, because
+   * `fields.ts` is data and adding a row to it does not feel like writing code.
+   *
+   * The `never` binding turns that omission into a compile error at the moment
+   * the union grows, which is the only moment anyone is in a position to fix
+   * it. The fallback keeps the promise the header makes — pure and total — so
+   * a build that somehow got here still returns the shipped default rather than
+   * `undefined`.
+   */
+  const unhandled: never = field;
+  return (unhandled as Field).default;
 }
 
 /**

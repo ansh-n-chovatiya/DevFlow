@@ -767,7 +767,13 @@ export const FIELDS = [
     max: 20000,
     unit: "elements",
     title: "Elements audited per interaction",
-    description: "How far the accessibility walk goes before it stops.",
+    // Says outright that the walk it budgets is not running. This is the one
+    // number in the table whose parent capture ships off, so on a fresh install
+    // it is a control that governs nothing — and a control that silently does
+    // nothing is the failure `wired` exists to prevent, arriving here by a
+    // different route.
+    description:
+      "How far the accessibility walk goes before it stops. The audit above is off until you switch it on, so on a new installation this number decides nothing yet.",
     consequence:
       "Past the cap elements are never audited, and the step says it was capped rather than that the page is clean. This walk runs after the app has settled rather than inside the interaction, so raising it is not latency the person recording feels.",
     consequenceWhen: { above: A11Y_NODE_CAP },
@@ -1226,7 +1232,13 @@ export const FIELDS = [
     pattern: /^#[0-9a-fA-F]{6}$/,
     maxLength: 7,
     title: "Annotation colour",
-    description: "Red is invisible on a red error banner.",
+    // The pattern is the whole of what this row will accept, and until this
+    // sentence said so the only copy on screen was the reason to change it. A
+    // free-text field that refuses `red` and `#f00` without ever having asked
+    // for `#RRGGBB` is a field whose rule the user has to discover by being
+    // told no.
+    description:
+      "Red is invisible on a red error banner. Six hex digits with a leading hash — `#2E7DFF`.",
     consumers: ["worker", "ui"],
     recorded: true,
     wired: true,
@@ -1238,11 +1250,16 @@ export const FIELDS = [
     group: "export",
     tier: 1,
     type: "enum",
-    options: ["zip", "markdown", "json"],
+    // Every format the export dialog offers, and it has to be every one of
+    // them: `ExportFormat` in `features/export/formats.ts` gained the two
+    // compilers, this list did not, and a format the dialog draws that the
+    // default cannot name is a preference somebody can express once per export
+    // and never once for good.
+    options: ["zip", "markdown", "json", "playwright", "cypress"],
     default: EXPORT_DEFAULT_FORMAT,
     title: "Default export format",
     description:
-      "ZIP carries the screenshots as files beside the document; Markdown and JSON are one file.",
+      "ZIP carries the screenshots as files beside the document; Markdown and JSON are one file. Playwright and Cypress compile the flow to a runnable spec instead of describing it.",
     consumers: ["ui"],
     wired: true,
   },
@@ -1790,8 +1807,11 @@ export const FIELDS = [
     pattern: /^https?:\/\/\S+$/,
     maxLength: 2048,
     title: "MCP server address",
+    // The scheme is not optional and nothing here used to say so. `127.0.0.1:7734/flows`
+    // is what a person types when they mean the shipped address, and it is
+    // exactly what the pattern refuses.
     description:
-      "Where recorded flows are POSTed when the MCP integration is enabled.",
+      "Where recorded flows are POSTed when the MCP integration is enabled. A whole address including `http://` or `https://`, with the path the server accepts flows on.",
     consumers: ["worker", "content"],
     wired: true,
   },

@@ -39,7 +39,13 @@
  * on purity above, which is the same rule for the same reason.
  */
 
-import { getSync, setSync } from '../../chrome/storage.js';
+import {
+  getManaged,
+  getSync,
+  onStorageChanged,
+  removeSync,
+  setSync,
+} from '../../chrome/storage.js';
 import { flowError } from '../../shared/errors.js';
 import { err, ok, type Result } from '../../shared/result.js';
 import {
@@ -208,15 +214,6 @@ export async function replaceOverrides(
   return Object.keys(writes).length > 0 ? setSync(writes) : ok();
 }
 
-function removeSync(keys: string[]): Promise<Result<void>> {
-  return new Promise((resolve_) => {
-    chrome.storage.sync.remove(keys, () => {
-      const lastError = chrome.runtime.lastError;
-      resolve_(lastError ? err(flowError('STORAGE_WRITE', lastError.message)) : ok());
-    });
-  });
-}
-
 /**
  * Call `fn` whenever any setting changes, in any surface. Returns an unsubscribe.
  *
@@ -238,8 +235,7 @@ export function subscribe(fn: (settings: Settings) => void): () => void {
     void load().then(fn);
   };
 
-  chrome.storage.onChanged.addListener(listener);
-  return () => chrome.storage.onChanged.removeListener(listener);
+  return onStorageChanged(listener);
 }
 
 // ── The managed layer ────────────────────────────────────────────────────────
@@ -249,15 +245,13 @@ export function subscribe(fn: (settings: Settings) => void): () => void {
  *
  * `chrome.storage.managed` is absent outside an enterprise deployment and
  * throws rather than answering empty in some Chrome builds, so the failure is
- * swallowed: no policy is the ordinary case, not an error condition.
+ * swallowed: no policy is the ordinary case, not an error condition. Both
+ * absences arrive as a failed `Result` from the wrapper, which is the whole of
+ * why the `try` that used to be here is gone rather than moved.
  */
 async function readManagedArea(): Promise<Record<string, unknown>> {
-  try {
-    const stored = await chrome.storage.managed.get(null);
-    return stored ?? {};
-  } catch {
-    return {};
-  }
+  const stored = await getManaged();
+  return stored.ok ? stored.value : {};
 }
 
 /**
