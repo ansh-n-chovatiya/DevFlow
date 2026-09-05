@@ -97,22 +97,17 @@ body {
 
 /*
  * Below the rail's own width plus a readable list, the two columns stop being
- * two columns. The rail becomes a horizontal strip rather than disappearing —
- * it is the only table of contents the screen has.
+ * two columns.
+ *
+ * What the rail becomes at that width is declared after the rail itself, near
+ * the bottom of the Rail section, and not here. A media query carries no extra
+ * specificity, so these rules only win over the ones they override by coming
+ * later in the file — which is true of `.settings__body` above and was not true
+ * of `.rail`, three hundred lines below.
  */
 @media (max-width: 900px) {
   .settings__body {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .rail {
-    position: static;
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-
-  .rail__rule {
-    display: none;
   }
 }
 
@@ -462,6 +457,49 @@ body {
 
 .rail__concept:first-child {
   margin-top: 0;
+}
+
+/*
+ * The rail as a horizontal strip, once there is no column to put it in.
+ *
+ * These belong here rather than beside the grid rule they go with, because a
+ * media query adds no specificity: `@media … { .rail { position: static } }`
+ * and `.rail { position: sticky }` are both one class, so the file's order
+ * decides. Written three hundred lines above `.rail`, every one of these lost.
+ * The one-column layout took effect and the rail did not — so on a narrow
+ * window it stayed a tall sticky column, pinned under the app bar and drawn
+ * over the settings it was supposed to sit beside. This strip has never
+ * actually rendered.
+ *
+ * `width: auto` on the item is the half that is easy to miss. A rail row is
+ * `width: 100%` because a column wants every row the same width; left alone in
+ * a wrapping row it makes each row claim a whole line, which is the tall column
+ * again with the sticking removed rather than a strip.
+ */
+@media (max-width: 900px) {
+  .rail {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .rail__item {
+    width: auto;
+  }
+
+  /*
+   * A concept is a label on the run below it, so it takes the line to itself —
+   * inline, it reads as a heading for whichever destination happens to wrap up
+   * beside it, which is the one thing it must not say.
+   */
+  .rail__concept {
+    flex-basis: 100%;
+    margin: var(--space-2) 0 0;
+  }
+
+  .rail__rule {
+    display: none;
+  }
 }
 
 /* ── Group header ───────────────────────────────────────────────────────────

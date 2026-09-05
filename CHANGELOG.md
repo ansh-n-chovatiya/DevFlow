@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+**The narrow-screen layout was written above the rules it changes, so it never
+took effect.** A media query adds no specificity of its own, so
+`@media (max-width: 900px) { .rail { position: static } }` and
+`.rail { position: sticky }` are both one class and the file's order decides.
+Both stylesheets grouped their layout at the top and their components below, so
+the override was written hundreds of lines above the thing it overrode and lost
+every time.
+
+On the settings page the column collapsed and the rail did not: it stayed a tall
+sticky column, pinned under the app bar and drawn over the settings it was
+supposed to sit beside. On the flow review the rail is a sidebar whose height is
+the viewport, and it was never hidden, so a narrow window got a screenful of
+navigation standing between the reader and the flow. Neither of the strips those
+queries describe had ever rendered.
+
+The settings rail also needed `width: auto` on its rows. A rail row is
+`width: 100%` because a column wants every row the same width; left alone in a
+wrapping row it makes each row claim a whole line, which is the tall column again
+with the sticking taken off rather than a horizontal strip.
+
+**A test now reads every stylesheet and fails on an override its base rule
+outranks**, reporting the file, both line numbers and the fix. This is the worst
+shape a CSS bug takes — nothing warns, the rule is visible in the file to anyone
+who goes looking, and it is invisible at the width it is not for — so it is
+checked rather than remembered.
+
+
 ## 4.1.0 — 2026-09-05
 
 A full audit of the extension, the engine and the server, fixing what it found.

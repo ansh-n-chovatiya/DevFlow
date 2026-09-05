@@ -403,13 +403,18 @@
   align-items: start;
 }
 
+/*
+ * The rule that hides the rail at this width is *below* `.rail`, not here.
+ *
+ * A media query adds no specificity, so `@media … { .rail { display: none } }`
+ * and `.rail { display: flex }` are both one class and the later one wins. This
+ * block sits above `.rail`, so the column collapsed and the rail did not: on a
+ * narrow window it stayed a `100vh` sticky box, now the full width of the
+ * single column, standing between the flow and the steps it lists.
+ */
 @media (max-width: 900px) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .rail {
-    display: none;
   }
 }
 
@@ -436,6 +441,20 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
+}
+
+/*
+ * Gone once there is no column to hold it — see the `@media` above `.rail`.
+ *
+ * Placed after `.rail` so it actually wins. A sidebar whose height is the
+ * viewport does not become a narrow-screen layout by being moved above the
+ * content: it becomes a screenful of navigation the reader has to scroll past
+ * to reach the flow, every time.
+ */
+@media (max-width: 900px) {
+  .rail {
+    display: none;
+  }
 }
 
 .rail__label {
