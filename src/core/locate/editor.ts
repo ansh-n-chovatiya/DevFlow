@@ -134,8 +134,12 @@ export function buildEditorUrl(template: string, target: EditorTarget): string |
   const line = target.line ?? pos1(1);
   const column = target.column ?? pos1(1);
 
+  // A function replacement, not the string itself: `$&`, `` $` ``, `$'` and
+  // `$1` are substitution patterns to `String.replace`, and a path is somebody
+  // else's filename rather than a pattern. `src/routes/$'.tsx` would otherwise
+  // be filled with the text after `{path}` instead of with the file.
   const url = template
-    .replace(/\{path\}/g, target.path)
+    .replace(/\{path\}/g, () => target.path)
     .replace(/\{line1\}/g, String(line))
     .replace(/\{col1\}/g, String(column))
     .replace(/\{line\}/g, String(Math.max(0, line - 1)))

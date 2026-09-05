@@ -155,6 +155,58 @@ describe('a component that resolves', () => {
   });
 });
 
+// ── The function start the map does not mark ─────────────────────────────────
+
+/**
+ * The panel resolved a *function start*, and looked it up as though it were a
+ * position inside code.
+ *
+ * `searchBundle` returns the first character of the compiled function, and a
+ * minifier need not emit a mapping there. The spec-true lookup takes the
+ * segment at or *before* a position, so when the function's own first mapping
+ * is a few characters in, the answer belongs to whatever the bundler emitted
+ * before it — a different component, usually a different file — and it came
+ * back `status: 'resolved'` with a plausible line and no caveat at all.
+ *
+ * The recorder's resolver was fixed for this (`lookupFunctionStart`, and
+ * `tests/locate-function-start.test.ts` for the Vue build that produced the
+ * measurement); the panel — the surface where somebody clicks a component and
+ * is shown a file — was still calling the other one. This is the same defect,
+ * asserted at the panel's own seam.
+ */
+describe('a hit whose first mapping is a few characters in', () => {
+  /** Twenty characters of another component, then `FN`, on generated line 1. */
+  const SHIFTED = `!function(){var a=1;\nvar neighbour=1;    ${FN}\n}();\n//# sourceMappingURL=main.js.map\n`;
+
+  /**
+   * Nothing at column 20 where `FN` begins; the covering segment is the
+   * neighbour's, and `FN`'s own mapping is 20 characters into its body.
+   */
+  const NEIGHBOURED = sourceMapJson(
+    ['src/checkout/Neighbour.tsx', 'src/checkout/CartSummary.tsx'],
+    [
+      [],
+      [
+        { generatedColumn: 0, sourceIndex: 0, originalLine: 8, originalColumn: 0 },
+        { generatedColumn: 40, sourceIndex: 1, originalLine: 41, originalColumn: 6 },
+      ],
+    ],
+  );
+
+  it('names the file the function belongs to, not the one that precedes it', async () => {
+    const outcome = await run(fakeProvider([[MAIN, SHIFTED]], { [MAP]: NEIGHBOURED }));
+
+    expect(outcome.source).toMatchObject({
+      status: 'resolved',
+      source: 'src/checkout/CartSummary.tsx',
+      line: 42,
+      column: 7,
+    });
+    // The compiled pair still points at where the search actually landed.
+    expect(outcome.source.compiled).toEqual({ url: MAIN, line: 1, column: 20 });
+  });
+});
+
 // ── The build already knew ───────────────────────────────────────────────────
 
 describe('a build stamp', () => {

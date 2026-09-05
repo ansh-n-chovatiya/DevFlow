@@ -8,7 +8,7 @@
  * resumable across service-worker deaths, budgeted so a pathological site costs
  * a fixed amount and then stops. This is one component, now, with a person
  * watching a checklist advance. They share every piece of engine underneath
- * (`buildNeedle`, `searchBundle`, `parseSourceMap`, `lookupOriginal`, and a
+ * (`buildNeedle`, `searchBundle`, `parseSourceMap`, `lookupFunctionStart`, and a
  * `BundleProvider` for the bytes) and none of the pass machinery, because there
  * is no pass: no queue to select from, no retry generation to record, no
  * deadline, and nothing to leave `pending` for next time.
@@ -62,7 +62,7 @@ import { countOccurrences, searchBundle } from '../../core/locate/search.js';
 import {
   decodeDataUrl,
   extractSourceMappingURL,
-  lookupOriginal,
+  lookupFunctionStart,
   parseSourceMap,
   SourceMapError,
 } from '../../core/locate/sourcemap.js';
@@ -431,13 +431,26 @@ async function fromBundleHit(
     };
   }
 
-  let original: ReturnType<typeof lookupOriginal>;
+  let original: ReturnType<typeof lookupFunctionStart>;
   try {
     // `keepSourcesContent` — the panel's own call site, opting in (D3). This is
     // the text the preview is drawn from, and it goes no further than the page
     // it is drawn on.
     const map = parseSourceMap(json, { keepSourcesContent: true });
-    original = lookupOriginal(map, hit.line, hit.column);
+    /*
+     * `lookupFunctionStart`, not `lookupOriginal` — the same call the recorder's
+     * resolver makes, on the same kind of position.
+     *
+     * `hit.line`/`hit.column` are where `searchBundle` found the *start of a
+     * function*, and a minifier need not emit a mapping there. `lookupOriginal`
+     * takes the segment at or before the position, which in that case belongs to
+     * whatever the bundler emitted before — a different component, often in a
+     * different file — and the answer came back `resolved`, with a plausible
+     * line and no caveat at all. That is the worst failure this panel has: a
+     * confident wrong file. Bounded by the text that matched, so the segment
+     * accepted belongs to this function's own compiled source.
+     */
+    original = lookupFunctionStart(map, hit.line, hit.column, hit.needleText.length);
   } catch (error) {
     onStage?.('source', 'done');
     return {

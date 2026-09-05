@@ -109,6 +109,17 @@ export interface OriginalPosition {
  *
  * Scans only the tail: the annotation belongs at the end, and a full-text regex
  * over a multi-megabyte bundle is slow and can match a string literal in code.
+ *
+ * The window is measured from where the annotation *ends*, not where it begins,
+ * and that distinction is the whole of the second pass below. An inlined map is
+ * one unbroken token tens of kilobytes long — `//# sourceMappingURL=data:…` —
+ * so a fixed slice off the end lands in the middle of its base64 payload and
+ * finds no annotation at all. Every bundle built with an inline map therefore
+ * reported *ships no source map*, and `decodeDataUrl` and the `data:` branch
+ * that calls it were unreachable for any map big enough to be worth having.
+ *
+ * The rule is unchanged: an annotation buried in the middle of a bundle is
+ * still ignored, because what has to be near the end is the end of the match.
  */
 export function extractSourceMappingURL(content: string): string | null {
   const TAIL = 2000;
@@ -119,8 +130,23 @@ export function extractSourceMappingURL(content: string): string | null {
 
   let last: string | null = null;
   for (const m of tail.matchAll(re)) last = m[1];
+  if (last !== null) return last;
 
-  return last;
+  /*
+   * Nothing in the window, so the annotation is either absent or longer than
+   * it. `lastIndexOf` is a native scan and costs far less than running the
+   * regex over the whole bundle; anchoring on it keeps the match cheap however
+   * long the value turns out to be.
+   */
+  const at = content.lastIndexOf('sourceMappingURL');
+  if (at === -1) return null;
+
+  // Enough to reach back over `/*#` or `//@` and the whitespace after it.
+  re.lastIndex = Math.max(0, at - 16);
+  const match = re.exec(content);
+  if (!match) return null;
+
+  return content.length - (match.index + match[0].length) <= TAIL ? match[1] : null;
 }
 
 /** Decodes a `data:` source map URL, handling both base64 and percent-encoded payloads. */

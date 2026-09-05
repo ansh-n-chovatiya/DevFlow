@@ -175,10 +175,25 @@ function providerFor(limits: ResolveLimits, scripts: Record<string, string[]>): 
  * bundle texts, because there is at most one map per bundle, and a second
  * setting for a number that can only ever track another one is a setting nobody
  * could reason about.
+ *
+ * A `SourceMapError` is remembered as readily as a map, and that is the half the
+ * header claimed and the code did not do. A map that will not parse is a
+ * `parseSourceMap` throw, and a throw wrote nothing down — so every one of the
+ * hundred-odd components sharing that bundle re-decoded the whole `mappings`
+ * string to reach the same verdict, inside a pass that has a deadline. The
+ * components after the deadline are not merely slow: they are left `pending`
+ * and reported as `skipped`, so an unparseable map cost a flow its component
+ * table rather than costing one bundle its original paths. Only the *parse* is
+ * remembered — a map that could not be fetched is not, for the reason the
+ * provider caches no failures either: it may be there on the next pass.
  */
-const mapCache = new Map<string, PreparedMap | null>();
+const mapCache = new Map<string, PreparedMap | null | SourceMapError>();
 
-function rememberMap(bundleUrl: string, map: PreparedMap | null, entries: number): void {
+function rememberMap(
+  bundleUrl: string,
+  map: PreparedMap | null | SourceMapError,
+  entries: number,
+): void {
   mapCache.set(bundleUrl, map);
 
   // Oldest first, like the bundle cache and for the same reason: a pass walks
@@ -293,10 +308,59 @@ interface SearchSuccess {
   /** The needle that hit, which is the text later bundles must be counted for. */
   needleText: string;
   /**
+   * How much compiled text, from the reported position, is known to be this
+   * component's own — the window `lookupFunctionStart` may accept a mapping in.
+   *
+   * Not `needleText.length`, which is what it used to be and is only right on
+   * the head-needle path. A body-needle hit reports the *function start*
+   * `searchBundle` walked back to, which sits up to `bodyOffset + slack`
+   * characters before the matched text; measuring the window from the needle's
+   * length then stopped it short by exactly that distance, and a map whose only
+   * mapping for the function lay in the part that got cut off fell through to
+   * `lookupOriginal` — the "segment at or before" lookup, which is the one that
+   * answers with the *previous* function's file while the status still reads
+   * `resolved`. That is the failure `lookupFunctionStart` was written to
+   * remove, reintroduced by a short window.
+   *
+   * Measured rather than recomputed: it is the distance from the position
+   * `searchBundle` reported to the end of the text it matched, so it stays
+   * correct whatever rule that function uses to pick the start.
+   */
+  span: number;
+  /**
    * False when the deadline cut the duplicate sweep short, so `matchCount` is a
    * lower bound rather than the answer.
    */
   swept: boolean;
+}
+
+/** The offset a 0-based line and column name in `content`, or -1. */
+function offsetAt(content: string, line: number, column: number): number {
+  let at = 0;
+  for (let n = 0; n < line; n++) {
+    const newline = content.indexOf('\n', at);
+    if (newline === -1) return -1;
+    at = newline + 1;
+  }
+  return at + column;
+}
+
+/**
+ * From the reported start to the end of the matched text.
+ *
+ * The search starts at `start` rather than at 0, which is both cheaper and
+ * exact: the reported position is at or before the hit, and the hit is the
+ * first occurrence in the bundle, so nothing between them can match. A search
+ * that comes back empty means the two facts do not line up — a bug rather than
+ * a bundle — and the needle's own length is the answer that was given before
+ * any of this, so it is what that falls back to.
+ */
+function spanOf(content: string, line: number, column: number, needleText: string): number {
+  const start = offsetAt(content, line, column);
+  if (start < 0) return needleText.length;
+
+  const hit = content.indexOf(needleText, start);
+  return hit < start ? needleText.length : hit - start + needleText.length;
 }
 
 /**
@@ -358,6 +422,7 @@ async function searchForNeedle(
         matchCount: found.matchCount,
         content,
         needleText: found.needleText,
+        span: spanOf(content, found.line, found.column, found.needleText),
         swept: true,
       };
       if (hit.matchCount >= MAX_MATCHES_TRACKED) return hit;
@@ -379,6 +444,7 @@ async function loadMap(
   pass: Pass,
 ): Promise<PreparedMap | null> {
   const cached = mapCache.get(bundleUrl);
+  if (cached instanceof SourceMapError) throw cached;
   if (cached !== undefined) return cached;
 
   const annotation = extractSourceMappingURL(bundleContent);
@@ -387,36 +453,63 @@ async function loadMap(
     return null;
   }
 
-  let json: string;
+  /**
+   * Remember a failure that cannot come out differently next time, then rethrow.
+   *
+   * Decoding an inlined map, resolving the annotation and parsing the JSON all
+   * answer the same way however often they are asked, so the hundredth
+   * component over this bundle should be told what the first one learned rather
+   * than learning it again. A fetch is the one step that is not like that, and
+   * is deliberately left out. Anything that is not a `SourceMapError` is a bug
+   * in the decoder rather than a verdict on the map, and is not written down —
+   * a transient bug must not become permanent for the life of the worker.
+   */
+  const permanent = (error: unknown): unknown => {
+    if (error instanceof SourceMapError) rememberMap(bundleUrl, error, pass.cacheEntries);
+    return error;
+  };
 
-  if (annotation.startsWith('data:')) {
-    // Inlined by the bundler — no request, and no size guard needed beyond the
-    // one the bundle itself already passed.
-    json = decodeDataUrl(annotation);
-  } else {
+  /** Null until the map has been fetched; a data URL is decoded below instead. */
+  let json: string | null = null;
+
+  if (!annotation.startsWith('data:')) {
     let mapUrl: string;
     try {
       mapUrl = new URL(annotation, bundleUrl).toString();
     } catch {
-      throw new SourceMapError(`the sourceMappingURL "${annotation}" is not a resolvable URL`);
+      throw permanent(
+        new SourceMapError(`the sourceMappingURL "${annotation}" is not a resolvable URL`),
+      );
     }
 
     const fetched = await pass.provider.loadUrl(mapUrl);
+    // Not remembered, unlike everything else in here: the provider caches no
+    // failure either, because a map that would not load once may load on the
+    // next pass — which is the whole basis of the recorder's retry.
     if (fetched === null) {
       throw new SourceMapError('its source map could not be fetched — it may be 404 or private');
     }
     json = fetched;
   }
 
-  /*
-   * `keepSourcesContent` is left off (D3). A flow is sent to an AI, and inlined
-   * original source is both a token disaster and a way to leak code the user
-   * never meant to send. The panel, which renders a preview from it, opts in at
-   * its own call site — the failure mode of getting this wrong is a missing
-   * preview or a larger object, never a wrong path, which is exactly why this
-   * one is a parameter where the line base (D1) is a type.
-   */
-  const map = parseSourceMap(json);
+  let map: PreparedMap;
+  try {
+    /*
+     * A `data:` annotation is inlined by the bundler — no request, and no size
+     * guard needed beyond the one the bundle itself already passed.
+     *
+     * `keepSourcesContent` is left off (D3). A flow is sent to an AI, and
+     * inlined original source is both a token disaster and a way to leak code
+     * the user never meant to send. The panel, which renders a preview from it,
+     * opts in at its own call site — the failure mode of getting this wrong is
+     * a missing preview or a larger object, never a wrong path, which is
+     * exactly why this one is a parameter where the line base (D1) is a type.
+     */
+    map = parseSourceMap(json ?? decodeDataUrl(annotation));
+  } catch (error) {
+    throw permanent(error);
+  }
+
   rememberMap(bundleUrl, map, pass.cacheEntries);
   return map;
 }
@@ -561,7 +654,7 @@ async function resolveOne(
      * See the header on `lookupFunctionStart` for what that cost on a real Vue
      * production build before it existed.
      */
-    original = lookupFunctionStart(map, found.line, found.column, found.needleText.length);
+    original = lookupFunctionStart(map, found.line, found.column, found.span);
   } catch (error) {
     const reason = error instanceof SourceMapError ? error.message : 'the source map is unusable';
     return {
