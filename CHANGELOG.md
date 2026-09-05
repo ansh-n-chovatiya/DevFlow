@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.1.1 — 2026-09-05
 
 **The narrow-screen layout was written above the rules it changes, so it never
 took effect.** A media query adds no specificity of its own, so
