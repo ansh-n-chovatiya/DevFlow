@@ -1,5 +1,222 @@
 # Changelog
 
+## Unreleased
+
+A full audit of the extension, the engine and the server, fixing what it found.
+Grouped by what it means for somebody using DevFlow rather than by module.
+
+### Recordings no longer leak what they were meant to redact
+
+**A relative URL was never redacted.** `redactUrl` parsed with `new URL()`,
+which throws when there is no origin, and the `catch` returned the string
+untouched. Since `fetch('/api/session?access_token=…')` is the ordinary shape in
+a real application, every token in a relative request URL went unmasked into the
+saved flow, the exported ZIP and the payload sent to Claude. This is the one
+defect here that was silently costing people secrets, and it was in the module
+whose entire job is to prevent that.
+
+**A malformed percent escape broke the page being recorded.** `?100%=one` threw a
+`URIError` out of the redactor, which runs inside the patched `fetch`, so the
+application's own request rejected *and* the token beside it was never masked. A
+fault in the privacy layer was breaking the site under test.
+
+**Three more in the same module**: an OAuth code in a hash route
+(`#/callback?code=…`) parsed as one parameter name and matched nothing; a
+`file://` URL rebuilt from `origin + pathname` produced the literal `null/Users/…`
+in the field that says where the step happened; and a password in the URL
+authority was dropped only incidentally, when something else happened to mask.
+
+### Components resolve to the file they were actually written in
+
+**Bundles with an inlined source map resolved to nothing at all.** The
+annotation scan read the last 2,000 characters, which for a `data:` map lands
+inside the base64 payload — so every build using an inline map reported *ships no
+source map* and no component got a file or line. The decoding branch for those
+maps had, in consequence, never run. The scan now anchors on where the
+annotation *ends*; an annotation buried mid-bundle is still ignored, which was
+the point of the window.
+
+**The DevTools panel could name a neighbouring component's file, and call it
+resolved.** It looked a bundle hit up with `lookupOriginal` where the recorder
+uses `lookupFunctionStart`; on a minified build whose first mapping sits a few
+columns into a function body, the covering segment belongs to whatever was
+emitted before it. The recorder had the same class of defect from the other
+direction — it measured the search window from the matched text rather than from
+the function start, so it fell through to the same wrong-file path more often
+than intended.
+
+**A source path containing `$&` or `$'` was mangled** into the editor URL,
+because the path was handed to `String.replace` as a *replacement string*, where
+those are substitution patterns.
+
+### Features that were quietly dead
+
+**"What this caused" did nothing on any flow with a deleted step.** The lookup
+keyed on a step number stamped at capture, which goes stale on deletion — and the
+failure was discarded rather than reported, so the button was inert on every card
+with no error. `buildCascade` now carries the collision rule the causal graph and
+the diagnosis already use, so it is correct on its own terms rather than
+depending on every caller remembering.
+
+**Generated mocks could never fire.** A recorded relative URL was written into
+the spec as-is, but Playwright matches on `url.href` and Cypress on the full URL,
+so an exported test ran green while serving none of its recorded responses.
+
+**Choosing Playwright or Cypress as the default export did nothing** — the
+setting offered three formats where the dialog offers five, so the stored value
+resolved back to `zip`.
+
+**The control that fixes "no source available" was unreachable from every
+surface.** It appears only for a status the panel never produces, and the flow
+review never passed its callback. The panel now says which of the two causes
+applies — it is the one surface that can know — and offers the switch.
+
+### Data that was being lost
+
+**Undoing a flow deletion destroyed three of its five records.** Delete removed
+state, renders and framework tables; undo put back two. Every flow a current
+build records carries all five, so this was the ordinary undo rather than an edge
+case, and the loss was unrecoverable.
+
+**Delete stopped working at the end of a flow**, because the active index was
+never moved after a removal — and deleting a step above the highlighted one left
+the mark on the wrong card, so the next Delete removed something nobody had
+selected.
+
+**A settings value with a pattern was destroyed by retyping it.** There is no
+nearest legal string to clamp to, so a pattern failure fell back to the default,
+which the save path then read as "unmodified" and removed the key. Retyping
+`mcpServerUrl` without its scheme silently wiped a custom port. Nothing is
+written now, the stored value stays on screen, and the row says why.
+
+**"Reset all N shown" cleared settings it had not counted**, including
+policy-locked ones the user was told they could not change.
+
+**Two flows saved in the same millisecond overwrote each other.** Ids were
+`flow_<ms>`, and the popup and a viewer tab are separate documents, so no in-page
+guard covered it; the second save wrote over the first flow's steps and the
+library then listed two rows opening the same recording.
+
+**Multi-byte characters were corrupted at every socket boundary** in the
+server's six POST handlers, because each read was decoded on its own. `£42.00`
+arrived as `��42.00`. Nothing throws, the JSON parses, and a recorded
+response body is simply wrong when somebody is later shown it as evidence.
+
+### Recording no longer slows down the page it is recording
+
+**Every keystroke swept the whole document, on every page in the world.** The
+Svelte adapter built its page-wide evidence eagerly — `querySelectorAll('*')`,
+hundreds of symbol reads and a document-wide comment walk — synchronously inside
+the capture-phase listener, ahead of the page's own handlers, and the resolver
+then discarded all of it against three constant-time global reads. The evidence
+is taken on demand now, so a page that is not Svelte never sweeps, and neither
+does a Svelte dev page whose element carries its own metadata.
+
+**The same shape on Next.js**: the RSC flight payload was re-scanned and
+re-parsed per interaction, over a payload routinely hundreds of kilobytes. It is
+memoised against a content-derived key, so a client navigation still invalidates
+it.
+
+**Assembling a span tree was quadratic** — 326 ms at 4,000 spans, and a
+stack overflow past 8,000. Both walks are iterative and the linking pass
+memoises, so 32,000 spans now take 15 ms. Traces arrive over an unauthenticated
+port, so neither the depth nor the width was ever ours to assume.
+
+### Things that could go wrong and never say so
+
+**A bundle fetch had no timeout.** The URL comes from the page, so a host that
+accepts the connection and never answers hung source resolution indefinitely,
+with no error and no end state.
+
+**Escape on the popup's confirmation dialog performed the destructive action**,
+because `returnValue` is only written by a button and still held the previous
+answer.
+
+**A keystroke could be committed after Stop or Pause**: the debounce read the
+field when the timer fired rather than when the key was pressed, and never
+re-checked. Type a character, pause, type a password into the same field, and the
+password was recorded.
+
+**Closing DevTools left a highlight painted on the page forever**, with its
+scroll and resize listeners and a `ResizeObserver` per host node still live and
+nothing left in existence able to stop them.
+
+**Page-supplied names reached `Object.prototype`** in four separate lookups:
+`role="constructor"` crashed the whole export and threw inside the accessibility
+audit, and `class="lucide-constructor"` wrote `Clicked "function Object() {
+[native code] }"` into a step description.
+
+### Security
+
+**`viewer.html` was web-accessible to every site.** Nothing needed it — the page
+is only ever opened by the extension itself — and what the entry bought was
+letting any website frame the flow review: every recorded step, its screenshots,
+its request and response bodies, its console, plus Delete and Send, and a
+reliable way to fingerprint the extension.
+
+**The auto-release workflow interpolated a commit message into a shell script.**
+`${{ }}` is substituted before the shell parses the line, so a commit body
+containing a line that is exactly `EOF` closed the quoted heredoc and ran as
+shell — in a job holding `contents: write` that hands `secrets: inherit`,
+`npm` token included, to the release workflow. The message travels in the
+environment now.
+
+**Release archives shipped 1.8 MB of source**, because the build emits source
+maps that inline `sourcesContent`.
+
+### The gates themselves
+
+**The changelog gate was a no-op**, and had been since the last release: its
+escape hatch only checked that the top heading matched `package.json`'s version,
+which stays true for every commit until somebody opens an `Unreleased` section —
+exactly the window the gate exists for. It also read an empty section as filled.
+
+**CI ran four of the eight gates.** It enumerated them instead of calling
+`npm run verify`, and had drifted; the settings-DOM, brand, vocabulary and
+framework-neutrality checks were green there no matter what they would have said.
+It calls `verify` now, so a gate added there is enforced the same day.
+
+**Three checkers could pass falsely** — an import split across lines was
+invisible to the framework-neutrality gate, a `//` inside a string literal hid
+everything after it from the settings-DOM gate, and a colour written as a channel
+triple slipped past the token gate.
+
+**A settings field type with no branch resolved every override to `undefined`.**
+The resolver returns `unknown` and had no exhaustiveness check, so adding a row
+to the settings table — which is data, and does not feel like writing code —
+would have silently switched a setting off everywhere, including in the bundled
+server. It is a compile error now.
+
+### Accessibility and keyboard
+
+Focus was thrown to the top of the document by four settings controls that
+repaint the page; the overflow menu and the "More actions" panel could not be
+closed from the keyboard; the component trees announced as inert list items and
+vanished from the button list screen readers navigate by; drawer toggles never
+said whether they were open; a settings row's description, error and clamp
+messages were visible only to sighted users; and `--fg-faint`, which sets 10-12px
+text throughout, failed contrast in both themes at 3.27-3.51:1.
+
+The accessibility audit itself reported findings that were not true: contrast was
+judged on the rounded ratio, so `#6473b6` on white passed at exactly 4.5; every
+correctly-built tab list, menu and listbox was called keyboard-unreachable,
+because roving `tabindex` is how those are supposed to work; `aria-checked` on a
+`role="option"` was rejected though the spec requires it; and `aria-hidden`
+inheritance gave up after twelve ancestors, so a closed drawer's contents were
+reported as real violations while the check for content stranded behind a modal
+could never fire.
+
+### Exports
+
+Generated Playwright and Cypress files no longer break on a component name the
+application chose — a name containing a newline could forge a step heading in the
+Markdown, and one containing `|` could open a table column the header never
+declared. Dates in an export are fixed UTC rather than the machine's locale, so
+two exports of one flow no longer differ between machines that agree about
+everything else, and the clock is passed in rather than read inside the pure
+core. ZIP entry names declare themselves UTF-8.
+
+
 ## 4.0.1 — 2026-09-04
 
 **Every push to main that changes something you install now publishes it.**
