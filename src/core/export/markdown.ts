@@ -132,6 +132,20 @@ function inlineCode(text: string): string {
   return `${ticks}${pad}${flat}${pad}${ticks}`;
 }
 
+/**
+ * One table cell of page-derived text.
+ *
+ * A component's `name` is its `displayName`, which is a string the recorded
+ * application chose: a `|` in it opens a column the header never declared, and
+ * a newline ends the table and leaves the rest of the row as prose — the same
+ * forging `inlineCode` prevents for a step's own text, in the one place the
+ * document quotes page text outside a span. A source path carries the same risk
+ * for the same reason, since it is read off the application's source map.
+ */
+function cell(text: string): string {
+  return flatten(text).replace(/\|/g, '\\|');
+}
+
 function imageRef(step: Step, index: number, strategy: ImageStrategy): string | null {
   switch (strategy.kind) {
     case 'inline':
@@ -179,7 +193,10 @@ function appendStep(
   if (path && path !== prevPath) lines.push(`📍 ${path}`);
 
   if (step.element && isStableSelector(step.element.cssSelector)) {
-    lines.push(`\`${step.element.cssSelector}\``);
+    // `inlineCode` rather than a hand-written span: an id or an aria-label may
+    // hold a backtick, `CSS.escape` keeps it, and a span it closes early leaves
+    // the rest of the selector as prose.
+    lines.push(inlineCode(step.element.cssSelector));
   }
 
   /*
@@ -192,9 +209,11 @@ function appendStep(
     // The enclosing feature component is named alongside it, because on an app
     // with a shared UI kit `⚛ Button` on its own is true and useless.
     const within = stepEnclosing(step, components);
-    lines.push(
-      within ? `⚛ ${owner.component.name} · in ${within.component.name}` : `⚛ ${owner.component.name}`,
-    );
+    // Flattened for `action`'s reason one block up: a `displayName` is a string
+    // the application chose, and one carrying a newline turned the rest of
+    // itself into a paragraph — or into a heading for a step nobody performed.
+    const name = flatten(owner.component.name);
+    lines.push(within ? `⚛ ${name} · in ${flatten(within.component.name)}` : `⚛ ${name}`);
   }
 
   /*
@@ -372,7 +391,7 @@ function appendComponents(lines: string[], react: FlowReact, steps: Step[]): voi
   const rows = referencedComponentIds(steps)
     .map((id) => react.components[id])
     .filter((component): component is ComponentSource => Boolean(component))
-    .map((c) => `| ${c.name} | ${formatSource(c) ?? '—'} | ${componentNotes(c)} |`);
+    .map((c) => `| ${cell(c.name)} | ${cell(formatSource(c) ?? '—')} | ${cell(componentNotes(c))} |`);
 
   /*
    * The cap is a fact about the recording, not about any one row.
@@ -489,6 +508,33 @@ export interface MarkdownOptions extends Omit<Partial<ExportOptions>, 'images' |
    * prints it.
    */
   commit?: string;
+  /**
+   * The moment this document is being written, supplied by the caller.
+   *
+   * Not read here. `core/` is bundled into `mcp-server/core.js` and imported by
+   * a Node process with no clock of this module's choosing — the clock belongs
+   * to `features/`, and a defaulted `new Date()` would keep the impurity
+   * reachable while looking as though it had been dealt with. Absent means the
+   * caller has nothing to stamp, and the header simply omits the line: an export
+   * time nobody supplied is not worth inventing.
+   */
+  now?: Date;
+}
+
+/**
+ * A timestamp as the document prints it: `2026-08-01 09:30 UTC`.
+ *
+ * Fixed and UTC rather than `toLocaleString()`, which was what this used. A
+ * `flow.md` is an artefact — committed beside a bug report, diffed against last
+ * week's, read by a model — and `toLocaleString()` renders one recording as
+ * "8/1/2026, 9:30:00 AM" here and "01.08.2026, 11:30:00" in Berlin. Two exports
+ * of the same flow then differ in the header on machines that agree about
+ * everything else, and the MCP server, which renders this on demand, returns a
+ * different document per host. A reader who wants their own timezone has the
+ * offset written down; a reader who has the other rendering has nothing.
+ */
+function stamp(at: Date): string {
+  return `${at.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 }
 
 /** Render a flow as Markdown. */
@@ -509,16 +555,17 @@ export function exportToMarkdown(steps: Step[], options: MarkdownOptions = {}): 
   lines.push(`# ${title}`);
   /*
    * "Recorded" is the capture time the steps carry, not the moment of export.
-   * Reading it off `new Date()` dated a flow captured on 1 August to the 24th,
-   * which is the one date a reader cannot check against anything else in the
-   * document. The export time is still worth having — it says how stale the
-   * screenshots are — so it is kept under its own name, as `flow.json` does.
+   * Reading it off a clock dated a flow captured on 1 August to the 24th, which
+   * is the one date a reader cannot check against anything else in the document.
+   * The export time is still worth having — it says how stale the screenshots
+   * are — so it is kept under its own name, as `flow.json` does, and it arrives
+   * from the caller because nothing in `core/` may read a clock.
    */
   const recordedAt = list[0]?.timestamp;
   lines.push(
     [
-      recordedAt ? `Recorded ${new Date(recordedAt).toLocaleString()}` : null,
-      `Exported ${new Date().toLocaleString()}`,
+      recordedAt ? `Recorded ${stamp(new Date(recordedAt))}` : null,
+      options.now ? `Exported ${stamp(options.now)}` : null,
       `${list.length} steps`,
       host || null,
     ]

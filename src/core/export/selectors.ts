@@ -66,9 +66,19 @@ const NATIVE_TAGS: Record<string, string[]> = {
   form: ['form'],
 };
 
-/** `[role="button"], button` — the explicit attribute and the native spelling. */
+/**
+ * `[role="button"], button` — the explicit attribute and the native spelling.
+ *
+ * `Object.hasOwn` before the lookup, because the role is whatever the page put
+ * in the attribute: `role="constructor"` reached `Object` through the prototype
+ * chain, `??` saw a value rather than `undefined`, and spreading a function
+ * threw `not iterable` — one attribute on one element failing the whole export
+ * rather than producing a selector.
+ */
 export function roleSelector(role: string): string {
-  return [`[role="${cssString(role)}"]`, ...(NATIVE_TAGS[role.toLowerCase()] ?? [])].join(', ');
+  const key = role.toLowerCase();
+  const native = Object.hasOwn(NATIVE_TAGS, key) ? NATIVE_TAGS[key] : [];
+  return [`[role="${cssString(role)}"]`, ...native].join(', ');
 }
 
 export function resilientSelector(element: ElementRef): Selector {

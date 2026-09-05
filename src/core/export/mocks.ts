@@ -48,8 +48,37 @@ export interface MockPlan {
  * `POST /cart` that changed it kept the first response and threw the second
  * away — the one interaction the test was recorded to reproduce.
  */
-function key(call: NetworkCall): string {
-  return `${call.method} ${call.url}`;
+function key(method: string, url: string): string {
+  return `${method} ${url}`;
+}
+
+/** A recorded URL that already carries a scheme, so nothing resolves it. */
+const ABSOLUTE = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+
+/**
+ * The URL a generated test has to match, which is not the one recorded whenever
+ * the page asked for a relative one.
+ *
+ * `fetch('/api/cart')` is written down exactly as the application wrote it, and
+ * both runners match against the **absolute** URL the browser requests:
+ * Playwright compares `url.href`, and Cypress matches its RegExp against the
+ * whole URL. So every mock built from a relative recorded URL was one that
+ * could never fire — the spec ran, talked to whatever was listening, and served
+ * none of the responses it was carrying, with nothing in the file saying so.
+ *
+ * Resolved against the page the call was made from, which is the base the
+ * browser itself used. An absolute URL is left byte for byte: re-parsing one
+ * would re-encode a query the recording deliberately keeps as it was.
+ */
+function absoluteUrl(url: string, pageUrl: string): string {
+  if (ABSOLUTE.test(url)) return url;
+  try {
+    return new URL(url, pageUrl).href;
+  } catch {
+    // No page URL to resolve against, or neither is a URL. The recorded string
+    // is still the best name this call has.
+    return url;
+  }
 }
 
 /**
@@ -97,19 +126,20 @@ export function planMocks(steps: Step[]): MockPlan {
 
   for (const step of steps) {
     for (const call of step.networkCalls ?? []) {
-      const id = key(call);
+      const url = absoluteUrl(call.url, step.url);
+      const id = key(call.method, url);
       if (seen.has(id)) continue;
       seen.add(id);
 
       const reason = omission(call);
       if (reason !== null) {
-        omitted.push({ method: call.method, url: call.url, reason });
+        omitted.push({ method: call.method, url, reason });
         continue;
       }
 
       mocks.push({
         method: call.method,
-        url: call.url,
+        url,
         status: call.status as number,
         headers: replayableHeaders(call.responseHeaders),
         body: call.responseBody as string,

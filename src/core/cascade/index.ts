@@ -222,6 +222,29 @@ export function parseRenderRef(ref: EventRef): { step: number; component: string
 }
 
 /**
+ * The number each step is addressed by.
+ *
+ * Copied from `core/causal`'s rule, which is private to that file, for the same
+ * reason `core/diagnose` copies it: every node in this picture except the step
+ * itself is looked up in the graph that module mints, so a root ref built off a
+ * number it would not have used names no event. `stepNumber` is stamped at
+ * capture time and goes stale after a deletion — see `renumber()` — so the
+ * stamped numbers are used only while they are all distinct, and position is
+ * used for the whole flow when they are not.
+ *
+ * Derived here rather than left to every caller to `renumber()` first, because
+ * the failure mode of trusting them is invisible: on a flow with two steps
+ * stamped `3` the root ref matched no event, `effectsOf` came back empty, and
+ * the cascade drew the interaction with nothing beneath it — which is exactly
+ * what a step that caused nothing looks like. A picture that is silently empty
+ * is worse than one that is missing.
+ */
+function stepNumbers(steps: readonly CascadeStep[]): number[] {
+  const stamped = steps.map((step, i) => step.stepNumber ?? i + 1);
+  return new Set(stamped).size === stamped.length ? stamped : steps.map((_, i) => i + 1);
+}
+
+/**
  * Build the cascade for one step.
  *
  * Returns `null` when the step is not in the flow, rather than an empty cascade:
@@ -233,8 +256,9 @@ export function buildCascade(
   stepNumber: number,
   limits: CascadeLimits = DEFAULT_CASCADE_LIMITS,
 ): Cascade | null {
-  const step = input.steps.find((s, index) => (s.stepNumber ?? index + 1) === stepNumber);
-  if (!step) return null;
+  const index = stepNumbers(input.steps).indexOf(stepNumber);
+  if (index === -1) return null;
+  const step = input.steps[index];
 
   const rootRef = eventRef('step', stepNumber);
   const graph = buildCausalGraph({ steps: input.steps });

@@ -65,11 +65,22 @@ export interface JsonExportOptions extends Omit<Partial<ExportOptions>, 'react'>
   settings?: Overrides;
   /** The flow's `network.summariseBodies` / `network.schemaThreshold`. */
   bodies?: BodyLimits;
+  /**
+   * The moment this file is being written, supplied by the caller.
+   *
+   * Not read here. This module is bundled into `mcp-server/core.js` and run by a
+   * Node process, and `core/` reads no clock — that belongs to `features/`, for
+   * the reason every impurity here belongs there: a `new Date()` defaulted into
+   * this signature would still be a clock in `core/`, only a harder one to find.
+   * Absent means `exportedAt` is simply not written, which is the honest shape:
+   * a stamp the caller could not supply is a stamp nobody can trust.
+   */
+  now?: Date;
 }
 
 /** Serialise recorded steps to the on-disk flow format. */
 export function exportToJSON(steps: Step[], options: JsonExportOptions = {}): string {
-  const { imageNames, images, network, logs, react, title, settings, bodies, frameworks } =
+  const { imageNames, images, network, logs, react, title, settings, bodies, frameworks, now } =
     options;
   const components = react ? pruneComponents(steps, react.components) : {};
   /*
@@ -90,7 +101,7 @@ export function exportToJSON(steps: Step[], options: JsonExportOptions = {}): st
     {
       version: EXPORT_SCHEMA_VERSION,
       ...(title ? { name: title } : {}),
-      exportedAt: new Date().toISOString(),
+      ...(now ? { exportedAt: now.toISOString() } : {}),
       stepCount: steps.length,
       // Absent when the recording used the defaults — the same rule the payload
       // and the index follow, so "no stamp" means one thing everywhere.

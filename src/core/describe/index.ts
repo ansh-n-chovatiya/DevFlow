@@ -102,7 +102,11 @@ export function iconName(el: Element): string {
   const match = /lucide-([a-z0-9-]+)/i.exec(cls);
   if (!match) return '';
   const key = match[1].toLowerCase();
-  return ICON_NAMES[key] ?? key.replace(/-/g, ' ');
+  // `Object.hasOwn` before the lookup: the key is a class name the page wrote,
+  // and `class="lucide-constructor"` found `Object` on the prototype chain —
+  // so `??` never fired and the step's own sentence became the source text of a
+  // function, written to storage and into every export.
+  return Object.hasOwn(ICON_NAMES, key) ? ICON_NAMES[key] : key.replace(/-/g, ' ');
 }
 
 /**

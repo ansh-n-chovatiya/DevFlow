@@ -3,6 +3,15 @@
  *
  * Runs in an extension page, where Blob / TextEncoder / DataView /
  * CompressionStream all exist. `createZip` is async because deflate is.
+ *
+ * Those four are the reason this file is worth a second look every time `core/`
+ * is audited for purity, and the reason it is not a violation: nothing else
+ * under `core/` imports it and `mcp-bundle.ts` does not re-export it, so it
+ * never reaches `mcp-server/core.js`. Its one importer is
+ * `features/export/download.ts`. It also happens to be portable — Node has had
+ * all four as globals since 18 — so the honest statement is that this is a
+ * browser-shaped writer no Node process loads, not code that would throw if one
+ * did.
  */
 
 /**
@@ -96,6 +105,17 @@ export async function createZip(files: ZipEntry[]): Promise<Blob> {
       : await deflateRaw(raw);
 
     const compression = compressed ? 8 : 0;
+    /*
+     * General-purpose bit 11: the entry name is UTF-8.
+     *
+     * Set unconditionally because `TextEncoder` only emits UTF-8, so the flag
+     * always tells the truth — and ASCII, which is every name this writer is
+     * handed today, is a subset. Without it an unzipper is entitled to read the
+     * bytes as CP437, and the first flow named in a language that is not English
+     * would unpack to mojibake with nothing in the archive to blame. A latent
+     * bug that costs two bytes to close is closed.
+     */
+    const flags = 0x800;
     const crc = crc32(raw); // always of the uncompressed data
     const compSize = data.length;
     const uncompSize = raw.length;
@@ -105,7 +125,7 @@ export async function createZip(files: ZipEntry[]): Promise<Blob> {
     const lv = new DataView(local.buffer);
     lv.setUint32(0, 0x04034b50, true); // signature
     lv.setUint16(4, 20, true); // version needed
-    lv.setUint16(6, 0, true); // flags
+    lv.setUint16(6, flags, true); // UTF-8 name
     lv.setUint16(8, compression, true); // 0 = store, 8 = deflate
     lv.setUint16(10, 0, true); // mod time
     lv.setUint16(12, 0, true); // mod date
@@ -124,7 +144,7 @@ export async function createZip(files: ZipEntry[]): Promise<Blob> {
     cv.setUint32(0, 0x02014b50, true);
     cv.setUint16(4, 20, true);
     cv.setUint16(6, 20, true);
-    cv.setUint16(8, 0, true);
+    cv.setUint16(8, flags, true); // UTF-8 name, as in the local header
     cv.setUint16(10, compression, true);
     cv.setUint16(12, 0, true);
     cv.setUint16(14, 0, true);

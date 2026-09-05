@@ -123,6 +123,20 @@ function probe(host: object, key: string): unknown {
   return read.ok ? read.value : undefined;
 }
 
+/**
+ * Write one property onto the copy, `__proto__` included.
+ *
+ * `out[key] = value` is an assignment, and for `__proto__` an assignment runs
+ * `Object.prototype`'s setter rather than creating a property: the key
+ * disappears from the snapshot and the copy's prototype becomes whatever the
+ * store held. An own `__proto__` is ordinary data — every `JSON.parse` of a
+ * response carrying one produces it — so it is copied like any other key, as
+ * data, onto an object whose prototype nothing in the page can choose.
+ */
+function setKey(out: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(out, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 /** `-0` collapses to `0` and non-finite numbers to `null`, as JSON has neither. */
 function normaliseNumber(n: number): number | null {
   if (!Number.isFinite(n)) return null;
@@ -354,20 +368,20 @@ function walkObject(
     // elements and `Map` entries never reach here: they have no property name,
     // and a predicate over positions would be a guess.
     if (isSecret(key, budget)) {
-      out[key] = MASK;
+      setKey(out, key, MASK);
       continue;
     }
     const read = readProp(obj, key);
     if (!read.ok) {
       mark();
-      out[key] = UNREADABLE;
+      setKey(out, key, UNREADABLE);
       continue;
     }
     // Dropped, not nulled — what `JSON.stringify` does, and what a diff needs:
     // an omitted key is absent on both sides and produces no operation, while a
     // null would be a value the app never held.
     if (read.value === undefined) continue;
-    out[key] = walk(read.value, budget, depth + 1, ancestors, mark);
+    setKey(out, key, walk(read.value, budget, depth + 1, ancestors, mark));
   }
   ancestors.pop();
   return out;

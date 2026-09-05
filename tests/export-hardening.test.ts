@@ -202,20 +202,21 @@ describe('the action and the typed value cannot forge a step either', () => {
 
 describe('the header dates the recording, not the export', () => {
   const RECORDED = Date.parse('2026-08-01T09:30:00Z');
+  const EXPORTED = new Date('2026-08-24T18:05:00Z');
 
   it('reads "Recorded" off the first step', () => {
     const md = exportToMarkdown([click({ timestamp: RECORDED })]);
-    expect(md).toContain(`Recorded ${new Date(RECORDED).toLocaleString()}`);
+    expect(md).toContain('Recorded 2026-08-01 09:30 UTC');
   });
 
-  it('does not date a flow captured weeks ago to today', () => {
-    const md = exportToMarkdown([click({ timestamp: RECORDED })]);
-    const today = new Date().toLocaleString();
-    expect(md).not.toContain(`Recorded ${today}`);
+  it('does not date a flow captured weeks ago to the export', () => {
+    const md = exportToMarkdown([click({ timestamp: RECORDED })], { now: EXPORTED });
+    expect(md).not.toContain('Recorded 2026-08-24');
   });
 
   it('keeps the export time under its own name', () => {
-    expect(exportToMarkdown([click({ timestamp: RECORDED })])).toContain('· Exported ');
+    const md = exportToMarkdown([click({ timestamp: RECORDED })], { now: EXPORTED });
+    expect(md).toContain('· Exported 2026-08-24 18:05 UTC');
   });
 });
 

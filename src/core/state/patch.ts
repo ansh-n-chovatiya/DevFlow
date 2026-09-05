@@ -253,13 +253,27 @@ export function diff(before: unknown, after: unknown, budget: PatchBudget): Patc
   return { ops: fitted.map(toOp), collapsed: changes.length - fitted.length };
 }
 
+/**
+ * Write one property, `__proto__` included.
+ *
+ * `host[key] = value` is an assignment, and for `__proto__` an assignment runs
+ * `Object.prototype`'s setter instead of creating a property — so a snapshot
+ * key named `__proto__`, which every `JSON.parse` of a response carrying one
+ * produces, was silently dropped from the copy while replacing the copy's
+ * prototype with a value the recorded page chose. The rest of this module reads
+ * through `hasOwnProperty`, so a defined property is what it can see.
+ */
+function setKey(host: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(host, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 /** Structural copy of a JSON-safe value, so applying never writes into `before`. */
 function clone(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(clone);
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = clone(item);
+      setKey(out, key, clone(item));
     }
     return out;
   }
@@ -327,7 +341,7 @@ export function applyPatch(before: unknown, ops: readonly PatchOp[]): unknown {
 
     const host = parent as Record<string, unknown>;
     if (op.op === 'remove') delete host[last];
-    else host[last] = clone(op.value);
+    else setKey(host, last, clone(op.value));
   }
 
   return doc;

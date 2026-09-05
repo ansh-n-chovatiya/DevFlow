@@ -102,7 +102,7 @@ function breathe(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function buildZip(request: ExportRequest): Promise<Blob> {
+async function buildZip(request: ExportRequest, now: Date): Promise<Blob> {
   const { steps, options, title, onProgress } = request;
   const react = includedTable(request);
   // The stamp, resolved: the two `network.*` rules the bodies below were
@@ -145,6 +145,7 @@ async function buildZip(request: ExportRequest): Promise<Blob> {
         react,
         settings: describeStamp(request.settings),
         limits,
+        now,
       }),
     ),
   });
@@ -159,6 +160,7 @@ async function buildZip(request: ExportRequest): Promise<Blob> {
         title,
         settings: request.settings,
         bodies: limits,
+        now,
       }),
     ),
   });
@@ -190,6 +192,15 @@ export async function exportFlow(input: ExportRequest): Promise<Result<string>> 
   const { format, options, title } = request;
   const react = includedTable(request);
   const limits = renderLimits(resolve(request.settings ?? {}));
+  /*
+   * The clock is read here and nowhere below.
+   *
+   * `core/export/` takes the export time as an argument because it is bundled
+   * into the MCP server, so this is the layer that owns it — and reading it once
+   * rather than at each writer is what stops the `flow.md` and the `flow.json`
+   * inside one ZIP from stamping two different seconds.
+   */
+  const now = new Date();
   // Numbered on the way out, so a flow with deleted steps exports 1, 2, 3 rather
   // than the capture-time 1, 2, 4.
   const steps = renumber(request.steps);
@@ -199,7 +210,7 @@ export async function exportFlow(input: ExportRequest): Promise<Result<string>> 
 
   try {
     if (format === 'zip') {
-      downloadFile(filename, await buildZip({ ...request, steps }));
+      downloadFile(filename, await buildZip({ ...request, steps }, now));
     } else if (format === 'markdown') {
       const markdown = exportToMarkdown(steps, {
         title,
@@ -209,6 +220,7 @@ export async function exportFlow(input: ExportRequest): Promise<Result<string>> 
         react,
         settings: describeStamp(request.settings),
         limits,
+        now,
       });
       downloadFile(filename, new Blob([markdown], { type: 'text/markdown' }));
     } else if (format === 'playwright' || format === 'cypress') {
@@ -235,6 +247,7 @@ export async function exportFlow(input: ExportRequest): Promise<Result<string>> 
               title,
               settings: request.settings,
               bodies: limits,
+              now,
             }),
           ],
           { type: 'application/json' },
