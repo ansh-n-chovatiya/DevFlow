@@ -166,26 +166,26 @@ describe('the changelog gate’s release-commit escape', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('fails a src/ change with no entry, even at a version that was just cut', () => {
-    // Run for real against this checkout. It is the state described above —
-    // `CHANGELOG.md`'s top heading is the current version — so a pass here would
-    // mean the escape is still unbounded. The exit code is the gate.
-    const version = (JSON.parse(read('package.json')) as { version: string }).version;
-    const headings = [...read('CHANGELOG.md').matchAll(/^## (.+)$/gm)].map((m) => m[1].trim());
-    if (!headings[0]?.startsWith(version)) return; // an Unreleased section is open; nothing to prove
-
-    let code = 0;
-    try {
-      execFileSync('git', ['diff', '--quiet', 'HEAD', '--', 'src', 'public'], { cwd: root });
-    } catch {
-      code = 1;
-    }
-    if (code === 0) return; // nothing shipped is uncommitted; the gate has nothing to fire on
-
-    expect(() =>
-      execFileSync('node', ['scripts/check-changelog.mjs'], { cwd: root, stdio: 'pipe' }),
-    ).toThrow();
-  });
+  /*
+   * There was a third case here, run against the live checkout: "the top
+   * heading is the current version and something under `src/` is uncommitted,
+   * so the gate must fail." It is deleted rather than repaired, and the reason
+   * is worth keeping.
+   *
+   * That is not a description of the no-op window. It is a description of a
+   * release being cut — `cut-release.mjs` renames the heading and bumps
+   * `public/manifest.json`, and runs `npm run verify` before it commits, so the
+   * tree it verifies is exactly that state with the work still in the range.
+   * The changes *are* written down, under the heading the rename just made. So
+   * the assertion fired on the one operation it had to allow, and `npm run
+   * release patch` failed on its own gate.
+   *
+   * It also could not have caught the bug it was aimed at: it asserted the
+   * behaviour of the too-tight rule, which is the rule that broke the v4.1.0
+   * push. The two cases above cover the same ground from fixtures, where the
+   * repository's state is built rather than borrowed and neither answer depends
+   * on when the suite happens to run.
+   */
 });
 
 describe('the settings-UI gate’s comment stripper', () => {
