@@ -431,6 +431,21 @@ export const MAX_MATCHES_TRACKED = 5;
 export const MAX_RESOURCE_BYTES = 24 * 1024 * 1024;
 
 /**
+ * How long one bundle or source map gets to answer before it is abandoned.
+ *
+ * The URLs come from the page, so the host on the other end is whatever the
+ * page chose to load from — and a host that accepts the connection and then
+ * says nothing is a hang, not an error: `fetch` has no timeout of its own, so
+ * the resolve pass waits forever and the step is never marked anything at all.
+ * The same reasoning and the same number as `SEND_TIMEOUT_MS`, which is the
+ * guard the MCP send path already carries for the same shape of silent host.
+ *
+ * A third of `MAX_RESOLVE_MS_PER_FLOW`, deliberately: a flow's whole budget
+ * survives a couple of dead hosts instead of being spent on the first one.
+ */
+export const RESOURCE_TIMEOUT_MS = 10_000;
+
+/**
  * Source maps larger than this are skipped outright.
  *
  * The streaming decode means a big map costs time rather than memory, but the

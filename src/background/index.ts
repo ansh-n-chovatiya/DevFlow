@@ -15,7 +15,7 @@
  */
 
 import { annotateScreenshot } from './annotator.js';
-import { getLocal, setLocal } from '../chrome/storage.js';
+import { getLocal, removeLocal, setLocal } from '../chrome/storage.js';
 import {
   load as loadSettings,
   migrateLegacySettings,
@@ -340,7 +340,12 @@ async function captureAndSave(
       // A step with no image still carries its selectors, timing and network —
       // losing the whole step because the screenshot failed would be worse.
       await reportError(captured.error);
-      omitted = `The screenshot could not be taken (${captured.error.code}).`;
+      // The sentence, not the code. `screenshotOmitted` is read by a person in
+      // the flow review and by a model in the Markdown export, and neither can
+      // do anything with `CAPTURE_RATE_LIMITED` — that string is for the
+      // console, which `reportError` above has already given it to.
+      // `FlowError.message` is the half of the pair written for a reader.
+      omitted = `The screenshot could not be taken. ${captured.error.message}`;
     }
   }
 
@@ -2141,9 +2146,12 @@ void refreshAction();
  * key that is already absent is a no-op, so this costs a fresh install nothing.
  */
 function dropRetiredKeys(): void {
-  void chrome.storage.local.remove('lastLocate').catch(() => {
-    /* A key that will not delete is a stale figure, not a broken install. */
-  });
+  // Through `chrome/storage.ts` like every other storage call in this worker:
+  // the promise form of `remove` is the one Chrome API here that was reaching
+  // past the wrapper, and a failure arrives as a `Result` rather than as a
+  // rejection nobody would have caught. A key that will not delete is a stale
+  // figure in the storage footer, not a broken install, so it is not reported.
+  void removeLocal('lastLocate');
 }
 
 chrome.runtime.onInstalled.addListener(() => {

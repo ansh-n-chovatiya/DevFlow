@@ -116,6 +116,34 @@ export function highlightRect(
   };
 }
 
+/** The highlight outline's width in CSS pixels, before the display scale. */
+const STROKE_WIDTH = 3;
+
+/**
+ * The path to stroke, and how wide, so the outline lands *inside* `rect`.
+ *
+ * `strokeRect` centres the line on the path, so stroking the rect itself puts
+ * half the width outside it. Everywhere else that is invisible; on a box
+ * `highlightRect` has clamped to the image it is the whole bug — the clamp
+ * exists precisely because the box ran off the edge, so the outer half falls
+ * off the canvas and the highlight is drawn with one, two or three sides
+ * missing. The box looks broken exactly when the element is near the edge of
+ * the page, which is where a lot of them are: headers, footers, sticky bars.
+ *
+ * The width is reduced for a box thinner than the line rather than the inset
+ * being capped, because capping the inset alone still strokes outside on a
+ * 2px-tall box — a thin outline that fits is honest, an outline wider than the
+ * thing it outlines is not.
+ */
+export function strokeInside(rect: Rect, lineWidth: number): { rect: Rect; width: number } {
+  const width = Math.min(lineWidth, rect.w, rect.h);
+  const half = width / 2;
+  return {
+    rect: { x: rect.x + half, y: rect.y + half, w: rect.w - width, h: rect.h - width },
+    width,
+  };
+}
+
 /**
  * Draw a highlight box over the captured element and return a new data URL.
  * `box` is in CSS pixels; `dpr` scales it into the device pixels the screenshot
@@ -163,32 +191,27 @@ export async function annotateScreenshot(
    * the exact opposite of the rule the worker states everywhere else, that a
    * step with no image still carries everything else it recorded.
    */
+  let bitmap: ImageBitmap | null = null;
   try {
     const source = await (await fetch(dataUrl)).blob();
-    const img = await createImageBitmap(source);
+    const img = (bitmap = await createImageBitmap(source));
 
     const rect = highlightRect(box, scale, delta, { x: 0, y: 0, w: img.width, h: img.height });
-    if (!rect) {
-      img.close();
-      return dataUrl;
-    }
+    if (!rect) return dataUrl;
 
     const canvas = new OffscreenCanvas(img.width, img.height);
     const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      img.close();
-      return dataUrl;
-    }
+    if (!ctx) return dataUrl;
 
     ctx.drawImage(img, 0, 0);
-    img.close();
 
     ctx.fillStyle = fillFor(stroke);
     ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
+    const outline = strokeInside(rect, STROKE_WIDTH * scale);
     ctx.strokeStyle = stroke;
-    ctx.lineWidth = 3 * scale;
-    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.lineWidth = outline.width;
+    ctx.strokeRect(outline.rect.x, outline.rect.y, outline.rect.w, outline.rect.h);
 
     // The same quality the capture itself was taken at. Hardcoding 0.6 here
     // meant re-encoding at a quality the rest of the extension did not agree
@@ -198,5 +221,18 @@ export async function annotateScreenshot(
   } catch (error) {
     console.warn('DevFlow: could not annotate the capture', error);
     return dataUrl;
+  } finally {
+    /*
+     * The decoded bitmap is freed on every exit, including the ones that throw.
+     *
+     * It was closed on each of the three explicit returns and nowhere else, so
+     * an `OffscreenCanvas` the worker refused to allocate — the realistic case
+     * on a 4K capture at DPR 2, which decodes to roughly 33 MB — dropped the
+     * bitmap without releasing it and left it to GC. This runs once per step of
+     * every recording, in a service worker Chrome is already looking for a
+     * reason to kill. `close()` is idempotent, so the successful path closing
+     * here rather than after `drawImage` costs nothing.
+     */
+    bitmap?.close();
   }
 }

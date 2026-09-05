@@ -41,6 +41,7 @@ import type { ComponentNeedle } from '../shared/types.js';
 import { resolutionId, resolutionSource } from '../core/locate/resolution.js';
 import { buildNeedle } from '../core/locate/needle.js';
 import { load, subscribe } from '../features/settings/index.js';
+import { getLocal } from '../chrome/storage.js';
 import {
   RECORDING_DEFAULTS,
   loadRecordingSettings,
@@ -550,6 +551,26 @@ function askAgent(query: AgentQueryInput): Promise<AgentQueryReply | null> {
   });
 }
 
+/**
+ * Drop anything a locate surface left drawn on this page.
+ *
+ * A highlight is armed by hovering a row in the panel's tree and cleared by
+ * leaving it — so a panel that *closes* never leaves the row. The box, its
+ * label, the capture-phase scroll and resize listeners tracking them and a
+ * `ResizeObserver` on every host node would then stay on the page for the life
+ * of the document, repainting on every scroll, with nothing left anywhere that
+ * could ask for them to go. `CANCEL_PICK` is what the worker sends when a panel
+ * goes away — see `closePanel` in `background/index.ts` — and it is the only
+ * signal page context ever gets that the surface holding the highlight is gone.
+ *
+ * Not answered, because there is nothing to wait for: the reply says whether a
+ * component was still there to draw, and this is the path where nobody is
+ * asking. Sending `index: null` is the same clear the panel sends on mouseleave.
+ */
+function clearPageHighlight(): void {
+  void askAgent({ kind: 'highlight', group: 'ancestry', index: null });
+}
+
 // ── Control messages ─────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message: ContentRequest, _sender, sendResponse) => {
@@ -623,6 +644,10 @@ chrome.runtime.onMessage.addListener((message: ContentRequest, _sender, sendResp
      */
     case 'START_PICK':
       settlePick({ kind: 'cancelled' });
+      // A new pick supersedes the last one's result, so the box still tracking
+      // a component from that result must not go on fighting the picker's own
+      // overlay for the same two elements on every scroll.
+      clearPageHighlight();
       pendingPick = sendResponse;
       isPicking = true;
       syncAgent();
@@ -631,6 +656,7 @@ chrome.runtime.onMessage.addListener((message: ContentRequest, _sender, sendResp
     case 'CANCEL_PICK':
       isPicking = false;
       syncAgent();
+      clearPageHighlight();
       // The agent is told to disarm without reporting, so the outstanding
       // request is settled from here — by the surface that cancelled it.
       settlePick({ kind: 'cancelled' });
@@ -714,9 +740,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   if (!('recordingActive' in changes) && !('recordingPaused' in changes)) return;
 
-  void chrome.storage.local.get(['recordingActive', 'recordingPaused']).then(async (state) => {
-    const active = Boolean(state.recordingActive);
-    const paused = Boolean(state.recordingPaused);
+  // Through `chrome/storage.ts`, which reads `lastError` and answers with a
+  // `Result`. The promise form rejects when the extension has been reloaded out
+  // from under a page that is still open — a state every long-lived tab reaches
+  // during development — and a rejection here was an unhandled one that also
+  // left this tab believing whatever it last believed about the recording.
+  void getLocal(['recordingActive', 'recordingPaused']).then(async (stored) => {
+    if (!stored.ok) return;
+    const active = Boolean(stored.value.recordingActive);
+    const paused = Boolean(stored.value.recordingPaused);
     const wasRecording = isRecording && !isPaused;
     // Awaited: the navigation step below is the recording's first, and it must
     // be captured under the settings the recording was started with.
@@ -815,9 +847,9 @@ void (async () => {
 
 // ── Resume after a navigation ────────────────────────────────────────────────
 
-void chrome.storage.local.get(['recordingActive', 'recordingPaused']).then(async (state) => {
-  if (!state.recordingActive) return;
-  await applyState(true, Boolean(state.recordingPaused));
+void getLocal(['recordingActive', 'recordingPaused']).then(async (stored) => {
+  if (!stored.ok || !stored.value.recordingActive) return;
+  await applyState(true, Boolean(stored.value.recordingPaused));
   // Gated on visibility for the same reason as the storage listener below: a
   // page that loads in a background tab — a middle-click, a `target=_blank`, a
   // prerender Chrome started on its own — has not been navigated to yet. It
@@ -1022,6 +1054,25 @@ document.addEventListener(
       eventTime,
       timer: setTimeout(() => {
         inputTimers.delete(el);
+
+        /*
+         * Re-checked here, not only when the key was pressed — the same guard
+         * `watchDomDelta` and `captureRouteChange` already keep, and for a
+         * sharper reason.
+         *
+         * The value is read *now*, from the live element, so a debounce still
+         * running when the user pauses commits whatever the field holds at this
+         * moment rather than what it held at the keystroke that armed it.
+         * Someone who types a character, pauses to enter a password and types it
+         * into the same field had that password written into the flow — and the
+         * worker could not catch it, because `captureAndSave` gates on
+         * `recordingActive`, which pausing does not clear.
+         *
+         * A stop is the same shape one step milder: the step is dropped by the
+         * worker, but `watchDomMutations` below would still have attached a
+         * `MutationObserver` to a page nobody is recording.
+         */
+        if (!isRecording || isPaused) return;
 
         const rawValue = el.value ?? '';
         const isPassword = el instanceof HTMLInputElement && el.type === 'password';
