@@ -111,8 +111,16 @@ export function resolveSvelteElement(
 ): ResolvedChain | null {
   const { page } = reading;
 
-  // Nothing on this page says Svelte. Not an absence — not this adapter's page.
-  if (!page.runtimeGlobal && !page.hydrationMarkers && !page.sveltekit) return null;
+  /*
+   * Nothing on this page says Svelte. Not an absence — not this adapter's page.
+   *
+   * The two global-derived signals are asked first and the document-derived one
+   * last. All three are booleans and the answer is the same in any order, but a
+   * producer is free to take a reading only when it is read — `readPageEvidence`
+   * does — and `hydrationMarkers` is the one that costs a walk of the document.
+   * Ordering it after the cheap pair means a SvelteKit page never pays for it.
+   */
+  if (!page.runtimeGlobal && !page.sveltekit && !page.hydrationMarkers) return null;
 
   const meta = readSvelteMeta(reading.meta, options.frameLimit);
   if (meta) {

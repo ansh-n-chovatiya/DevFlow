@@ -26,8 +26,9 @@
  * borrowing the fiber walk is reuse rather than a violation — and writing a
  * second one would be the failure ADR 0026 exists to prevent.
  *
- * Installs nothing, patches nothing, subscribes to nothing. Every function here
- * reads and returns.
+ * Installs nothing, patches nothing, subscribes to nothing. The one thing this
+ * file remembers is `createRscPort`'s memo of its own last scan, and it is
+ * invalidated by the document rather than by a clock — see the header there.
  */
 
 import type { ElementDescriptor } from '../core/rsc/flight.js';
@@ -144,11 +145,68 @@ export function nextVersion(): string | null {
   }
 }
 
-export const rscPort: RscPort = {
-  flightChunks: () => flightChunks(),
-  readingsFor,
-  describe,
-  version: nextVersion,
-};
+/**
+ * What the document's inline scripts look like, in two numbers.
+ *
+ * This is the invalidation signal for the memo below, so it has to be cheap
+ * enough to pay on every keystroke: how many `<script>` elements there are, and
+ * how much text is in them. Next emits one inline script per
+ * `self.__next_f.push` and never rewrites one it has already run, so everything
+ * that adds to the payload — a suspended boundary resolving, a segment streamed
+ * in after hydration — moves both numbers.
+ *
+ * Read through the text node's `length` rather than `textContent`, because
+ * `textContent` builds a copy of the whole payload. Allocating hundreds of
+ * kilobytes to decide that nothing changed is the cost this exists to avoid.
+ */
+function payloadSignature(doc: Document): string {
+  const scripts = doc.scripts;
+  let text = 0;
+  for (let i = 0; i < scripts.length; i += 1) {
+    // `nodeType === 3` is a text node — the sole child of an inline script.
+    const first = scripts[i].firstChild;
+    if (first && first.nodeType === 3) text += (first as Text).length;
+  }
+  return `${scripts.length}:${text}`;
+}
+
+/**
+ * A port over one document, holding the one reading worth remembering.
+ *
+ * `registry.ts::chainsFor` runs every adapter's `fromElement` on every recorded
+ * interaction, synchronously inside the capture-phase `click`/`input` listener,
+ * ahead of the page's own handlers. So `flightChunks` — a `querySelectorAll`,
+ * a global regex over every `__next_f` body, a `JSON.parse` per push — ran once
+ * per keystroke over the hundreds of kilobytes a real App Router page ships.
+ * That is typing lag in the user's own app, and we caused it.
+ *
+ * The memo is keyed on `payloadSignature` and never on a clock: Next keeps
+ * emitting flight after hydration, and a scan cached past that answers with a
+ * page that no longer exists. Slow is a complaint; stale is a wrong answer
+ * nobody can see is wrong.
+ *
+ * The cache belongs to the port and a port belongs to a document, so "never
+ * across documents" is the shape of this rather than a rule someone has to
+ * keep. `flightChunks` stays uncached and exported, because it is the scan
+ * itself and a caller testing the scan wants the scan.
+ */
+export function createRscPort(doc: Document = document): RscPort {
+  let scanned: { signature: string; chunks: readonly string[] } | null = null;
+
+  return {
+    flightChunks: () => {
+      const signature = payloadSignature(doc);
+      if (scanned && scanned.signature === signature) return scanned.chunks;
+      const chunks = flightChunks(doc);
+      scanned = { signature, chunks };
+      return chunks;
+    },
+    readingsFor,
+    describe,
+    version: nextVersion,
+  };
+}
+
+export const rscPort: RscPort = createRscPort();
 
 export const rscAdapter: FrameworkAdapter = createRscAdapter(rscPort);

@@ -158,6 +158,25 @@ export interface SvelteAdapterOptions extends ResolveOptions {
  * Kept separate from `createSvelteAdapter` so a caller resolving several
  * elements at once can read it once — it is the expensive half, and it is the
  * same answer for every element in the document.
+ *
+ * **The two expensive readings are taken on demand, not up front**, because
+ * `chainsFor` runs every adapter on every recorded interaction and this one
+ * cannot answer "not my page" without being asked something. Eagerly, a
+ * `querySelectorAll('*')`, `PAGE_SCAN_LIMIT` symbol reads per element and a
+ * whole-document comment walk ran synchronously inside the capture-phase
+ * `click`/`input` listener — ahead of the page's own handlers, on every
+ * keystroke, on every page in the world that is not Svelte's. Then
+ * `resolveSvelteElement` discarded all of it against three O(1) global reads.
+ *
+ * Laziness is invisible to the reader: every field is still a `boolean` on a
+ * `PageEvidence`, read the same way. What changes is when the document is
+ * touched — and on the two paths that matter it now is not. A page with no
+ * Svelte global never sweeps, and a dev page whose element carries its own
+ * `__svelte_meta` answers from the element and never sweeps either, which is
+ * the common case on the only build where the sweep could have said anything.
+ *
+ * Each reading is memoised, so a caller that reads a field twice still pays for
+ * it once and cannot see the document change underneath it mid-resolution.
  */
 export function readPageEvidence(
   win: Window,
@@ -165,14 +184,28 @@ export function readPageEvidence(
   options: SvelteAdapterOptions = {},
 ): PageEvidence {
   const globals = readSvelteGlobals(win, doc);
-  const swept = sweepElements(doc, options.pageScanLimit ?? PAGE_SCAN_LIMIT);
+
+  let swept: { meta: boolean; events: boolean } | null = null;
+  const sweep = (): { meta: boolean; events: boolean } =>
+    (swept ??= sweepElements(doc, options.pageScanLimit ?? PAGE_SCAN_LIMIT));
+
+  let markers: boolean | null = null;
 
   return {
     runtimeGlobal: globals.versions !== null,
-    devMetaAnywhere: swept.meta,
-    delegatedEventsAnywhere: swept.events,
-    hydrationMarkers: hasHydrationMarkers(doc, options.commentScanLimit ?? COMMENT_SCAN_LIMIT),
     sveltekit: globals.kitMarkup || globals.kitDev,
+    get devMetaAnywhere() {
+      return sweep().meta;
+    },
+    get delegatedEventsAnywhere() {
+      return sweep().events;
+    },
+    get hydrationMarkers() {
+      return (markers ??= hasHydrationMarkers(
+        doc,
+        options.commentScanLimit ?? COMMENT_SCAN_LIMIT,
+      ));
+    },
   };
 }
 

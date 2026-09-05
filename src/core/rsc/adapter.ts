@@ -114,12 +114,40 @@ export interface RscPort {
 const MAX_CHAIN = 40;
 
 export function createRscAdapter(port: RscPort): FrameworkAdapter {
+  /**
+   * The parsed payload, and why one adapter is allowed to remember it.
+   *
+   * `registry.ts::chainsFor` runs `fromElement` on every recorded interaction,
+   * synchronously inside the capture-phase `click`/`input` listener, ahead of
+   * the page's own handlers. Rebuilding the model there costs a join of the
+   * whole payload, a row split, and a `JSON.parse` of every row twice over —
+   * `buildFlightModel` parses each one again to collect its references — across
+   * the hundreds of kilobytes a real App Router page ships. Paid per keystroke
+   * in the user's own application, that is latency this extension invented.
+   *
+   * Keyed on the payload's own shape and never on a clock, because Next keeps
+   * emitting flight after hydration: a suspended boundary resolves and another
+   * push arrives, and a model held past that describes a page that is no longer
+   * there. Slow is a complaint the user can make; stale is a wrong answer with
+   * nothing to notice it by.
+   *
+   * The chunk count and their total length move whenever anything is appended,
+   * and both are O(1) per chunk with nothing allocated — so the signature is
+   * cheap enough to take on the path it is protecting. It is computed here
+   * rather than asked of the port because a port is free to be naive: this
+   * holds for the ones under test and for `mcp-server` as much as for the one
+   * reading the DOM, which memoises the scan itself for the same reason.
+   */
+  let memo: { signature: string; model: FlightModel | null } | null = null;
+
   const modelOf = (): FlightModel | null => {
     const chunks = port.flightChunks();
-    if (chunks.length === 0) return null;
-    const { rows } = splitFlightRows(joinFlightChunks(chunks));
-    if (rows.length === 0) return null;
-    return buildFlightModel(rows);
+    const signature = chunkSignature(chunks);
+    if (memo && memo.signature === signature) return memo.model;
+
+    const model = parseModel(chunks);
+    memo = { signature, model };
+    return model;
   };
 
   return {
@@ -222,6 +250,20 @@ export function createRscAdapter(port: RscPort): FrameworkAdapter {
       return resolved;
     },
   };
+}
+
+/** How many chunks there are and how much text is in them — see `modelOf`. */
+function chunkSignature(chunks: readonly string[]): string {
+  let text = 0;
+  for (const chunk of chunks) text += chunk.length;
+  return `${chunks.length}:${text}`;
+}
+
+function parseModel(chunks: readonly string[]): FlightModel | null {
+  if (chunks.length === 0) return null;
+  const { rows } = splitFlightRows(joinFlightChunks(chunks));
+  if (rows.length === 0) return null;
+  return buildFlightModel(rows);
 }
 
 /**
