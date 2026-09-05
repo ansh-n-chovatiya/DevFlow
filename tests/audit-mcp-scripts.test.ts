@@ -13,8 +13,9 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -79,18 +80,90 @@ describe('the changelog gate’s release-commit escape', () => {
   /*
    * The escape exists so the commit that cuts a release — which renames the
    * heading and bumps `public/manifest.json` — is not failed by the gate whose
-   * changelog it just wrote. Testing only that the top heading names the
-   * current version made it true of *every* commit after a release until
-   * somebody opened a new `## Unreleased`, which is precisely the window the
-   * gate is for: it was a no-op for the whole of it.
+   * changelog it just wrote. It has now been wrong in both directions, which is
+   * why these run against a real repository rather than against the source.
+   *
+   * Too loose first: testing only that the top heading names the current
+   * version made it true of *every* commit after a release until somebody
+   * opened a new `## Unreleased` — precisely the window the gate is for, and a
+   * no-op for the whole of it.
+   *
+   * Then too tight: "the shipped files are only the ones a release cut writes"
+   * held for the release *commit* and failed the first real release push,
+   * because a push is measured against what the branch pointed at before it. A
+   * branch pushed with its work and its release spans both, so every file of
+   * the work is in `shipped` while the section it was written under has just
+   * been renamed. A test that pinned that sentence passed while the gate broke.
+   * Two commits and two exit codes could not have.
    */
-  it('is narrowed to the files a release cut actually writes', () => {
-    const source = read('scripts/check-changelog.mjs');
+  function fixture(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'changelog-gate-'));
+    const run = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
 
-    expect(source).toContain("const RELEASE_WRITES = ['public/manifest.json'];");
-    expect(source).toMatch(
-      /headings\[0\]\?\.startsWith\(version\)\s*&&\s*shipped\.every\(\(file\) => RELEASE_WRITES\.includes\(file\)\)/,
-    );
+    run('init', '-q', '-b', 'main');
+    run('config', 'user.email', 'gate@example.test');
+    run('config', 'user.name', 'Gate');
+    mkdirSync(join(dir, 'scripts'), { recursive: true });
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    copyFileSync(resolve(root, 'scripts/check-changelog.mjs'), join(dir, 'scripts/check-changelog.mjs'));
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '1.2.0' }));
+    return dir;
+  }
+
+  /** The gate's exit code in `dir`, measured over everything since `before`. */
+  function gate(dir: string, before: string): number {
+    try {
+      execFileSync('node', ['scripts/check-changelog.mjs'], {
+        cwd: dir,
+        stdio: 'pipe',
+        env: { ...process.env, BEFORE_SHA: before, GITHUB_BASE_REF: '' },
+      });
+      return 0;
+    } catch {
+      return 1;
+    }
+  }
+
+  it('passes a push that carries the work and the release that documents it', () => {
+    const dir = fixture();
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
+
+    writeFileSync(join(dir, 'CHANGELOG.md'), '# Changelog\n\n## Unreleased\n\n- the work\n');
+    writeFileSync(join(dir, 'src/a.ts'), 'export const a = 1;\n');
+    git('add', '-A');
+    git('commit', '-qm', 'base');
+    const base = git('rev-parse', 'HEAD').toString().trim();
+
+    // The work, then the release that renames the section it was written under.
+    writeFileSync(join(dir, 'src/a.ts'), 'export const a = 2;\n');
+    git('add', '-A');
+    git('commit', '-qm', 'work');
+    writeFileSync(join(dir, 'CHANGELOG.md'), '# Changelog\n\n## 1.2.0 — 2026-09-05\n\n- the work\n');
+    git('add', '-A');
+    git('commit', '-qm', 'v1.2.0');
+
+    expect(gate(dir, base)).toBe(0);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('still fails a change pushed after that release with nothing written down', () => {
+    const dir = fixture();
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
+
+    writeFileSync(join(dir, 'CHANGELOG.md'), '# Changelog\n\n## 1.2.0 — 2026-09-05\n\n- shipped\n');
+    writeFileSync(join(dir, 'src/a.ts'), 'export const a = 1;\n');
+    git('add', '-A');
+    git('commit', '-qm', 'v1.2.0');
+    const released = git('rev-parse', 'HEAD').toString().trim();
+
+    // The window the whole escape is about: the heading still names the current
+    // version, and this work has no entry anywhere.
+    writeFileSync(join(dir, 'src/b.ts'), 'export const b = 1;\n');
+    git('add', '-A');
+    git('commit', '-qm', 'later work');
+
+    expect(gate(dir, released)).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it('fails a src/ change with no entry, even at a version that was just cut', () => {

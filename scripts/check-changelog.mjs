@@ -66,25 +66,32 @@ function resolvable(ref) {
  * pointed at before it. A developer running this by hand gets the comparison
  * they meant: everything not yet on `main`, plus whatever is still uncommitted.
  */
-function changedFiles() {
+function comparison() {
   const base = process.env.GITHUB_BASE_REF;
   if (base) {
     const ref = resolvable(`origin/${base}`) ? `origin/${base}` : base;
-    if (resolvable(ref)) return git('diff', '--name-only', `${ref}...HEAD`).split('\n');
+    if (resolvable(ref)) {
+      return { files: git('diff', '--name-only', `${ref}...HEAD`).split('\n'), base: git('merge-base', ref, 'HEAD') };
+    }
   }
 
   const before = process.env.BEFORE_SHA;
-  if (resolvable(before)) return git('diff', '--name-only', before, 'HEAD').split('\n');
+  if (resolvable(before)) return { files: git('diff', '--name-only', before, 'HEAD').split('\n'), base: before };
 
   // Local. `...` is against the merge base, so a stale local main does not make
   // every file on the branch look changed.
   const local = [];
-  if (resolvable('origin/main')) local.push(...git('diff', '--name-only', 'origin/main...HEAD').split('\n'));
+  let localBase = null;
+  if (resolvable('origin/main')) {
+    local.push(...git('diff', '--name-only', 'origin/main...HEAD').split('\n'));
+    localBase = git('merge-base', 'origin/main', 'HEAD');
+  }
   local.push(...git('diff', '--name-only', 'HEAD').split('\n'));
-  return local;
+  return { files: local, base: localBase };
 }
 
-const changed = changedFiles().filter(Boolean);
+const { files, base } = comparison();
+const changed = files.filter(Boolean);
 const shipped = changed.filter((file) => SHIPPED.some((prefix) => file.startsWith(prefix)));
 
 if (shipped.length === 0) {
@@ -140,15 +147,40 @@ if (hasUnreleasedContent) {
  * the failure the file's own header opens with, produced by the escape written
  * to protect one commit from it.
  *
- * So the escape also requires that the shipped files are only ones a release
- * cut writes. `scripts/cut-release.mjs` stages seven files and exactly one of
- * them is under `src/` or `public/`; anything else in `shipped` is somebody's
- * work riding along, and it needs an entry.
+ * So the escape also requires that the heading is **new in this range**: absent
+ * from `CHANGELOG.md` at the base of the comparison and present at `HEAD`. That
+ * is what "a release was cut here" means, and it is the whole difference
+ * between the release and the window after it — a later push carries a base
+ * whose changelog already has the heading, so it gets no escape and has to say
+ * what it changed.
+ *
+ * ## Not "the shipped files are only ones a release cut writes"
+ *
+ * That was the first repair and it fails the ordinary case. `cut-release.mjs`
+ * writes one shipped file, so the test holds for the release *commit* — but a
+ * push is measured against what the branch pointed at before it, and a branch
+ * pushed with its work and its release together spans both. Every file of the
+ * work is then in `shipped`, the section it was written under has just been
+ * renamed to the version, and the gate fails a release whose changelog is
+ * complete. Asking about the heading instead asks the question directly, and
+ * does not care how many commits the push happens to contain.
  */
-const RELEASE_WRITES = ['public/manifest.json'];
 const version = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version;
-if (headings[0]?.startsWith(version) && shipped.every((file) => RELEASE_WRITES.includes(file))) {
-  console.log(`changelog: ${version} was just cut, so there is nothing pending`);
+
+/** Whether `## <version>` was already there before this range began. */
+function headingPredatesRange() {
+  if (base === null) return false;
+  const pattern = new RegExp(`^##[ \\t]+${version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'm');
+  try {
+    return pattern.test(git('show', `${base}:CHANGELOG.md`));
+  } catch {
+    // No changelog at the base at all, so the heading cannot predate it.
+    return false;
+  }
+}
+
+if (headings[0]?.startsWith(version) && !headingPredatesRange()) {
+  console.log(`changelog: ${version} was cut in this range, so there is nothing pending`);
   process.exit(0);
 }
 
