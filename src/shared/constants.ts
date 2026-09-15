@@ -76,6 +76,24 @@ export const ERROR_TTL_MS = 60_000;
 /** JPEG quality for captured screenshots — legible text at a third of PNG size. */
 export const SCREENSHOT_QUALITY = 60;
 
+/**
+ * How long Stop will wait for the capture queue to settle before finishing the
+ * recording anyway.
+ *
+ * `finishRecording` waits for the queue to go two reads in a row without
+ * anything new landing on it, which is normally a fraction of a second. A page
+ * producing capture traffic faster than the queue can drain it — rapid
+ * clicking, a script dispatching synthetic interactions, several actively-used
+ * tabs feeding one recording — never lets that happen, so the wait needs a
+ * ceiling or Stop never returns. Generous relative to `DOM_DELTA_MS` (700) and
+ * `CAPTURE_MIN_INTERVAL_MS` (550): a backlog of several real steps should still
+ * drain inside it.
+ */
+export const DRAIN_MAX_WAIT_MS = 8000;
+
+/** Belt-and-braces alongside `DRAIN_MAX_WAIT_MS` in case the clock is wrong. */
+export const DRAIN_MAX_ITERATIONS = 200;
+
 /** Delay before an `input` event is committed as a step, so typing is one step. */
 export const INPUT_DEBOUNCE_MS = 800;
 

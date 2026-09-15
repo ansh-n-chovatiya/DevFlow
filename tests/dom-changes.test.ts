@@ -41,6 +41,8 @@ import {
 } from '../src/core/dom/index.js';
 import { INDICATOR_ID } from '../src/shared/constants.js';
 import { buildPayload, pruneSteps } from '../src/features/mcp/send.js';
+import { applyDomChanges, type AttachBatchState } from '../src/features/flows/attach-batch.js';
+import { stepKey } from '../src/core/flow/index.js';
 import type { Step, StepDomChanges } from '../src/shared/types.js';
 
 const NOW = 1_700_000_000_000;
@@ -569,15 +571,63 @@ suite('the domChanges field, hop by hop', () => {
     expect(contentSource.slice(start, start + 900)).toContain('closeDomWindow(false)');
   });
 
-  it('merges the summary onto the step in the worker', () => {
+  it('is wired from the message the content script sends to the batched attach function', () => {
+    // The worker still cannot be imported — it registers listeners at import —
+    // but the merge itself moved to `features/flows/attach-batch.ts`, which can
+    // be called directly below instead of grepped for.
     expect(workerSource).toContain("case 'STEP_DOM_CHANGES':");
-    const start = workerSource.indexOf('async function attachDomChanges(');
-    expect(start).toBeGreaterThan(-1);
-    const attach = workerSource.slice(start, start + 1400);
-    expect(attach).toMatch(/\.\.\.recordedSteps\[index\],\s*\n?\s*domChanges/);
-    // An empty list under `capped` is the one thing this feature must be able
-    // to say, and a "nothing to attach" shortcut is where it would be lost.
-    expect(attach).toContain('if (!changes.length && !capped) return;');
+    expect(workerSource).toContain('attachDomChanges(message.key, message.changes, message.capped, message.more)');
+  });
+
+  it('merges the summary onto the step, batched', () => {
+    const state: AttachBatchState = {
+      recordedSteps: [{ ...step, domChanges: undefined }],
+      stateStores: [],
+      flowRenders: undefined,
+      recordedStepsDirty: false,
+      stateStoresDirty: false,
+      flowRendersDirty: false,
+    };
+
+    applyDomChanges(state, stepKey(step), changes.changes, changes.capped, changes.more);
+
+    expect(state.recordedStepsDirty).toBe(true);
+    expect(state.recordedSteps[0]?.domChanges).toEqual(changes);
+  });
+
+  it('still speaks when the observer was cut and nothing survived, even batched', () => {
+    // The one thing this feature must be able to say. An empty list under
+    // `capped` is the difference between a step where nothing happened and one
+    // where nobody was still looking, and a "nothing to attach" shortcut is
+    // exactly where it would be lost.
+    const state: AttachBatchState = {
+      recordedSteps: [{ ...step, domChanges: undefined }],
+      stateStores: [],
+      flowRenders: undefined,
+      recordedStepsDirty: false,
+      stateStoresDirty: false,
+      flowRendersDirty: false,
+    };
+
+    applyDomChanges(state, stepKey(step), [], true, undefined);
+
+    expect(state.recordedStepsDirty).toBe(true);
+    expect(state.recordedSteps[0]?.domChanges).toEqual({ changes: [], capped: true });
+  });
+
+  it('does not write at all when there is nothing to say', () => {
+    const state: AttachBatchState = {
+      recordedSteps: [{ ...step, domChanges: undefined }],
+      stateStores: [],
+      flowRenders: undefined,
+      recordedStepsDirty: false,
+      stateStoresDirty: false,
+      flowRendersDirty: false,
+    };
+
+    applyDomChanges(state, stepKey(step), [], undefined, undefined);
+
+    expect(state.recordedStepsDirty).toBe(false);
   });
 
   it('survives the send path, including with React switched off', () => {

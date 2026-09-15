@@ -47,13 +47,14 @@ import {
   BADGE_COLOR,
   BADGE_PAUSED_COLOR,
   BADGE_WAITING_COLOR,
+  DRAIN_MAX_ITERATIONS,
+  DRAIN_MAX_WAIT_MS,
 } from '../shared/constants.js';
 import { flowError, type FlowError } from '../shared/errors.js';
 import type {
   BoundingBox,
   DomChange,
   DraftStep,
-  FlowRenders,
   PickResult,
   RecordingState,
   StateStoreRef,
@@ -67,7 +68,7 @@ import type { Framework } from '../core/locate/adapter.js';
 import type { ComponentNeedle, ComponentSource } from '../shared/types.js';
 import { isPlaceholderId } from '../core/locate/id.js';
 import { stripReactRef } from '../core/react/attribution.js';
-import { flowHost, mergeTrailing, stepKey, type Pending } from '../core/flow/index.js';
+import { flowHost, mergeTrailing, type Pending } from '../core/flow/index.js';
 import { mergeComponents } from '../core/react/table.js';
 import { mergeScripts } from '../features/react/inventory.js';
 import { clearResolverCaches, resolvePending } from '../features/react/resolver.js';
@@ -79,6 +80,17 @@ import { sendDefaults } from '../features/export/defaults.js';
 import { readCurrentReact, readCurrentRenders, readCurrentState } from '../features/flows/store.js';
 import { prepare } from '../features/recording/preflight.js';
 import { renumber } from '../core/flow/index.js';
+import {
+  applyA11y,
+  applyDomChanges,
+  applyDomDelta,
+  applyRenders,
+  applyStateDelta,
+  createAttachBatch,
+  runAttachFlush,
+  type AttachBatchState,
+} from '../features/flows/attach-batch.js';
+import { waitForStable } from '../features/flows/drain.js';
 
 /** Serialises captures so concurrent clicks never clobber each other's write. */
 let captureQueue: Promise<void> = Promise.resolve();
@@ -555,118 +567,74 @@ async function captureAndSave(
 }
 
 /**
+ * Everything that arrives after a step, batched.
+ *
+ * A DOM delta, a DOM mutation summary, a state-store delta, a render sample
+ * and an accessibility finding are all facts about what an interaction *did*,
+ * arriving a few hundred milliseconds after the step itself on their own
+ * settle timers. Each used to be its own `getLocal`+`setLocal` against the
+ * whole `recordedSteps` array; now each just queues a patch on `attachBatch`,
+ * and whichever lands first in a burst arms `flushAttachBatch` below to run
+ * every patch queued since against one read and one write. See
+ * `features/flows/attach-batch.ts` for why `captureAndSave` is not folded in
+ * too.
+ */
+const attachBatch = createAttachBatch();
+
+function queueAttach(op: (state: AttachBatchState) => void): void {
+  const first = attachBatch.push(op);
+  if (!first) return;
+  captureQueue = captureQueue.then(flushAttachBatch);
+}
+
+async function flushAttachBatch(): Promise<void> {
+  const result = await runAttachFlush(attachBatch.take(), getLocal, setLocal);
+  if (result && !result.ok) await reportError(result.error);
+}
+
+/**
  * Attach a DOM delta to the step it belongs to.
  *
  * Arrives a few hundred milliseconds after the step, because it is a fact about
  * what the interaction *did* rather than what it was — and the step is written
  * immediately so the screenshot is not delayed waiting for it.
- *
- * Queued behind the capture queue, not run alongside it: both rewrite
- * `recordedSteps`, and two writers on one key is how an update gets lost. It is
- * cheap now that the array carries no images.
  */
-async function attachDomDelta(key: string, before: string, after: string): Promise<void> {
-  const stored = await getLocal(['recordedSteps', 'recordingActive']);
-  if (!stored.ok || !stored.value.recordingActive) return;
-
-  const recordedSteps = stored.value.recordedSteps ?? [];
-  const index = recordedSteps.findIndex((step) => stepKey(step) === key);
-  // The step may have been deleted in the review tab while the page was still
-  // settling, or the recording cleared. Nothing to attach it to is not an error.
-  if (index === -1) return;
-
-  recordedSteps[index] = { ...recordedSteps[index], domDelta: { before, after } };
-
-  const written = await setLocal({ recordedSteps });
-  if (!written.ok) await reportError(written.error);
+function attachDomDelta(key: string, before: string, after: string): void {
+  queueAttach((state) => applyDomDelta(state, key, before, after));
 }
 
 /**
  * Attach what the document did to the step it belongs to.
  *
- * `attachDomDelta`'s twin, one field over and for the same reasons: it arrives
- * after the step because it is a fact about what the interaction *did*, and it
- * is queued behind the capture queue because that queue owns `recordedSteps`.
+ * `attachDomDelta`'s twin, one field over and for the same reasons.
  *
  * Written even when `changes` is empty, provided the observer was cut. An empty
  * list under `capped` is the one thing this feature must be able to say and the
  * one thing a "nothing to attach" shortcut would delete: it is the difference
  * between a step where nothing happened and one where nobody was still looking.
  */
-async function attachDomChanges(
-  key: string,
-  changes: DomChange[],
-  capped?: true,
-  more?: number,
-): Promise<void> {
-  const stored = await getLocal(['recordedSteps', 'recordingActive']);
-  if (!stored.ok || !stored.value.recordingActive) return;
-
-  const recordedSteps = stored.value.recordedSteps ?? [];
-  const index = recordedSteps.findIndex((step) => stepKey(step) === key);
-  if (index === -1) return;
-  if (!changes.length && !capped) return;
-
-  recordedSteps[index] = {
-    ...recordedSteps[index],
-    domChanges: { changes, ...(capped ? { capped } : {}), ...(more ? { more } : {}) },
-  };
-
-  const written = await setLocal({ recordedSteps });
-  if (!written.ok) await reportError(written.error);
+function attachDomChanges(key: string, changes: DomChange[], capped?: true, more?: number): void {
+  queueAttach((state) => applyDomChanges(state, key, changes, capped, more));
 }
 
 /**
  * Merge a settled state sample into the step it belongs to.
  *
- * Behind the capture queue for `attachDomDelta`'s reason: that queue owns
- * `recordedSteps`, and the step this belongs to may still be in it.
- *
- * Two keys are written, not one. The deltas go on the step; the store
+ * Two keys are affected, not one. The deltas go on the step; the store
  * descriptions go on `stateStores`, which is a fact about the page rather than
  * about any step — a store forty steps touched is described once, and
  * `StepStateDelta.store` indexes it.
  */
-async function attachStateDelta(
-  key: string,
-  deltas: StepStateDelta[],
-  stores: StateStoreRef[] | undefined,
-): Promise<void> {
-  const stored = await getLocal(['recordedSteps', 'recordingActive', 'stateStores']);
-  if (!stored.ok || !stored.value.recordingActive) return;
-
-  const known = stored.value.stateStores ?? [];
-  // Replaced rather than appended when the id is already known: a store's
-  // subscriber list grows as the user visits more of the app, and the later
-  // description is the more complete one.
-  const merged = stores?.length
-    ? [...known.filter((store) => !stores.some((next) => next.id === store.id)), ...stores]
-    : known;
-
-  const recordedSteps = stored.value.recordedSteps ?? [];
-  const index = recordedSteps.findIndex((step) => stepKey(step) === key);
-  // The step may have been deleted in the review tab while the app was still
-  // settling, or the recording cleared. Nothing to attach it to is not an
-  // error — but the stores it named are still what the page has, so they are
-  // written whether or not the step survived.
-  if (index !== -1 && deltas.length) {
-    recordedSteps[index] = { ...recordedSteps[index], state: deltas };
-  }
-
-  const written = await setLocal({
-    ...(index !== -1 && deltas.length ? { recordedSteps } : {}),
-    ...(merged !== known ? { stateStores: merged } : {}),
-  });
-  if (!written.ok) await reportError(written.error);
+function attachStateDelta(key: string, deltas: StepStateDelta[], stores: StateStoreRef[] | undefined): void {
+  queueAttach((state) => applyStateDelta(state, key, deltas, stores));
 }
 
 /**
  * Merge what re-rendered into the step it belongs to.
  *
- * Behind the capture queue for `attachDomDelta`'s reason, and two keys again
- * for `attachStateDelta`'s: the list goes on the step, and what the *walk*
- * could not see goes on `flowRenders`, which is a fact about the recording
- * rather than about any step.
+ * Two keys again for `attachStateDelta`'s reason: the list goes on the step,
+ * and what the *walk* could not see goes on `flowRenders`, which is a fact
+ * about the recording rather than about any step.
  *
  * `capped` is sticky. It is not "the last walk was cut" but "this recording was
  * cut somewhere", which is the only form of it a reader can act on: a flow that
@@ -677,38 +645,8 @@ async function attachStateDelta(
  * empty — the same rule the stores follow. What the recording could not see is
  * still true of the recording.
  */
-async function attachRenders(
-  key: string,
-  renders: StepRender[],
-  capped: boolean | undefined,
-  note: string | undefined,
-): Promise<void> {
-  const stored = await getLocal(['recordedSteps', 'recordingActive', 'flowRenders']);
-  if (!stored.ok || !stored.value.recordingActive) return;
-
-  /*
-   * `capped` is sticky and the note is kept once set: one step whose walk was
-   * cut is enough to make "nothing re-rendered" a claim about the cap for every
-   * step of the flow, and a reader has no way to ask which step it was.
-   */
-  const known = stored.value.flowRenders ?? undefined;
-  const flowRenders: FlowRenders = {
-    read: true,
-    ...(capped || known?.capped ? { capped: true } : {}),
-    ...(note ?? known?.note ? { note: note ?? known?.note } : {}),
-  };
-
-  const recordedSteps = stored.value.recordedSteps ?? [];
-  const index = recordedSteps.findIndex((step) => stepKey(step) === key);
-  if (index !== -1 && renders.length) {
-    recordedSteps[index] = { ...recordedSteps[index], renders };
-  }
-
-  const written = await setLocal({
-    ...(index !== -1 && renders.length ? { recordedSteps } : {}),
-    flowRenders,
-  });
-  if (!written.ok) await reportError(written.error);
+function attachRenders(key: string, renders: StepRender[], capped: boolean | undefined, note: string | undefined): void {
+  queueAttach((state) => applyRenders(state, key, renders, capped, note));
 }
 
 /**
@@ -725,27 +663,9 @@ async function attachRenders(
  * step whose walk was cut and reported nothing is reporting on the cut, which
  * is the same rule `attachRenders` keeps for `capped`.
  */
-async function attachA11y(
-  key: string,
-  findings: StepA11yFinding[],
-  note: string | undefined,
-): Promise<void> {
+function attachA11y(key: string, findings: StepA11yFinding[], note: string | undefined): void {
   if (!findings.length && !note) return;
-
-  const stored = await getLocal(['recordedSteps', 'recordingActive']);
-  if (!stored.ok || !stored.value.recordingActive) return;
-
-  const recordedSteps = stored.value.recordedSteps ?? [];
-  const index = recordedSteps.findIndex((step) => stepKey(step) === key);
-  if (index === -1) return;
-
-  recordedSteps[index] = {
-    ...recordedSteps[index],
-    a11y: { findings, ...(note ? { note } : {}) },
-  };
-
-  const written = await setLocal({ recordedSteps });
-  if (!written.ok) await reportError(written.error);
+  queueAttach((state) => applyA11y(state, key, findings, note));
 }
 
 /**
@@ -758,16 +678,23 @@ async function attachA11y(
  * away the last thing the user did, which on a bug report is the whole point of
  * the recording. Draining first also means the MCP auto-export — which fires on
  * this very storage change — sees the complete flow.
+ *
+ * Bounded by `DRAIN_MAX_WAIT_MS`/`DRAIN_MAX_ITERATIONS` (`waitForStable`): a
+ * page producing capture traffic faster than the queue drains it used to hang
+ * Stop forever, since "settle" was defined as "nothing arrived while I was
+ * waiting" with no ceiling on how long that could take. Giving up after the
+ * bound still finishes the recording — whatever is left in the queue becomes a
+ * no-op the moment `recordingActive` flips false below, since every capture
+ * handler re-checks it before writing.
  */
 async function finishRecording(): Promise<void> {
-  // The queue can grow while it is being awaited: a step sent just before Stop
-  // may still be arriving. Settle, re-check, and only stop when nothing was
-  // added while waiting.
-  let drained: Promise<void>;
-  do {
-    drained = captureQueue;
-    await drained;
-  } while (drained !== captureQueue);
+  const { stable } = await waitForStable(() => captureQueue, {
+    maxWaitMs: DRAIN_MAX_WAIT_MS,
+    maxIterations: DRAIN_MAX_ITERATIONS,
+  });
+  if (!stable) {
+    console.warn('DevFlow: capture queue did not settle before Stop; finishing anyway');
+  }
 
   await flushTrailing(await loadRecordingSettings());
 
@@ -1712,57 +1639,33 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
     }
 
     case 'STEP_DOM_DELTA': {
-      // Behind the capture queue: it owns `recordedSteps`, and the step this
-      // belongs to may still be in it.
-      captureQueue = captureQueue.then(() =>
-        attachDomDelta(message.key, message.before, message.after).catch((error: unknown) =>
-          console.warn('DevFlow: DOM delta not attached', error),
-        ),
-      );
+      // Queues a patch on `attachBatch` rather than the capture queue directly
+      // — see `flushAttachBatch`.
+      attachDomDelta(message.key, message.before, message.after);
       sendResponse({ ok: true });
       return true;
     }
 
     case 'STEP_DOM_CHANGES': {
-      // Behind the capture queue, for `STEP_DOM_DELTA`'s reason.
-      captureQueue = captureQueue.then(() =>
-        attachDomChanges(message.key, message.changes, message.capped, message.more).catch(
-          (error: unknown) => console.warn('DevFlow: DOM changes not attached', error),
-        ),
-      );
+      attachDomChanges(message.key, message.changes, message.capped, message.more);
       sendResponse({ ok: true });
       return true;
     }
 
     case 'STEP_STATE_DELTA': {
-      // Behind the capture queue, for `STEP_DOM_DELTA`'s reason.
-      captureQueue = captureQueue.then(() =>
-        attachStateDelta(message.key, message.deltas, message.stores).catch((error: unknown) =>
-          console.warn('DevFlow: state delta not attached', error),
-        ),
-      );
+      attachStateDelta(message.key, message.deltas, message.stores);
       sendResponse({ ok: true });
       return true;
     }
 
     case 'STEP_RENDERS': {
-      // Behind the capture queue, for `STEP_DOM_DELTA`'s reason.
-      captureQueue = captureQueue.then(() =>
-        attachRenders(message.key, message.renders, message.capped, message.note).catch(
-          (error: unknown) => console.warn('DevFlow: renders not attached', error),
-        ),
-      );
+      attachRenders(message.key, message.renders, message.capped, message.note);
       sendResponse({ ok: true });
       return true;
     }
 
     case 'STEP_A11Y': {
-      // Behind the capture queue, for `STEP_DOM_DELTA`'s reason.
-      captureQueue = captureQueue.then(() =>
-        attachA11y(message.key, message.findings, message.note).catch((error: unknown) =>
-          console.warn('DevFlow: a11y findings not attached', error),
-        ),
-      );
+      attachA11y(message.key, message.findings, message.note);
       sendResponse({ ok: true });
       return true;
     }
@@ -1770,6 +1673,10 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
     case 'CAPTURE_AND_SAVE_STEP': {
       const { step, elementBox, dpr, components, componentsPageUrl, scroll } = message;
       const { frameworkComponents } = message;
+      // Seals whatever is currently batched on `attachBatch` so a patch meant
+      // for *this* step (or one after it) cannot be swept into a flush armed
+      // before this step existed — see `AttachBatch.seal`.
+      attachBatch.seal();
       // Enqueue so captures run one at a time. A rejected step is swallowed so
       // one failure cannot break the chain for later steps.
       captureQueue = captureQueue.then(() =>

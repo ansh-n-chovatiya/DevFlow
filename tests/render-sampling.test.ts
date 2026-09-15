@@ -27,9 +27,10 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { exportToJSON } from '../src/core/export/json.js';
-import { renumber } from '../src/core/flow/index.js';
+import { renumber, stepKey } from '../src/core/flow/index.js';
 import { buildPayload, pruneSteps } from '../src/features/mcp/send.js';
 import { isSecretStateKey } from '../src/core/redact/index.js';
+import { applyRenders, type AttachBatchState } from '../src/features/flows/attach-batch.js';
 import type { Step } from '../src/shared/types.js';
 import type { SnapshotBudget } from '../src/core/state/snapshot.js';
 import {
@@ -614,14 +615,50 @@ describe('the renders field, hop by hop', () => {
     expect(handler).toContain('data.capped');
   });
 
-  it('merges the list onto the step and the cap onto the recording', () => {
-    const attach = body(workerSource, 'async function attachRenders(');
-    expect(attach).toMatch(/\.\.\.recordedSteps\[index\], renders/);
-    expect(attach).toContain('flowRenders');
-    // Sticky, and written whether or not the step survived — the same rule the
-    // stores follow, for the same reason.
-    expect(attach).toContain("known?.capped ? { capped: true }");
+  it('is wired from the message the content script sends to the batched attach function', () => {
+    // The worker still cannot be imported — it registers listeners at import —
+    // but the merge itself moved to `features/flows/attach-batch.ts`, which can
+    // be called directly below instead of grepped for.
     expect(workerSource).toContain("case 'STEP_RENDERS':");
+    expect(workerSource).toContain('attachRenders(message.key, message.renders, message.capped, message.note)');
+  });
+
+  it('merges the list onto the step and the cap onto the recording, batched', () => {
+    const step: Step = {
+      type: 'click',
+      url: 'https://app.example.com',
+      timestamp: 1_700_000_000_000,
+      action: 'Clicked "Save"',
+      stepNumber: 1,
+      element: { tag: 'button', cssSelector: 'button', xpath: '//button', boundingBox: null },
+    };
+    const key = stepKey(step);
+
+    const state: AttachBatchState = {
+      recordedSteps: [step],
+      stateStores: [],
+      flowRenders: undefined,
+      recordedStepsDirty: false,
+      stateStoresDirty: false,
+      flowRendersDirty: false,
+    };
+
+    applyRenders(state, key, [{ component: 'Button', props: [] }], true, 'walk was cut');
+
+    expect(state.recordedStepsDirty).toBe(true);
+    expect(state.recordedSteps[0]?.renders).toEqual([{ component: 'Button', props: [] }]);
+    expect(state.flowRendersDirty).toBe(true);
+    expect(state.flowRenders).toEqual({ read: true, capped: true, note: 'walk was cut' });
+
+    // Sticky across a second call in the same batch — the same rule the
+    // un-batched writes kept across separate storage round trips.
+    applyRenders(state, 'a different key', [], undefined, undefined);
+    expect(state.flowRenders).toEqual({ read: true, capped: true, note: 'walk was cut' });
+
+    // Written even when the step is gone and the list empty — what the
+    // recording could not see is still true of the recording.
+    applyRenders(state, 'nonexistent key', [], undefined, undefined);
+    expect(state.flowRendersDirty).toBe(true);
   });
 
   /**

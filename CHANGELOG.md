@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+**Stop could hang indefinitely on a busy recording, and every step attachment
+cost up to six storage round trips instead of two.** A DOM delta, a DOM
+mutation summary, a state-store delta, a render sample and an accessibility
+finding each did their own `getLocal`+`setLocal` against the whole
+`recordedSteps` array — one full read-modify-write per message, on top of the
+step's own write. They are batched now: whichever lands first in a burst arms
+one flush that reads once, replays every queued patch, and writes once.
+
+Separately, and worse: `finishRecording`'s drain loop waited for the capture
+queue to go two reads in a row with nothing new landing on it, with no
+ceiling. A page producing capture traffic faster than the queue could drain it
+— rapid clicking, several actively-recorded tabs, a script dispatching
+synthetic interactions — meant that condition was never met, and Stop never
+returned. The wait is now bounded (8s / 200 rounds): past the bound the
+recording finishes anyway, and whatever was still queued becomes a no-op the
+moment it re-checks `recordingActive`.
+
 ## 4.1.1 — 2026-09-05
 
 **The narrow-screen layout was written above the rules it changes, so it never
