@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.1.2 — 2026-09-15
 
 **Stop could hang indefinitely on a busy recording, and every step attachment
 cost up to six storage round trips instead of two.** A DOM delta, a DOM
