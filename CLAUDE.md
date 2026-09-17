@@ -52,7 +52,7 @@ mcp-server/      a second npm package, published on its own
 compiler-plugin/ a third, published as `devflow-compiler-plugin` since v4.0.0:
                  the Babel build stamp. Optional — nothing requires it, and the
                  source-map path works without it.
-scripts/         the build steps, the release cutter and seven `check-*.mjs` gates
+scripts/         the build steps, the release cutter and eight `check-*.mjs` gates
 tests/           vitest, node + jsdom
 docs/CONTRACTS.md   FROZEN. The interface freeze the parallel work was built against.
 ```
@@ -66,11 +66,13 @@ touch the filesystem. Both must pass.
 Each of these has a gate behind it, because each fails silently otherwise.
 
 **`src/core/` is pure.** It is bundled into `mcp-server/core.js` and imported by
-a Node process that has no `chrome` object, no `window` and no DOM. A `chrome.*`
-call or a bare `fetch` in `core/` does not fail a review — it fails
-`npm run build:mcp`, or worse, throws on the server's first tool call. Fetching
-and caching belong to a `BundleProvider`; the clock and the storage belong to
-`features/`.
+a Node process that has no `chrome` object, no `window` and no DOM.
+`lint:core-purity` parses every module in `core/` and rejects a reference to one
+of those globals, because the build does not: `build:mcp` only fails on an import
+it cannot *resolve*, so a bare `chrome.storage.local.get(...)` builds clean and
+throws on the server's first tool call that reaches it — the whole chain was
+green on exactly that mutation until the gate existed. Fetching and caching
+belong to a `BundleProvider`; the clock and the storage belong to `features/`.
 
 **No colour outside `src/ui/styles/tokens.css`.** `lint:tokens` reads every
 stylesheet and HTML file and rejects a hex, `rgb()`, `hsl()`, `oklch()`, `lab()`
@@ -125,10 +127,11 @@ npm run verify     # everything below, in order
 | `npm run lint:brand` | the other products' names and page globals stay gone — `docs/CONTRACTS.md` §4.5 |
 | `npm run lint:vocab` | the frozen glossary — §4.4's labels over the raw file, §4.1's nouns over extracted prose: a flow is not a session, a component is not an element |
 | `npm run lint:locate` | `src/core/locate/` imports no framework — the neutrality claim ADR 0026 moved it for |
+| `npm run lint:core-purity` | no `chrome`, `window`, `document` or bare `fetch` anywhere in `src/core/` — ADR 0001, parsed rather than grepped |
 | `npm test` | vitest — `pretest` builds `mcp-server/core.js` first, which two suites need on disk |
 | `npm run build` | five builds: the generated settings JSON, pages + worker, content script, page agent, MCP core |
 
-Ten steps, and the table is the whole list: `lint:locate` shipped inside
+Eleven steps, and the table is the whole list: `lint:locate` shipped inside
 `verify` and was missing from here for a release, which is the same drift the
 gates exist to stop one level down. `lint:changelog` is deliberately *not* in
 `verify` — it reads a commit range, so it belongs to CI and to the release

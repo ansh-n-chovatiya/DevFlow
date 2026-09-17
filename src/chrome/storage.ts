@@ -2,10 +2,11 @@
  * The only place `chrome.storage` is called.
  *
  * Every read and write checks `chrome.runtime.lastError` and turns it into a
- * `Result`. Storage has a 10 MB ceiling and no `unlimitedStorage` permission, so
- * a full area is a normal condition to handle, not an exceptional one — before
- * this, `set()` failed silently at the limit and the UI carried on as if the
- * step had been saved.
+ * `Result`. Storage has unlimited quota via the `unlimitedStorage` permission
+ * (manifest.json), so the only ceiling is the user's disk — a full disk still
+ * surfaces as `STORAGE_QUOTA` from `chrome.runtime.lastError`, which is a normal
+ * condition to handle, not an exceptional one — before this, `set()` failed
+ * silently at the limit and the UI carried on as if the step had been saved.
  */
 
 import { flowError, isQuotaMessage } from '../shared/errors.js';

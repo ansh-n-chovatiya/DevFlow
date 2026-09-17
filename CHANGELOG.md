@@ -20,6 +20,16 @@
 
 **Several stale documentation claims corrected:** `compiler-plugin/` has been published as `devflow-compiler-plugin` since v4.0.0, not "optional and unpublished" as CLAUDE.md and ROADMAP_AND_PHASES.md still said; CLAUDE.md's `src/core/` layout and Gates table now match the live tree instead of an 8-directory, nine-step snapshot; `docs/CONTRACTS.md` notes which four cited paths moved under ADR 0026 without touching the frozen contract itself; the `FlowSnap` → `DevFlow` rename — which silently reversed `CONTRACTS.md` §4.5's brand-name ban with no record — now has a superseding ADR (0029).
 
+**A screenshot masked a password field's *value* in the step JSON, but never its pixels** — the field itself stayed fully legible in the image. `annotateScreenshot` now paints an opaque block over any password field's bounding box. Known residual gap, not yet closed: `screenshotOriginal` (kept when annotation changed the image) still holds the pre-redaction frame, and the viewer's re-annotate-on-recolor path doesn't re-apply the block — both need a follow-up in the capture path itself.
+
+**`src/core` staying pure (ADR 0001) was a promise with no gate behind it.** A `chrome.*`, `fetch`, or `window` reference added inside `core/` passed `npm run verify` clean and only surfaced as a runtime throw on the MCP server's first call into that code. `lint:core-purity` (new, the eighth `check-*.mjs` gate) now catches it directly.
+
+**Webpack `eval-source-map` bundles could resolve a component against the wrong module's source map, confidently.** `extractSourceMappingURL` assumed one map annotation per bundle; `eval-source-map` writes one per module, and a needle resolved against the wrong one's offset base produced a plausible but incorrect `resolved` location with no caveat. It now fails closed on that shape instead.
+
+**Two smaller corrections:** the content-script message-guard's comment named the wrong threat it actually stops (a hostile page's own inline scripts, not cross-origin iframe forgery, which it also blocks but is the less realistic case); `src/chrome/storage.ts`'s header comment claiming "no `unlimitedStorage` permission" was stale — the manifest has requested it since the first commit.
+
+Also: a regression test now pins the 256-span depth cap in the shrink direction (only raising or removing it was previously caught).
+
 First wave of fixes from a production-readiness audit; more follow.
 
 ## 4.1.2 — 2026-09-15

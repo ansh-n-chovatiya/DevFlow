@@ -396,10 +396,10 @@ function onA11ySample(data: AgentA11yMessage): void {
 // ── Agent bridge ─────────────────────────────────────────────────────────────
 
 window.addEventListener('message', (event: MessageEvent<AgentMessage | AgentQueryReply>) => {
-  // Only this window's own agent may contribute. Without this check any page
-  // script or cross-origin iframe could post the same envelope and inject
-  // fabricated network calls and log lines into the recording — which then flow
-  // into an AI's context as if they had been observed.
+  // Only this window's own agent may contribute. The same-origin, same-window
+  // check blocks cross-origin iframes, but does not stop the page's own inline
+  // scripts from forging recorder messages. This residual risk is low because
+  // a page can already lie about its own network calls.
   if (event.source !== window || event.origin !== window.location.origin) return;
 
   const data = event.data;

@@ -105,6 +105,30 @@ export interface OriginalPosition {
 }
 
 /**
+ * The annotation webpack's `eval` devtools write *inside* a module, rather than
+ * the one a bundler writes once at the end of a file.
+ *
+ * `devtool: 'eval-source-map'` — and its `eval-cheap-module-*` siblings — wrap
+ * every module in `eval("…")` and hang that module's own inline map off the end
+ * of the *string*. One chunk therefore carries dozens of annotations and not one
+ * of them describes the chunk, which is the assumption the function below is
+ * built on.
+ *
+ * The tell is exact and costs one slice: inside a string literal the newline in
+ * front of the comment is the two characters `\` and `n`, because a real one
+ * would have ended the literal. A file whose genuine trailing annotation merely
+ * follows a string ending in `\n` does not match — the quote and the semicolon
+ * closing that statement sit in between, and this wants the escape immediately
+ * before the comment opener.
+ */
+const EVAL_MODULE_ANNOTATION = /\\n\/[/*]\s*$/;
+
+/** Whether the annotation starting at `at` is one of those per-module ones. */
+function insideEvalModule(content: string, at: number): boolean {
+  return EVAL_MODULE_ANNOTATION.test(content.slice(Math.max(0, at - 8), at));
+}
+
+/**
  * Reads the `sourceMappingURL` annotation from bundle text.
  *
  * Scans only the tail: the annotation belongs at the end, and a full-text regex
@@ -120,6 +144,26 @@ export interface OriginalPosition {
  *
  * The rule is unchanged: an annotation buried in the middle of a bundle is
  * still ignored, because what has to be near the end is the end of the match.
+ *
+ * **A webpack `eval` chunk is refused outright**, and that is the one case where
+ * null does not mean *this bundle ships no map*. It ships one per module, and
+ * every one of them is the wrong map for a position in the chunk that carries
+ * them: the hit `search.ts` reports is an offset into the *outer* file, while a
+ * module's map is written against the text `eval` will run — a different
+ * coordinate space, reachable only by unescaping the string literal the module
+ * is stored in. Handing back the last module's annotation answers truthfully
+ * about some other module, which reads as a plausible file and line for a
+ * component that is not in it, `status: 'resolved'`, no caveat. Null instead
+ * puts it where a bundle with no map at all already sits: `compiled-only`, the
+ * compiled position kept, no path claimed.
+ *
+ * Resolving the *right* per-module map is the better answer and is not reachable
+ * from here. This function is handed bundle text and no position, so it cannot
+ * know which module was hit, and the two callers that could pass one — the
+ * recorder's resolver and the panel's locate — each assume one map per bundle in
+ * their own signatures. Doing it properly changes that contract, not this
+ * function. Until then this is the discipline the module already keeps
+ * everywhere else: a map it cannot be sure of is a map it does not use.
  */
 export function extractSourceMappingURL(content: string): string | null {
   const TAIL = 2000;
@@ -129,8 +173,18 @@ export function extractSourceMappingURL(content: string): string | null {
   const re = /[#@]\s*sourceMappingURL\s*=\s*([^\s'"*]+)/g;
 
   let last: string | null = null;
-  for (const m of tail.matchAll(re)) last = m[1];
-  if (last !== null) return last;
+  let lastAt = 0;
+  for (const m of tail.matchAll(re)) {
+    last = m[1];
+    lastAt = m.index ?? 0;
+  }
+
+  // Judged against `content` rather than `tail`: the escape sits three
+  // characters in front of the match, so a match near the window's edge would
+  // otherwise be ruled on text the slice cut away.
+  if (last !== null) {
+    return insideEvalModule(content, content.length - tail.length + lastAt) ? null : last;
+  }
 
   /*
    * Nothing in the window, so the annotation is either absent or longer than
@@ -145,6 +199,7 @@ export function extractSourceMappingURL(content: string): string | null {
   re.lastIndex = Math.max(0, at - 16);
   const match = re.exec(content);
   if (!match) return null;
+  if (insideEvalModule(content, match.index)) return null;
 
   return content.length - (match.index + match[0].length) <= TAIL ? match[1] : null;
 }

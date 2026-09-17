@@ -17,8 +17,12 @@ const BOX_PAD = 4;
 /** How much of the stroke colour the wash inside the box is worth. */
 const FILL_ALPHA = 0.08;
 
+/** Full alpha, for a wash that has to hide rather than mark. */
+const OPAQUE_ALPHA = 1;
+
 /**
- * The wash inside the highlight box: the stroke colour, at 8% alpha.
+ * The wash inside the highlight box: the stroke colour, at 8% alpha by
+ * default — or fully opaque, for a password box's redaction block.
  *
  * Derived, never configured. The *stroke* is a setting because red is
  * invisible on a red error banner; a fill that stayed red while the stroke went
@@ -27,14 +31,21 @@ const FILL_ALPHA = 0.08;
  * this explicitly and asked whoever wired `annotation.stroke` to derive the
  * fill in the same change. This is that.
  *
+ * The redaction block reuses this rather than naming a colour of its own —
+ * see `annotateScreenshot`'s `passwordBoxes` — because the file's one rule is
+ * that every colour it draws arrives as an argument, and `stroke` is the only
+ * one any caller has ever handed it. Full alpha over it hides everything
+ * underneath exactly as well as black would, without inventing a second
+ * colour this module would have to justify on its own.
+ *
  * `resolve()` guarantees `#RRGGBB` — the field carries the pattern, and a value
  * that fails it falls back to the default rather than reaching here — so the
  * parse is total. The `?? 0` is for a caller outside the mechanism, which is a
  * thing only a test can be.
  */
-export function fillFor(stroke: string): string {
+export function fillFor(stroke: string, alpha: number = FILL_ALPHA): string {
   const [r, g, b] = [1, 3, 5].map((at) => Number.parseInt(stroke.slice(at, at + 2), 16) || 0);
-  return `rgba(${r}, ${g}, ${b}, ${FILL_ALPHA})`;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 async function blobToDataUrl(blob: Blob): Promise<string> {
@@ -149,6 +160,18 @@ export function strokeInside(rect: Rect, lineWidth: number): { rect: Rect; width
  * `box` is in CSS pixels; `dpr` scales it into the device pixels the screenshot
  * is actually in. `scroll` corrects for the page moving between the two.
  *
+ * `passwordBoxes` is a second, independent set of boxes — same coordinate
+ * space and scroll correction as `box` — each painted over with a fully
+ * opaque block instead of a highlight. `src/content/index.ts` already masks a
+ * `<input type="password">`'s *value* in the step JSON (`el.type ===
+ * 'password'`); this is the same field's pixels, closed the same way, at the
+ * one place both the highlight and the redaction already share a canvas. The
+ * block is `stroke` at full alpha rather than a colour of its own — see
+ * `fillFor` — so this file still names no colour except the one it was handed.
+ * Absent or empty draws nothing extra — every caller that has not been wired
+ * to pass one yet gets exactly the behaviour it had before this parameter
+ * existed.
+ *
  * Returns `dataUrl` itself — the same string, not a copy — whenever nothing was
  * drawn, which is how the caller tells an annotated image from an untouched one.
  */
@@ -166,19 +189,26 @@ export async function annotateScreenshot(
   /**
    * The highlight colour — `annotation.stroke`, and the fill is derived from
    * it. Passed for the same reason `quality` is: a value read at import time
-   * would be the compiled-in red forever, whatever the user had set.
+   * would be the compiled-in red forever, whatever the user had set. It also
+   * feeds the password redaction block below, at full alpha instead of the
+   * highlight's 8%.
    */
   stroke: string,
   scroll?: ScrollDelta | null,
+  passwordBoxes?: readonly (BoundingBox | null | undefined)[] | null,
 ): Promise<string> {
-  if (!box) return dataUrl;
-
   const scale = dpr || 1;
   const delta: ScrollDelta = scroll ?? { x: 0, y: 0 };
 
-  // Cheap enough to check before decoding: a zero-area box is decided by the
-  // box alone, and there is no point paying for a bitmap to draw nothing on.
-  if (!(box.width > 0) || !(box.height > 0)) return dataUrl;
+  // Cheap enough to check before decoding: zero-area boxes are decided by the
+  // boxes alone, and there is no point paying for a bitmap to draw nothing on.
+  const highlightBox = box && box.width > 0 && box.height > 0 ? box : null;
+  const redactBoxes = (passwordBoxes ?? []).filter(
+    (candidate): candidate is BoundingBox =>
+      !!candidate && candidate.width > 0 && candidate.height > 0,
+  );
+
+  if (!highlightBox && redactBoxes.length === 0) return dataUrl;
 
   /*
    * Every failure below returns the unannotated capture rather than throwing.
@@ -195,9 +225,14 @@ export async function annotateScreenshot(
   try {
     const source = await (await fetch(dataUrl)).blob();
     const img = (bitmap = await createImageBitmap(source));
+    const image: Rect = { x: 0, y: 0, w: img.width, h: img.height };
 
-    const rect = highlightRect(box, scale, delta, { x: 0, y: 0, w: img.width, h: img.height });
-    if (!rect) return dataUrl;
+    const rect = highlightBox ? highlightRect(highlightBox, scale, delta, image) : null;
+    const redactRects = redactBoxes
+      .map((candidate) => highlightRect(candidate, scale, delta, image))
+      .filter((candidate): candidate is Rect => candidate !== null);
+
+    if (!rect && redactRects.length === 0) return dataUrl;
 
     const canvas = new OffscreenCanvas(img.width, img.height);
     const ctx = canvas.getContext('2d');
@@ -205,13 +240,29 @@ export async function annotateScreenshot(
 
     ctx.drawImage(img, 0, 0);
 
-    ctx.fillStyle = fillFor(stroke);
-    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    if (rect) {
+      ctx.fillStyle = fillFor(stroke);
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
-    const outline = strokeInside(rect, STROKE_WIDTH * scale);
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = outline.width;
-    ctx.strokeRect(outline.rect.x, outline.rect.y, outline.rect.w, outline.rect.h);
+      const outline = strokeInside(rect, STROKE_WIDTH * scale);
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = outline.width;
+      ctx.strokeRect(outline.rect.x, outline.rect.y, outline.rect.w, outline.rect.h);
+    }
+
+    /*
+     * Drawn last, over whatever the highlight above put down. A password box
+     * that happens to be the same element as the highlight (an input clicked
+     * into, then flagged as a password field) must come out solid either way,
+     * and painting redaction after the wash-plus-stroke is the only order that
+     * guarantees the block, not the highlight, is what survives the re-encode.
+     */
+    if (redactRects.length > 0) {
+      ctx.fillStyle = fillFor(stroke, OPAQUE_ALPHA);
+      for (const redactRect of redactRects) {
+        ctx.fillRect(redactRect.x, redactRect.y, redactRect.w, redactRect.h);
+      }
+    }
 
     // The same quality the capture itself was taken at. Hardcoding 0.6 here
     // meant re-encoding at a quality the rest of the extension did not agree
