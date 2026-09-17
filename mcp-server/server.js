@@ -1351,6 +1351,12 @@ function generateMarkdown(flow, dir) {
  * finished the investigation before opening anything.
  *
  * Costs about forty tokens and is computed from data already in hand.
+ *
+ * "About forty" is now enforced rather than asserted. Two of the parts below
+ * grow with the recording and neither is ours: the console message is the
+ * page's, and the failed-call shape carries the page's URL. `list_flows`
+ * embeds this sentence once per failing flow, so an unbounded one is an
+ * unbounded list — which is the shape of the bug the audit reproduced.
  */
 function failureSummary(flow) {
   const failing = failingSteps(flow);
@@ -1385,8 +1391,19 @@ function failureSummary(flow) {
     parts.push(where ? `in ${component.name} (${where})` : `in ${component.name}`);
   }
 
-  return `${parts.join(', ')}.`;
+  return fitTokens(`${parts.join(', ')}.`, FAILURE_SUMMARY_TOKENS);
 }
+
+/**
+ * The ceiling on one `failureSummary` sentence, in estimated tokens.
+ *
+ * Generous against what the sentence normally costs (about forty) and tight
+ * against what it could: the point is a bound that exists, not a tighter
+ * budget. A flow with several distinct failure shapes has something worth
+ * saying and should be able to say it; none of them should be able to spend a
+ * `list_flows` row on one page-supplied URL.
+ */
+const FAILURE_SUMMARY_TOKENS = 120;
 
 /**
  * How a step reads when two recordings are being lined up against each other.
@@ -2899,12 +2916,28 @@ function failingSteps(flow) {
     .filter(({ step }) => consoleErrors(step).length > 0 || failedCalls(step).length > 0);
 }
 
+/**
+ * How much of a failed call's URL a shape key is allowed to carry.
+ *
+ * The URL belongs to the page, not to us: an ad or analytics beacon puts its
+ * whole payload in the query string, and `urlPath()` returns path *and* search
+ * verbatim. The audit found this live — a `list_flows` row whose summary was a
+ * 1,900-character tracking URL, roughly 470 tokens for one entry in a tool
+ * documented as lightweight triage (report.md §3.6).
+ *
+ * `truncate` rather than a bare slice, because every other text path in this
+ * file cuts that way and because the row should still say how long it was: a
+ * beacon URL that has been shortened reads differently from a short URL.
+ */
+const SHAPE_URL_CHARS = 100;
+
 /** `METHOD /path → status`, counted, commonest first. What broke, by shape. */
 function failedShapes(failing) {
   const shapes = new Map();
   for (const { step } of failing) {
     for (const call of failedCalls(step)) {
-      const key = `${call.method || 'GET'} ${urlPath(call.url) || call.url} → ${call.status ?? 'no response'}`;
+      const where = truncate(urlPath(call.url) || call.url || '', SHAPE_URL_CHARS);
+      const key = `${call.method || 'GET'} ${where} → ${call.status ?? 'no response'}`;
       shapes.set(key, (shapes.get(key) ?? 0) + 1);
     }
   }
@@ -2955,11 +2988,20 @@ function flowSummary(flow) {
    * the most misleading answer this server can give, to the question this tool
    * exists to answer.
    */
-  const verdict = truncate(
+  /*
+   * Cut in tokens, not in characters.
+   *
+   * This line used to convert its token allowance to characters by multiplying
+   * by four, which is the same ASCII-only assumption `estimateTokens` no longer
+   * makes: on a page that logs in Japanese it handed the verdict roughly 1,300
+   * characters — 1,300 tokens — against a 400-token response. `fitTokens` keeps
+   * the cut in the unit the budget is written in.
+   */
+  const verdict = fitTokens(
     withheld(flow) ??
       failureSummary(flow) ??
       'Nothing failed: no step logged a console error or a failed request.',
-    Math.max(200, (SUMMARY_TOKENS - reserved - 8) * 4),
+    Math.max(50, SUMMARY_TOKENS - reserved - 8),
   );
 
   const optional = [];
@@ -5405,12 +5447,94 @@ function renderEdges(lines, component) {
 const day = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : 'unknown');
 
 /**
- * Rough token count. Four characters to a token is the usual estimate and is
- * close enough for a budget: the cost of being 20% wrong is one step more or
- * fewer on a page, and the cost of not counting at all is the response being
- * cut in half by the client with nothing to say so.
+ * Rough token count, priced per script rather than per character.
+ *
+ * Four characters to a token is the usual estimate and it is only true of
+ * ASCII. A BPE tokenizer spends about one token on every CJK ideograph, so
+ * `chars / 4` prices a recording made against a Japanese page at a quarter of
+ * what it costs: `get_flow_summary` is named after a number it would then miss
+ * by 4x, silently, and the project's own test asserted that formula against a
+ * copy of itself (report.md §3.6).
+ *
+ * The correction is byte-based and deliberately crude, because a real
+ * tokenizer here would be a runtime dependency and a vocabulary file to ship
+ * for a number that only has to be right to within a line. Outside ASCII a code
+ * point costs its UTF-8 length over `BYTES_PER_TOKEN`: three bytes to one token
+ * for CJK, which is what a real tokenizer charges; two bytes and 0.67 tokens
+ * for accented Latin, Greek and Cyrillic, which errs high; four bytes and 1.33
+ * for an astral code point.
+ *
+ * ASCII keeps four characters to the token, and that is a known approximation
+ * rather than a right answer: four is the ratio for English prose, while these
+ * responses are largely file paths, JSON and tool calls, where a vocabulary
+ * spends a token on `({"` and another on `":"`. Measured against an independent
+ * segment-based estimate in `tests/mcp-summary.test.ts`, the worst fixture in
+ * the suite comes out about 6% over — bounded, pinned by a test that fails if
+ * it grows, and a different bug from this one. Re-pricing ASCII moves every
+ * budgeted response in the server and is owned by whoever also updates the two
+ * suites that quote the classic ratio back at it.
+ *
+ * This stays an estimate, and is meant to: being 20% wrong costs one step more
+ * or fewer on a page. What it is not allowed to be is wrong by a multiple,
+ * which is what it was outside ASCII.
  */
-const estimateTokens = (value) => Math.ceil(value.length / 4);
+const ASCII_PER_TOKEN = 4;
+const BYTES_PER_TOKEN = 3;
+
+/** Anything the fast path below cannot price at four characters to the token. */
+const NON_ASCII = /[^ -]/;
+
+/** What one code point costs, in tokens. See `estimateTokens`. */
+function tokenWeight(codePoint) {
+  if (codePoint < 0x80) return 1 / ASCII_PER_TOKEN;
+  if (codePoint < 0x800) return 2 / BYTES_PER_TOKEN;
+  if (codePoint < 0x10000) return 3 / BYTES_PER_TOKEN;
+  return 4 / BYTES_PER_TOKEN;
+}
+
+const estimateTokens = (value) => {
+  const text = String(value);
+  // The common case, and the one that runs over whole serialised flows: a pure
+  // ASCII string needs no per-character walk to be priced.
+  if (!NON_ASCII.test(text)) return Math.ceil(text.length / ASCII_PER_TOKEN);
+
+  let weight = 0;
+  for (const character of text) weight += tokenWeight(character.codePointAt(0));
+  return Math.ceil(weight);
+};
+
+/**
+ * `value`, cut so that what comes back — annotation included — fits `budget`
+ * estimated tokens.
+ *
+ * `truncate` counts characters, which is the right unit for a body limit
+ * written in characters and the wrong one for a token ceiling: 1,300 characters
+ * is 325 tokens of ASCII and 1,300 tokens of Japanese. A budget expressed in
+ * tokens has to be kept in tokens, or the conversion is exactly the 4x hole
+ * `estimateTokens` above just closed, re-opened one line later.
+ *
+ * The `[N chars total]` annotation is `truncate`'s wording, deliberately: a cut
+ * that does not say it happened is the silent truncation this file refuses
+ * everywhere else.
+ */
+function fitTokens(value, budget) {
+  const text = String(value);
+  if (estimateTokens(text) <= budget) return text;
+
+  const marker = `… [${text.length} chars total]`;
+  const room = Math.max(0, budget - estimateTokens(marker));
+
+  let weight = 0;
+  let end = 0;
+  for (const character of text) {
+    const next = weight + tokenWeight(character.codePointAt(0));
+    if (next > room) break;
+    weight = next;
+    end += character.length;
+  }
+
+  return `${text.slice(0, end)}${marker}`;
+}
 
 
 /**

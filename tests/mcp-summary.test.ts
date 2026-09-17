@@ -32,8 +32,81 @@ import { startServer, writeFlow, type McpSession } from './helpers/mcp-server.js
 /** The ceiling the tool is named after. `SUMMARY_TOKENS` in `server.js`. */
 const SUMMARY_TOKENS = 400;
 
-/** The server's own estimate, so the assertions measure what the budget does. */
-const estimateTokens = (value: string) => Math.ceil(value.length / 4);
+/**
+ * How far over that ceiling an all-ASCII response is still allowed to come out,
+ * measured rather than allowed for.
+ *
+ * `server.js` prices ASCII at four characters to the token. That is the ratio
+ * for English prose and not for the file paths, JSON and tool calls these
+ * responses are mostly made of, where a BPE vocabulary spends a token on `({"`
+ * and another on `":"` — so `bpeTokens` below segments the worst fixture in
+ * this suite at about 6% over. It is a real gap and a small one, and it is a
+ * different bug from the 4x the CJK cases below are about.
+ *
+ * Written as a pinned number rather than left out, for two reasons. It fails
+ * the day the gap grows, which is the only thing that makes it safe to know
+ * about and not fix. And closing it means re-pricing ASCII, which moves every
+ * budgeted response in the server and is held in place by two suites outside
+ * this one — `tests/mcp-step-detail.test.ts` and `tests/step-detail-render.test.ts`
+ * both assert the index's token quote by retyping `chars / 4` and comparing it
+ * with itself, which is the same self-agreement this file just stopped doing.
+ */
+const ASCII_OVERSHOOT = 1.08;
+
+/** The ceiling on one failure sentence. `FAILURE_SUMMARY_TOKENS` in `server.js`. */
+const FAILURE_SUMMARY_TOKENS = 120;
+
+/** Both ceilings, as an independent count of an ASCII response measures them. */
+const MEASURED_SUMMARY = Math.floor(SUMMARY_TOKENS * ASCII_OVERSHOOT);
+const MEASURED_FAILURE = Math.floor(FAILURE_SUMMARY_TOKENS * ASCII_OVERSHOOT);
+
+/**
+ * The formula this file used to assert the budget with, kept only to prove it
+ * was blind.
+ *
+ * It is `server.js`'s old `estimateTokens`, retyped — which is exactly the
+ * problem the audit named: a budget checked against a second copy of the
+ * formula that sets it agrees with itself no matter how wrong both are
+ * (report.md §3.6). It survives here as the *subject* of a test rather than as
+ * its instrument, so the CJK case below can show what it misses.
+ */
+const charsOverFour = (value: string) => Math.ceil(value.length / 4);
+
+/**
+ * How a vocabulary cuts text up, ordered so a code point outside printable
+ * ASCII is taken on its own — a run of Japanese is priced per character rather
+ * than swallowed whole by the punctuation alternative behind it.
+ */
+const PIECES = /[^\s\w!-~]|[A-Za-z']+|[0-9]+|[^\s\w]+|\S/gu;
+
+/**
+ * What a real BPE tokenizer charges, estimated independently of the server.
+ *
+ * Derived from how GPT-family vocabularies segment text rather than from a
+ * characters-per-token ratio, so that agreeing with `server.js` means two
+ * derivations agree — not that one formula was copied. A merged vocabulary
+ * spends roughly one token on a short Latin word (longer ones split into pieces
+ * of about six characters), one on each run of a few digits, one on each short
+ * run of punctuation — `({"` and `":"` are single tokens, which is why a
+ * response full of JSON and file paths costs far more than `chars / 4` says —
+ * and, the part `chars / 4` gets wrong by 4x, about one token on every single
+ * CJK character.
+ *
+ * Conservative where it is unsure, because every assertion using it is a
+ * ceiling: over-counting makes these tests stricter than reality, under-counting
+ * would make them the thing they exist to replace.
+ */
+const bpeTokens = (value: string): number => {
+  let tokens = 0;
+  for (const piece of value.match(PIECES) ?? []) {
+    const code = piece.codePointAt(0) ?? 0;
+    if (code > 0x7f) tokens += 1;
+    else if (/^[A-Za-z']+$/.test(piece)) tokens += Math.ceil(piece.length / 6);
+    else if (/^[0-9]+$/.test(piece)) tokens += Math.ceil(piece.length / 3);
+    else tokens += Math.ceil(piece.length / 3);
+  }
+  return tokens;
+};
 
 const DAY = 24 * 60 * 60 * 1000;
 /**
@@ -277,6 +350,126 @@ function writeNewestFlow(): void {
   });
 }
 
+/**
+ * The audit's own reproduction, rebuilt: a failed request to a tracking beacon.
+ *
+ * Roughly 1,900 characters of query string, which is what a real recording of a
+ * real page handed `list_flows` — one triage row costing about 470 tokens,
+ * because `failureSummary` keyed its failure shapes on `urlPath()`, and
+ * `urlPath()` returns path *and* search verbatim (report.md §3.6). The URL is
+ * the page's, not the extension's: nothing about how the recording was made
+ * bounds it.
+ */
+const BEACON_URL =
+  'https://px.analytics.example.com/collect?' +
+  Array.from({ length: 65 }, (_, i) => `utm_${i}=${'x'.repeat(20)}`).join('&');
+
+function writeBeaconFlow(): void {
+  writeFlow(home, {
+    id: 'flow-beacon',
+    name: 'Article page, ad stack failing',
+    timestamp: BASE + 5 * DAY,
+    startUrl: 'https://news.example.com/article/1',
+    errorCount: 4,
+    schemaVersion: 1,
+    steps: Array.from({ length: 8 }, (_, i) => {
+      const n = i + 1;
+      const fails = n % 2 === 0;
+      return {
+        type: 'click',
+        url: 'https://news.example.com/article/1',
+        timestamp: BASE + n * 1000,
+        action: `Clicked "Next page ${n}"`,
+        stepNumber: n,
+        element: { tag: 'a', cssSelector: 'a.next' },
+        consoleLogs: [],
+        networkCalls: fails
+          ? [
+              {
+                method: 'GET',
+                url: BEACON_URL,
+                requestHeaders: {},
+                requestBody: null,
+                status: 502,
+                responseHeaders: {},
+                responseBody: '',
+                durationMs: 3000,
+                timestamp: BASE,
+              },
+            ]
+          : [],
+      };
+    }),
+  });
+}
+
+/** One sentence of the kind a Japanese-language app writes to the console. */
+const JAPANESE = '決済処理中に予期しないエラーが発生しました注文の合計金額を取得できません';
+
+/** `length` characters of it, so a fixture can be sized rather than counted. */
+const japanese = (length: number): string =>
+  JAPANESE.repeat(Math.ceil(length / JAPANESE.length)).slice(0, length);
+
+/**
+ * The same tool asked about a page that does not speak English.
+ *
+ * This is the density case, and it is the one `chars / 4` cannot see. Every
+ * field below that carries text is one the extension copied from somewhere it
+ * does not control — the name the user typed, the message the app logged, the
+ * component names and paths the bundle's source map gave back — and on this
+ * recording all of them are Japanese, where a BPE tokenizer spends about one
+ * token per character rather than one per four.
+ *
+ * Nothing here is larger than the English fixtures: fewer steps, fewer failure
+ * shapes, a shorter name. It is the same response, in a different script, and
+ * that alone used to be worth 4x (report.md §3.6).
+ */
+function writeCjkFlow(): void {
+  const components: Record<string, ReturnType<typeof component>> = {};
+  for (let i = 0; i < 8; i++) {
+    components[`jp-${i}`] = component(
+      `支払い方法セレクター${i}`,
+      `packages/店舗フロント/src/機能/決済/構成要素/支払い方法セレクター${i}.tsx`,
+      120 + i,
+    );
+  }
+
+  const steps = Array.from({ length: 40 }, (_, i) => {
+    const n = i + 1;
+    const fails = n % 3 === 0;
+    return {
+      type: 'click',
+      url: 'https://shop.example.co.jp/cart',
+      timestamp: BASE + n * 1000,
+      action: `Clicked "次へ ${n}"`,
+      stepNumber: n,
+      element: {
+        tag: 'button',
+        cssSelector: `button.next-${n}`,
+        react: { owner: `jp-${n % 8}`, within: `jp-${(n + 3) % 8}`, chain: [`jp-${n % 8}`] },
+      },
+      /*
+       * Console errors and no failed requests, so the verdict is the page's own
+       * sentence: `failureSummary` prefers the failed-call shapes when there are
+       * any, and a URL is percent-encoded to ASCII by the time it is printed.
+       */
+      consoleLogs: fails ? [{ level: 'error', args: [japanese(110)], timestamp: BASE }] : [],
+      networkCalls: [],
+    };
+  });
+
+  writeFlow(home, {
+    id: 'flow-cjk',
+    name: japanese(90),
+    timestamp: BASE + 6 * DAY,
+    startUrl: 'https://shop.example.co.jp/cart',
+    errorCount: 13,
+    schemaVersion: 1,
+    react: { detected: true, components },
+    steps,
+  });
+}
+
 beforeAll(async () => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'devflow-test-'));
   writeHostileFlow();
@@ -284,6 +477,8 @@ beforeAll(async () => {
   writeCleanFlow();
   writeWithheldFlow();
   writeNewestFlow();
+  writeBeaconFlow();
+  writeCjkFlow();
 
   server = await startServer({ home });
 }, 20_000);
@@ -297,19 +492,19 @@ describe('the budget the tool is named after', () => {
   it('holds on a recording built to break it', async () => {
     const summary = await call('get_flow_summary', { id: 'flow-hostile' });
 
-    expect(estimateTokens(summary)).toBeLessThanOrEqual(SUMMARY_TOKENS);
+    expect(bpeTokens(summary)).toBeLessThanOrEqual(MEASURED_SUMMARY);
   });
 
   it('holds on an ordinary recording', async () => {
     const summary = await call('get_flow_summary', { id: 'flow-plain' });
 
-    expect(estimateTokens(summary)).toBeLessThanOrEqual(SUMMARY_TOKENS);
+    expect(bpeTokens(summary)).toBeLessThanOrEqual(MEASURED_SUMMARY);
   });
 
   it('holds on a recording where nothing failed', async () => {
     const summary = await call('get_flow_summary', { id: 'flow-clean' });
 
-    expect(estimateTokens(summary)).toBeLessThanOrEqual(SUMMARY_TOKENS);
+    expect(bpeTokens(summary)).toBeLessThanOrEqual(MEASURED_SUMMARY);
   });
 
   it('keeps the flow, the verdict and the next call even when it is tight', async () => {
@@ -333,7 +528,7 @@ describe('the budget the tool is named after', () => {
     // word is the silent truncation the rest of this server refuses.
     expect(summary.trimEnd().endsWith('recording.')).toBe(true);
     // And it is not so cautious that it says nothing: the budget is a ceiling.
-    expect(estimateTokens(summary)).toBeGreaterThan(100);
+    expect(bpeTokens(summary)).toBeGreaterThan(100);
   });
 
   /*
@@ -436,7 +631,7 @@ describe('a recording sent without the data that would show a failure', () => {
   it('still fits the budget, warning and all', async () => {
     const summary = await call('get_flow_summary', { id: 'flow-withheld' });
 
-    expect(estimateTokens(summary)).toBeLessThanOrEqual(SUMMARY_TOKENS);
+    expect(bpeTokens(summary)).toBeLessThanOrEqual(MEASURED_SUMMARY);
     expect(summary).toContain('Next:');
   });
 });
@@ -474,6 +669,114 @@ describe('which recording is summarised', () => {
     const answer = await server.callRaw('get_flow_summary', { id: 'flow-does-not-exist' });
 
     expect(answer.isError).toBe(true);
+  });
+});
+
+/**
+ * `list_flows` is the cheap call, and its rows carry text the page chose.
+ *
+ * Every other string this server prints is cut somewhere. The failure sentence
+ * was not, and it is the one embedded once per failing recording in the tool a
+ * reader opens *before* they know which flow they want — so the row for a page
+ * with an ad stack on it cost more than the summary tool next to it.
+ */
+describe('a failure whose URL the page chose', () => {
+  const rows = async (): Promise<{ id: string; summary?: string }[]> =>
+    JSON.parse(await call('list_flows', {})) as { id: string; summary?: string }[];
+
+  const beacon = async () => (await rows()).find((row) => row.id === 'flow-beacon');
+
+  it('is the fixture the audit found live, not a hypothetical one', () => {
+    expect(BEACON_URL.length).toBeGreaterThan(1_800);
+    // One URL, on its own, worth more than the whole `get_flow_summary` budget.
+    expect(bpeTokens(BEACON_URL)).toBeGreaterThan(SUMMARY_TOKENS);
+  });
+
+  it('does not arrive in a row verbatim', async () => {
+    const entry = await beacon();
+
+    expect(entry?.summary).toBeTruthy();
+    expect(entry?.summary).not.toContain(BEACON_URL);
+    // Cut, and saying so. A shortened URL that reads as a short URL is the
+    // silent truncation the rest of this server refuses.
+    expect(entry?.summary).toContain('chars total');
+  });
+
+  it('costs what the other rows cost', async () => {
+    const summarised = (await rows()).filter((row) => typeof row.summary === 'string');
+
+    // More than one, or this asserts nothing about "the same budget as the
+    // others": the beacon row is meant to be indistinguishable in cost.
+    expect(summarised.length).toBeGreaterThan(1);
+    for (const row of summarised) {
+      expect(bpeTokens(row.summary ?? '')).toBeLessThanOrEqual(MEASURED_FAILURE);
+    }
+  });
+
+  it('still says which call broke, and where', async () => {
+    const entry = await beacon();
+
+    expect(entry?.summary).toContain('GET /collect');
+    expect(entry?.summary).toContain('502');
+    expect(entry?.summary).toMatch(/first at step \d/);
+  });
+});
+
+/**
+ * The density case: the same response, in a script that costs four times as
+ * much per character.
+ *
+ * `chars / 4` is an English-prose ratio. A BPE tokenizer spends about one token
+ * on every CJK character, so a summary of a Japanese page was priced at a
+ * quarter of what it costs and the budget the tool is named after was missed by
+ * a multiple — with nothing to notice, because the test asserting the budget
+ * redefined the same formula and compared it with itself (report.md §3.6).
+ *
+ * The assertions below use `bpeTokens`, which is derived from how a vocabulary
+ * segments text rather than from a character ratio, so the server's estimate
+ * and the test's are two independent answers to the same question.
+ */
+describe('a recording of a page that does not speak English', () => {
+  it('keeps the budget when a tokenizer does the counting', async () => {
+    const summary = await call('get_flow_summary', { id: 'flow-cjk' });
+
+    // Strictly the ceiling, not the ASCII allowance above it: this response is
+    // mostly Japanese, and Japanese is now priced at what it costs.
+    expect(bpeTokens(summary)).toBeLessThanOrEqual(SUMMARY_TOKENS);
+  });
+
+  it('is dense enough that the formula this replaced could not see it', async () => {
+    const summary = await call('get_flow_summary', { id: 'flow-cjk' });
+
+    // The finding in one line: the old estimate calls this response cheap and
+    // it is not. A test that redefined `chars / 4` would agree with the first
+    // number and never compute the second.
+    expect(charsOverFour(summary)).toBeLessThan(bpeTokens(summary) / 2);
+  });
+
+  it('pays for the Japanese it prints instead of discounting it', async () => {
+    const [dense, english] = await Promise.all([
+      call('get_flow_summary', { id: 'flow-cjk' }),
+      call('get_flow_summary', { id: 'flow-plain' }),
+    ]);
+
+    /*
+     * The English recording affords its component line; the Japanese one does
+     * not, and that is the whole behaviour change. The line is the same length
+     * in characters and four times the length in tokens, so under `chars / 4`
+     * it was admitted at a quarter of its cost — which is how a 400-token
+     * response came back at 1,600.
+     */
+    expect(english).toContain('Components:');
+    expect(dense).not.toContain('Components:');
+  });
+
+  it('spends what it has on the page’s own words', async () => {
+    const summary = await call('get_flow_summary', { id: 'flow-cjk' });
+
+    expect(summary).toContain(japanese(20));
+    expect(summary).toContain('flow-cjk');
+    expect(summary).toContain('Next:');
   });
 });
 

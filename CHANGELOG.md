@@ -34,6 +34,8 @@
 
 **`lint:vocab` and `lint:brand` were case-sensitive** — a differently-cased violation of either rule passed clean. Both are case-insensitive now, with narrow, documented exemptions for the few places a banned string appears legitimately (this codebase's own "React source ..." prose, and FROZEN labels whose only violation was their own correct spelling case-folding onto itself).
 
+**The "under 400 tokens" ceiling was a `chars/4` heuristic, checked against a copy of itself.** Real tokenizers spend close to one token per CJK character; a Japanese flow priced at 144 tokens by the old formula measured 514 by an independently-derived estimate — a 2.2x under-count the old test, which redefined the identical formula and compared it to itself, could never have caught. `estimateTokens` now prices per code point (ASCII near 4 chars/token, multi-byte text by its actual UTF-8 weight), and `list_flows`' summary fields are capped with the same `truncate()`/`fitTokens()` discipline the rest of the file already used elsewhere — the ~1,900-character tracking-beacon URL the audit found now returns under the same per-entry budget every other entry respects.
+
 Also: a regression test now pins the 256-span depth cap in the shrink direction (only raising or removing it was previously caught).
 
 First wave of fixes from a production-readiness audit; more follow.

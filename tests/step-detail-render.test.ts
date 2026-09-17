@@ -232,7 +232,14 @@ describe('the render part in the index', () => {
     const section = detail.slice(detail.indexOf('### render'));
 
     expect(quoted).toBeGreaterThan(0);
-    expect(Math.ceil(section.length / 4)).toBe(quoted);
+    // A real per-character token price varies with the text (ASCII vs.
+    // multi-byte, run structure) — chars/4 was the estimator itself, which is
+    // exactly the self-reference report.md flagged. This keeps the test's
+    // actual intent (the quote is computed from *this section*, not from
+    // anything else) as a range a real estimator's answer must fall inside,
+    // rather than reasserting the old formula as ground truth.
+    expect(quoted).toBeGreaterThanOrEqual(Math.ceil(section.length / 4));
+    expect(quoted).toBeLessThanOrEqual(Math.ceil(section.length / 3));
   });
 
   it('says in the index what a step with no re-renders is, rather than leaving the row blank', async () => {
