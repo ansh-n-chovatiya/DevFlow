@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+**A request with no `Origin` header was trusted as if it came from the extension.** `extensionOrigin()` reasoned that "no `Origin` at all" meant "not a browser page, so not a page-driven attack" — true, but it then treated "not a page" as "trusted," which any other local process (or, in `MCP_MODE=remote`, anyone on the internet reaching the port) could also satisfy by simply omitting the header. Every write route (`POST /flows`, the component-pick route, `POST /architecture`, `DELETE /flows/:id`) now rejects a request with no `Origin`, unconditionally, in both modes — closing the forged-flow / `get_latest_flow`-poisoning path this made possible. Breaking `curl`-based local debugging against the server is the accepted cost.
+
+**Response and request bodies were never scanned for secret-shaped content.** A body under 1KB, or any body on a failed call under 4KB, was stored and served to Claude verbatim regardless of what it held — a session token or a bearer credential included. `compactBody` now redacts JWT-, bearer-, and key/token/secret-field-shaped values before either branch returns.
+
+**Header redaction matched exactly 4 names.** `SENSITIVE_HEADERS` covered `authorization`, `cookie`, `set-cookie`, `x-api-key` and nothing else — `X-Auth-Token`, `X-Session-Token`, `Proxy-Authorization`, `X-Access-Token`, `X-Amz-Security-Token`, `X-Csrf-Token` all passed through raw. The pattern now matches the `*-auth*`/`*-token*`/`*-key*` family, by name (values are still not inspected — a separate, larger change).
+
+**`DELETE /flows/:id` had no test exercising it over HTTP at all** — the route that was built specifically to fix a past "delete looked successful but the flow was still there" incident could regress to a no-op and the full suite would stay green. It now has one, driven against a real running server.
+
+First wave of fixes from a production-readiness audit; more follow.
+
 ## 4.1.2 — 2026-09-15
 
 **Stop could hang indefinitely on a busy recording, and every step attachment

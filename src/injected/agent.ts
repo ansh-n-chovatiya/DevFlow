@@ -235,7 +235,20 @@ function applyConfig(next: Partial<AgentConfig> | undefined): void {
   }
 }
 
-const SENSITIVE_HEADERS = /^(authorization|cookie|set-cookie|x-api-key)$/i;
+/**
+ * Header *names* only — see this file's own header on why a value is never
+ * inspected. `cookie`/`set-cookie` are named outright because neither
+ * contains "auth", "token" or "key"; everything else that carries a
+ * credential is one of those three substrings somewhere in its name —
+ * `authorization`, `proxy-authorization`, `x-api-key`, `x-auth-token`,
+ * `x-session-token`, `x-access-token`, `x-amz-security-token`,
+ * `x-csrf-token` — so matching the family beats re-enumerating it one header
+ * at a time, which is how the 4-name version this replaced went stale.
+ * `tests/audit-header-redaction.test.ts` is the matrix, including the
+ * ordinary names (`Content-Type`, `Accept`, `X-Request-Id`) this must not
+ * widen into.
+ */
+const SENSITIVE_HEADERS = /^(?:cookie|set-cookie)$|auth|token|key/i;
 
 function emit(detail: Record<string, unknown>): void {
   window.postMessage({ __devflow_source__: AGENT_MESSAGE_SOURCE, ...detail }, '*');

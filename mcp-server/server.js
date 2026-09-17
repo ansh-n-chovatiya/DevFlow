@@ -1853,12 +1853,23 @@ const sseTransports = {};
  * not stop the request being *made* — only the reply being read. A page that
  * posts here could overwrite a real recording with one it wrote itself, and
  * everything downstream then presents it to the reader as their own. Extension
- * origins only; a request with no `Origin` at all is a local tool like curl,
- * which is not a page and cannot be driven by a visited site.
+ * origins only.
+ *
+ * A request with no `Origin` at all used to be waved through on the theory
+ * that it was a local tool like curl, not a page — true for the *browser*
+ * threat, but "not a page" is not "trusted": any other local process can omit
+ * `Origin` exactly as easily, and in `MCP_MODE=remote` (bound to `0.0.0.0`) so
+ * can anyone on the internet. `saveFlow` validates only shape, and
+ * `listAllFlows` sorts by the caller-supplied `timestamp`, so a forged flow
+ * with no `Origin` header could overwrite a real recording or permanently win
+ * `get_latest_flow` — a direct indirect-prompt-injection vector into the
+ * coding agent this server feeds. Requiring `Origin` unconditionally breaks
+ * curl-based local debugging against these routes; that is accepted, because
+ * the routes exist for the extension and nothing else.
  */
 function extensionOrigin(req) {
   const origin = req.headers.origin;
-  return !origin || /^(chrome|moz)-extension:\/\//.test(origin);
+  return typeof origin === 'string' && /^(chrome|moz)-extension:\/\//.test(origin);
 }
 
 /**

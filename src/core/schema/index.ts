@@ -7,6 +7,7 @@
  * and offers a "Show raw" toggle.
  */
 
+import { redactSecretShapes } from '../redact/index.js';
 import { SCHEMA_THRESHOLD } from '../../shared/constants.js';
 
 /** Fields shown per object before the rest are summarised as a count. */
@@ -236,19 +237,24 @@ export function compactBody(
     return `${bodyStr}\n\n[${cut}KB total, truncated at capture]`;
   }
 
-  if (!meta?.truncated && bodyStr.length <= threshold) return bodyStr;
+  if (!meta?.truncated && bodyStr.length <= threshold) return redactSecretShapes(bodyStr);
 
   /*
    * A failed call's body is kept, not summarised. Truncation is still stamped
    * rather than silent — the same rule the rest of this file follows — so a
-   * stack trace cut at the limit cannot read as one that ended there.
+   * stack trace cut at the limit cannot read as one that ended there. Kept
+   * verbatim is never kept raw, though: `redactSecretShapes` runs on it first,
+   * because `get_flow_errors` — the tool most likely to be called right after
+   * something broke — is exactly where a body this size lands untouched.
    */
   if (meta?.diagnostic) {
     const size = ((meta.bytes ?? bodyStr.length) / 1024).toFixed(1);
     if (bodyStr.length <= DIAGNOSTIC_LIMIT) {
-      return meta.truncated ? `${bodyStr}\n\n[${size}KB total, truncated at capture]` : bodyStr;
+      return meta.truncated
+        ? `${redactSecretShapes(bodyStr)}\n\n[${size}KB total, truncated at capture]`
+        : redactSecretShapes(bodyStr);
     }
-    return `${bodyStr.slice(0, DIAGNOSTIC_LIMIT)}\n\n[${size}KB total, truncated]`;
+    return `${redactSecretShapes(bodyStr.slice(0, DIAGNOSTIC_LIMIT))}\n\n[${size}KB total, truncated]`;
   }
 
   // The size the caller cares about is the body the server sent, not the slice

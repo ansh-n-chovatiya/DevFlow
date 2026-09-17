@@ -276,3 +276,63 @@ const SECRET_STORE_KEY =
 export function isSecretStateKey(key: string): boolean {
   return typeof key === 'string' && SECRET_STORE_KEY.test(key);
 }
+
+/**
+ * A JWT: three base64url segments, the first always `eyJ…` — the base64
+ * encoding of `{"`, which is how every JSON-header JWT starts and a shape
+ * nothing else produces. Matched wherever it appears in a body, not only in a
+ * field `compactBody` would otherwise trust by name or position.
+ */
+const JWT = /\beyJ[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\b/g;
+
+/**
+ * The HTTP `Authorization: Bearer <token>` scheme, wherever it shows up in a
+ * body rather than a header — a debug echo of the request that sent it, or an
+ * error message that quotes what it rejected. Run after `JWT` above, so a
+ * bearer JWT is not matched twice; a non-JWT bearer token is still long enough
+ * to be worth the same mask.
+ */
+const BEARER = /\bBearer\s+[A-Za-z0-9\-_.+/]{10,}=*/gi;
+
+/**
+ * A JSON field whose *name* says it holds a credential and whose value is long
+ * enough that it cannot be a short flag or enum.
+ *
+ * Reuses the "matches as a substring" shape of `SECRET_STORE_KEY` above rather
+ * than `SECRET_PARAM`'s whole-word match, for the same reason: a body's field
+ * is written by whoever wrote the server, and `token`, `apiKey`,
+ * `session_token` and `attempted_token` all need to match through one rule.
+ * The 8-character floor on the value is what keeps an ordinary `"token_type":
+ * "Bearer"` or a short test fixture out of the mask — long enough that a
+ * ordinary order id or UUID, which never has one of these names in the first
+ * place, was never the target.
+ */
+const SECRET_FIELD =
+  /("[^"\\]*(?:key|token|secret|password|passwd|pwd|credential|apikey)[^"\\]*"\s*:\s*")([^"\\]{8,})(")/gi;
+
+/**
+ * Redact secret-shaped content inside a body, independent of `compactBody`'s
+ * size and pass/fail decisions.
+ *
+ * `compactBody` decides whether a body is short enough, or diagnostic enough,
+ * to keep verbatim — neither question is "does it contain a credential", and a
+ * `{"session_token":"sTok_live_…"}` success body under `SCHEMA_THRESHOLD` or a
+ * `{"attempted_token":"Bearer eyJ…"}` failure body under `DIAGNOSTIC_LIMIT`
+ * both passed every existing gate untouched. This runs on a body only after
+ * one of those gates has already decided it survives, and masks what looks
+ * like a secret regardless of what let it through.
+ *
+ * Three shapes, chosen to be conservative the same way `SECRET_PARAM` above
+ * is: a false negative here costs nothing new — the body was already going
+ * out untouched — but a false positive costs a reader a value they needed, so
+ * each pattern only fires on a shape an ordinary field (an order id, a UUID, a
+ * short status string) cannot produce.
+ */
+export function redactSecretShapes(text: string): string {
+  if (typeof text !== 'string' || !text) return text;
+
+  return text
+    .replace(JWT, MASK)
+    .replace(BEARER, `Bearer ${MASK}`)
+    .replace(SECRET_FIELD, (_match, prefix: string, _value: string, suffix: string) => `${prefix}${MASK}${suffix}`);
+}
