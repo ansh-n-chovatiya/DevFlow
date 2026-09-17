@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.1.3 — 2026-09-17
 
 **Body-content secret redaction had no off switch, and no way to know it existed.** `redactSecretShapes` ran unconditionally with nothing in Settings naming it. A new `network.redactSecrets` field (on by default) is the only way to turn it off — per this repo's own rule, a setting not in the field table doesn't exist, and now it does.
 
