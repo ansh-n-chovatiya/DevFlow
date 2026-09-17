@@ -44,10 +44,13 @@ permissions:
 jobs:
   decide:
     runs-on: ubuntu-latest
-    # `cut-release.mjs` pushes the version bump back to main with GITHUB_TOKEN,
-    # and GitHub does not start a new run for a push made with that token — so
-    # the loop is closed by the platform. The message check is belt and braces:
-    # it also covers a human pushing the release commit by hand.
+    # `cut-release.mjs` pushes the version bump back to main authenticated as
+    # RELEASE_PAT (release.yml), not GITHUB_TOKEN — a real user's push, which
+    # does start a new run, unlike a GITHUB_TOKEN-authenticated one. So this
+    # message check is the only thing closing the loop now, not a platform
+    # backstop with this as a belt-and-braces second layer. It also covers a
+    # human pushing the release commit by hand, which is why it was here even
+    # before the token changed.
     if: >-
       !contains(github.event.head_commit.message, '[skip release]') &&
       !startsWith(github.event.head_commit.message, 'v')
