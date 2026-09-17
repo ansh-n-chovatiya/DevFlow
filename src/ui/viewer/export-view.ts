@@ -315,7 +315,10 @@ export function deriveExportView(input: ExportInput): ExportView {
     },
   ];
 
-  const name = sanitizeFilename(input.filename.trim() || defaultFilename());
+  // The clock is read here, not in `core/flow`: a default `new Date()` inside
+  // the pure tree is the ADR 0001 violation report.md §3.6 P2 found, and the
+  // UI layer is the edge that is allowed to ask what day it is.
+  const name = sanitizeFilename(input.filename.trim() || defaultFilename(new Date()));
 
   return {
     formats,

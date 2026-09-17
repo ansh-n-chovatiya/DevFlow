@@ -311,6 +311,31 @@ const ARKG_RETENTION_DAYS =
     : 90;
 
 /**
+ * How long a write to the knowledge graph waits for another process to finish.
+ *
+ * SQLite locks the database, not the connection, and this server is explicitly
+ * built for there being a second one: `EADDRINUSE` on the receiver port is a
+ * handled, ordinary state, and the process that lost that race still opens the
+ * same `arkg.db`. Without a busy timeout the loser's first overlapping write
+ * throws `SQLITE_BUSY` immediately, `arkgTry` swallows it, and an observation
+ * is dropped for a lock that was held for microseconds.
+ *
+ * Five seconds because the collisions this covers are transient by
+ * construction — one ingest's transaction, not a long read — so the timeout is
+ * never actually spent. It is a ceiling on how long a write may wait, not a
+ * delay anything pays: what it buys is that a contended write succeeds rather
+ * than being reported as no graph at all. The ceiling still matters, because
+ * better-sqlite3 is synchronous and a wait here blocks this process's event
+ * loop; five seconds is the longest that may cost a tool call, and a lock held
+ * longer than that is a stuck process rather than a busy one.
+ *
+ * The same budget bounds `arkgTry`'s retry, which is the half of this that
+ * covers `arkg.js`'s deferred transactions — see the header there for why a
+ * pragma alone cannot.
+ */
+const ARKG_BUSY_TIMEOUT_MS = 5000;
+
+/**
  * How long a directory with no readable `meta.json` is left alone.
  *
  * `meta.json` is written last, so its absence means either a save happening
@@ -568,7 +593,53 @@ function retention() {
   return {
     maxFlows: MACHINE_RESOLVED['mcp.maxFlows'],
     maxFlowBytes: MACHINE_RESOLVED['mcp.maxFlowBytes'],
+    maxFlowAgeDays: maxFlowAgeDays(),
   };
+}
+
+/**
+ * How long a recording is kept at all, in days. Zero is off, and is the default.
+ *
+ * The two caps above are a runaway guard and say so: they bound how much disk a
+ * library may take and nothing else. A developer who stays under them — which
+ * is most developers, for years — keeps every recording they have ever made,
+ * including the one whose network body captured a token. Age is the axis that
+ * answers that, and it is the only one that can: no size is reached, no count
+ * is reached, and the flow is simply old.
+ *
+ * Off unless asked for, because this one deletes recordings that are inside
+ * every ceiling the user set. A capability, not a change of behaviour for an
+ * installation that has been running for a year.
+ *
+ * ### Why this is not read from the field table
+ *
+ * It should be, and `mcp.maxFlows` beside it is the shape it wants: machine-wide,
+ * in `src/features/settings/fields.ts`, written by `POST /config`, with the
+ * Settings screen drawing the input and `resolve()` clamping it. The first line
+ * below is that version already — the day the key is in the table, it is what
+ * answers and the rest is dead. Until then the knob is the environment and a
+ * hand-edited `config.json`, clamped here, which is exactly the state
+ * `ARKG_RETENTION_DAYS` documents above and for the same reason: adding a key to
+ * the table is not a change this file can make on its own.
+ *
+ * Precedence is the chain the rest of this file follows — environment over
+ * file — and anything that is not a usable number of days is no answer at all
+ * rather than a guessed one.
+ */
+function maxFlowAgeDays() {
+  const resolved = MACHINE_RESOLVED['mcp.maxFlowAgeDays'];
+  if (typeof resolved === 'number') return clampDays(resolved);
+
+  const fromEnv = clampDays(Number(process.env.DEVFLOW_MAX_FLOW_AGE_DAYS));
+  if (fromEnv) return fromEnv;
+
+  return clampDays(Number(MACHINE_SETTINGS['mcp.maxFlowAgeDays']));
+}
+
+/** A number of days, or 0 for "no age limit" — which everything else reads as off. */
+function clampDays(value) {
+  if (!Number.isFinite(value) || value < 1) return 0;
+  return Math.min(Math.round(value), 3650);
 }
 
 /**
@@ -659,7 +730,15 @@ function log(message) {
 let arkg = null;
 try {
   arkg = await import('./arkg.js');
-  arkg.openArkg(ARKG_DB);
+  /*
+   * The connection is set up here rather than inside `openArkg`, because
+   * `busy_timeout` is a property of *this process's* patience and not of the
+   * schema: the tests open the same database to read it and must not inherit a
+   * five-second stall from the server's needs. `openArkg` returns the handle
+   * for exactly this — see `ARKG_BUSY_TIMEOUT_MS` for what it is worth.
+   */
+  const db = arkg.openArkg(ARKG_DB);
+  db?.pragma?.(`busy_timeout = ${ARKG_BUSY_TIMEOUT_MS}`);
   log(`knowledge graph at ${ARKG_DB} — keeping ${ARKG_RETENTION_DAYS} days`);
 } catch (error) {
   arkg = null;
@@ -675,15 +754,59 @@ try {
  * by somebody who did not know it was one. `fallback` is what the caller sees
  * when there is no graph and when the graph threw, which are the same thing to
  * everyone upstream.
+ *
+ * ## Why a lock collision is retried rather than reported
+ *
+ * `busy_timeout` on the connection covers a statement that goes straight for
+ * the write lock, and it does not cover the shape `arkg.js` actually writes in:
+ * every multi-statement write is a `db.transaction(...)`, which begins
+ * *deferred*, reads first, and then asks to upgrade to a writer. SQLite refuses
+ * that upgrade immediately and does not run the busy handler — it cannot,
+ * because two readers both waiting to upgrade is a deadlock — so a second
+ * process holding the write lock for a millisecond turned into "flow ingest
+ * failed (database is locked)" and an observation that was simply dropped.
+ * Measured: deferred fails in 0ms where the identical transaction begun
+ * immediately waits 789ms and commits.
+ *
+ * So the wait lives here instead, on the one call site everything goes through.
+ * Safe to repeat because `SQLITE_BUSY` means the transaction did not commit —
+ * better-sqlite3 has already rolled it back — so the retry re-runs work that
+ * did not happen. Bounded by the same budget the pragma uses, and a collision
+ * that outlasts it still degrades exactly as before: logged once, fallback
+ * returned, nothing else in the process affected.
  */
 function arkgTry(what, run, fallback = null) {
   if (!arkg) return fallback;
-  try {
-    return run(arkg);
-  } catch (error) {
-    log(`knowledge graph: ${what} failed (${error.message})`);
-    return fallback;
+
+  const deadline = Date.now() + ARKG_BUSY_TIMEOUT_MS;
+  let wait = 20;
+
+  for (;;) {
+    try {
+      return run(arkg);
+    } catch (error) {
+      if (error?.code === 'SQLITE_BUSY' && Date.now() + wait < deadline) {
+        sleepSync(wait);
+        wait = Math.min(wait * 2, 250);
+        continue;
+      }
+      log(`knowledge graph: ${what} failed (${error.message})`);
+      return fallback;
+    }
   }
+}
+
+/**
+ * Block this process for `ms`.
+ *
+ * Deliberately synchronous, and only ever reached from `arkgTry`'s retry:
+ * better-sqlite3 is a synchronous API, so the call being retried would have
+ * blocked the event loop for the same span had `busy_timeout` been able to wait
+ * for it. An `await` here would be worse rather than better — it would let a
+ * second tool call start against a graph the first is mid-retry on.
+ */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 // ── The checkout a recording is stamped from ────────────────────────────────
@@ -1533,10 +1656,120 @@ function compareFlows(working, broken, labels = RUN_LABELS) {
 /** Sections the extension can leave out of a send, in the order it names them. */
 const OMITTABLE = ['images', 'network', 'logs', 'react'];
 
+/**
+ * The save in flight for a flow id, so the next one waits for it.
+ *
+ * Each of `flow.json`, `flow.md` and `meta.json` is written atomically, which
+ * is what stops a reader seeing half a file — and says nothing at all about two
+ * saves of the *same id* overlapping. The extension creates exactly that race
+ * itself: stopping a recording fires an auto-export that is deliberately not
+ * awaited, while the review tab's **Send** reuses the same id on purpose, so
+ * that sending is an update rather than a second copy. With both in flight,
+ * each file's rename is won by whichever request happened to finish it last —
+ * `flow.json` from one send, `meta.json` from the other — and `list_flows`
+ * then reports a step count that `get_flow` does not return. Worse, the two
+ * write through the same sibling temp path (`flow.json.tmp`), so the loser's
+ * rename can fail outright on a file the winner already moved, and a save the
+ * extension was told succeeded did not.
+ *
+ * Keyed on the id rather than global, because serialising *every* save would
+ * make two unrelated recordings wait on each other's screenshot writes for no
+ * reason — the shared resource is one directory, and nothing else.
+ *
+ * The entry is deleted once it is the tail of its own chain, so a long-lived
+ * server does not accumulate one promise per recording it has ever received.
+ */
+const flowSaves = new Map();
+
+function withFlowLock(id, run) {
+  const queued = flowSaves.get(id);
+  // Uncontended, the work starts on this tick — `queued.then(run)` would defer
+  // it by a microtask, and an ordinary single save must be exactly what it was
+  // before this existed.
+  let mine;
+  if (queued) {
+    mine = queued.then(run);
+  } else {
+    try {
+      mine = Promise.resolve(run());
+    } catch (error) {
+      mine = Promise.reject(error);
+    }
+  }
+
+  // A failed save must not wedge the id: the chain records that this one
+  // finished, not whether it worked.
+  const settled = mine.then(
+    () => {},
+    () => {},
+  );
+  flowSaves.set(id, settled);
+  void settled.then(() => {
+    if (flowSaves.get(id) === settled) flowSaves.delete(id);
+  });
+  return mine;
+}
+
+/**
+ * The secret-shape scan `compactBody` already runs, applied to one string.
+ *
+ * `compactBody` with an unreachable threshold and no truncation flag returns
+ * `redactSecretShapes(body)` and does nothing else — no schema, no cut, no
+ * stamp — so this is the *same* pass over the same patterns rather than a
+ * second copy of them living here, which is the only way the two can stay in
+ * agreement. The patterns themselves are not exported from `core.js`; if they
+ * ever are, this is one line.
+ */
+const scrubSecrets = (body) =>
+  typeof body === 'string' && body
+    ? compactBody(body, {}, { threshold: Number.MAX_SAFE_INTEGER })
+    : body;
+
+/**
+ * Mask secret-shaped content in a step's bodies before it reaches the disk.
+ *
+ * Defence in depth, and deliberately not a replacement for the client-side
+ * pass: the extension compacts and scrubs before it sends, and that pass sees
+ * things this one cannot. But it is the *only* pass in the system, and this
+ * endpoint is reachable by anything that can make a loopback request — a curl,
+ * a script, a second tool posting recordings of its own — none of which ran it.
+ * A body written raw here is written to `flow.json` forever and handed to the
+ * model on the next `get_flow_errors`, which is the incident this whole class
+ * of redaction exists because of.
+ *
+ * Bodies only. Header and URL redaction happen at capture, where the header
+ * names and the query string still exist as such.
+ */
+function scrubStepBodies(step) {
+  const calls = step.networkCalls;
+  if (!Array.isArray(calls) || calls.length === 0) return step;
+
+  return {
+    ...step,
+    networkCalls: calls.map((call) => {
+      if (!call || typeof call !== 'object') return call;
+      const scrubbed = { ...call };
+      if (typeof scrubbed.requestBody === 'string') {
+        scrubbed.requestBody = scrubSecrets(scrubbed.requestBody);
+      }
+      if (typeof scrubbed.responseBody === 'string') {
+        scrubbed.responseBody = scrubSecrets(scrubbed.responseBody);
+      }
+      return scrubbed;
+    }),
+  };
+}
+
 async function saveFlow(flow, git = null) {
   const dir = flowDir(flow.id);
   if (!dir) throw new Error(`Invalid flow id: ${flow.id}`);
 
+  // The id is validated first, so a rejected one never takes a lock — a caller
+  // posting garbage ids must not be able to grow the map by one entry each.
+  return withFlowLock(flow.id, () => writeFlow(flow, dir, git));
+}
+
+async function writeFlow(flow, dir, git = null) {
   const omitted = Array.isArray(flow.omitted)
     ? OMITTABLE.filter((section) => flow.omitted.includes(section))
     : [];
@@ -1550,7 +1783,11 @@ async function saveFlow(flow, git = null) {
     // `screenshotFile` is discarded with the images: it is this server's own
     // field, and a payload that arrives carrying one is not describing a
     // picture it sent — it is naming a path for `screenshotPath` to read back.
-    const { screenshot, screenshotOriginal, screenshotFile: _claimed, ...rest } = step;
+    const { screenshot, screenshotOriginal, screenshotFile: _claimed, ...bare } = step;
+    // Before the step is staged for writing, not after: everything below this
+    // line either writes `rest` to disk or reads a screenshot off it, and a
+    // body that reaches either of those unscrubbed has already escaped.
+    const rest = scrubStepBodies(bare);
     // The annotated image, which carries a highlight around the element that
     // was clicked. The clean original is the fallback, not the preference —
     // knowing *which* button was pressed is most of a screenshot's value here.
@@ -1838,9 +2075,30 @@ async function enforceRetention(keepId) {
 
   // Read here rather than at import, so a cap changed through `POST /config`
   // governs this sweep and not the one after the next restart.
-  const { maxFlows, maxFlowBytes } = retention();
+  const { maxFlows, maxFlowBytes, maxFlowAgeDays: ageDays } = retention();
+
+  /*
+   * The age cut-off, or 0 for "keep regardless of age".
+   *
+   * A flow whose `timestamp` is missing or unreadable reads as 0 here and is
+   * never aged out: "recorded at the epoch" is not a claim any recording makes,
+   * it is a meta.json this server could not understand, and deleting on the
+   * strength of a field it failed to parse is the one mistake a retention sweep
+   * may not make.
+   */
+  const oldest = ageDays > 0 ? Date.now() - ageDays * 24 * 60 * 60 * 1000 : 0;
 
   for (const flow of flows) {
+    // Before the caps, and not subject to them: this is the eviction that
+    // happens when the store is nowhere near full. `keepId` is already out of
+    // this list, so the flow that was just saved is never aged out by its own
+    // sweep however old the recording behind it is.
+    if (oldest && flow.at > 0 && flow.at < oldest) {
+      await fs.rm(flow.dir, { recursive: true, force: true }).catch(() => {});
+      evicted.push({ id: flow.id, reason: 'age' });
+      continue;
+    }
+
     count += 1;
     bytes += flow.bytes;
     if (count <= maxFlows && bytes <= maxFlowBytes) continue;

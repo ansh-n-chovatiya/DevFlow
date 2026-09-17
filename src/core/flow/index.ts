@@ -28,8 +28,15 @@ export function sanitizeFilename(name: string): string {
   );
 }
 
-/** Default export filename: `devflow-flow-2026-08-15`. */
-export function defaultFilename(now = new Date()): string {
+/**
+ * Default export filename: `devflow-flow-2026-08-15`.
+ *
+ * `now` is required rather than defaulted to `new Date()`. A default parameter
+ * is still a clock read inside `core/` — ADR 0001, report.md §3.6 P2 — and it
+ * hides from every caller that the result is a function of the day, so the one
+ * UI call site now reads the clock where the clock lives.
+ */
+export function defaultFilename(now: Date): string {
   return `devflow-flow-${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
 }
 

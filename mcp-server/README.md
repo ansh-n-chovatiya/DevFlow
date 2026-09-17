@@ -72,6 +72,16 @@ Then record a flow in DevFlow and press **Send to Claude**. It lands in
 | `get_flow_screenshots` | Images inline, when reading files from disk isn't possible |
 | `get_latest_flow` | The recording you just made |
 | `compare_flows` | A run that worked beside one that did not |
+| `compare_flows_across_deploys` | Two recordings of one flow made at two different commits, and what shipped between them |
+| `replay_flow` | Run a recorded journey again with your own Playwright, and say whether it still passes |
+| `diagnose_failure` | Everything one recording says about what broke, plus whether it has failed before |
+| `get_causal_chain` | What led to one event in a recording, walked backwards to the interaction |
+| `get_effects_of` | What followed from one event, walked forwards — the same graph as `get_causal_chain` |
+| `get_state_patch` | How the app's own state changed across a step or a range of steps, as a JSON Patch |
+| `get_value_provenance` | Where one on-screen value came from — response, store, component, element, and backend trace |
+| `get_backend_trace` | The span tree your backend exported for one traced request |
+| `explain_feature` | Which components, endpoints, files, flows and stores a description points at |
+| `suggest_actions` | What can be done on a page, drawn only from what recordings actually did |
 | `get_app_architecture` | What every recording together says about the app |
 | `get_component_history` | Everything observed about one component |
 | `get_anomalies` | What has started failing or slowing recently |
@@ -122,6 +132,135 @@ exercised.
 They are meant to be used in that order rather than all at once:
 `get_flow_summary` costs about a fiftieth of `get_flow`, so finding out whether a
 recording is the one you want is nearly free.
+
+`compare_flows_across_deploys` extends `compare_flows` across time instead of
+across two separate recordings. Give it a flow — its name as `list_flows`
+reports it, or the id of any one recording of it — and, optionally, two
+commits, and it returns the same runtime comparison `compare_flows` gives
+(where the runs diverge, which endpoints answered differently, which errors
+are new) for the two most recent recordings of that flow, plus the commits
+that shipped between the two builds and which of the files they changed
+DevFlow has actually watched code run in. That last list is a shortlist to
+read first, never a cause. It needs recordings made after commit stamping —
+see [The commit a flow was recorded at](#the-commit-a-flow-was-recorded-at).
+
+```json
+{ "flow": "checkout", "sha": "a1b2c3d", "otherSha": "e4f5a6b" }
+```
+
+Omitting `sha` and `otherSha` compares the two most recent recordings of the
+named flow.
+
+`get_causal_chain` and `get_effects_of` are one graph walked in opposite
+directions. `get_causal_chain` walks backwards from one event in a
+recording — a console error, a network call, a state change — to the
+interaction it came from; `get_effects_of` walks the same graph forwards from
+an event to what followed it: the requests a click made, the state they were
+echoed into, the errors that followed. Both name the evidence behind every
+link rather than presenting a guess as a fact: `attributed` is temporal
+containment and nothing more (a timer poll lands in the same place as a
+click's own request), `named` means the log line names the request's own
+path, `echoed` means a response value turned up in what a store was written
+with, and `followed` is ordering after a failed call and nothing else. Both
+take an event ref — `"step:3"`, `"net:3.1"`, `"log:3.2"`,
+`"state:3/redux:0/0"` — and list the refs worth asking about when `event` is
+omitted; `depth` caps how far each walks (default 8 — honest chains run two
+or three links).
+
+```json
+{ "id": "flow-1755000000000", "event": "net:3.1", "depth": 4 }
+```
+
+`get_state_patch` answers what the app's own state did across one step or a
+range of steps, as an RFC 6902 JSON Patch. DevFlow samples state rather than
+watching it continuously: each recognised store (Redux, Zustand, React Query,
+React context) is read once when an interaction is dispatched and once after
+the app settles, so a value that changed and changed back inside that window
+shows no change at all, and the reply says which of "state was never
+captured", "no store was recognised" and "no store moved" applies — only the
+last one is a statement about the application. Pass `step` for one step, or
+`from`/`to` for a range (passing both is refused); pass `store` — the id this
+tool prints, or the label the page gave it — to see only one store.
+
+```json
+{ "id": "flow-1755000000000", "from": 2, "to": 5, "store": "redux:0" }
+```
+
+`explain_feature` takes a description in your own words — "the checkout
+flow", "cart badge", "invoice totals" — and returns the components,
+endpoints, source files, recorded flows and stores whose names overlap it,
+each expanded one hop through the accumulated graph so a matched component
+also surfaces the endpoint it calls and the file it was written in. The match
+is lexical, not semantic: it lower-cases the description, cuts it into words
+and looks for those words in names and paths, so a component called `Cart`
+matches "cart" whether or not it has anything to do with a shopping cart, and
+a feature named `PurchaseFlow` is not found by "checkout" at all. Silence
+means your words did not overlap the code's, never that the feature is
+absent. `limit` caps how many matches are expanded (default 8; the reply
+counts anything beyond it).
+
+```json
+{ "description": "the checkout flow", "limit": 8 }
+```
+
+`suggest_actions` lists what can be done on a page, according to every
+recording DevFlow holds of it: the clicks and the fields, with the selector
+the recorder chose and the value that was actually typed, folded across
+flows so the action three recordings performed is one row saying three.
+Nothing here is invented — DevFlow has no model of your application, so a
+control nobody has ever touched does not appear, which is the point rather
+than a limitation: for reproducing a bug, the things people actually do on a
+page are a better starting set than anything guessed, and each one comes with
+a selector that resolved at least once. Filter with `url` (compared on
+origin and path, so a query string does not split one page into several),
+`component` (an id from `get_app_architecture` or a flow's component table),
+or both; `limit` caps how many actions come back (default 20).
+
+```json
+{ "url": "https://app.example.com/checkout", "limit": 10 }
+```
+
+`replay_flow` runs a recorded journey again, in your project, with your own
+Playwright, and says whether it still does what it did when it was recorded.
+It is the only tool here that **executes code on this machine**, so it stays
+off until the server is started with `DEVFLOW_REPLAY=1`; called while off, it
+says exactly that rather than failing quietly. It compiles the flow to the
+same spec the extension's own export produces, writes it under
+`.devflow/replays/` in your project, and runs your project's own
+`node_modules` copy of Playwright — it will not install one. The reply
+distinguishes a replay that passed, one that failed, one where no test ran
+and one where the runner never produced a readable report, because a crashed
+runner reported as a pass is how a repair loop concludes a fix worked when it
+did not. When the original recording carried failures, the reply says
+whether the replay reproduced them, which is the check to run after making a
+change. `timeoutMs` bounds how long the run may take (default 120000 — a
+replay still going after that is waiting on something that is not coming).
+
+```sh
+DEVFLOW_REPLAY=1 npx devflow-server   # start the server with replay switched on
+```
+
+```json
+{ "id": "flow-1755000000000", "timeoutMs": 60000 }
+```
+
+`diagnose_failure` is what to reach for once a recording has failures and you
+want more than the message: for each one it gives the component the step was
+attributed to and the file it was written in, the causal evidence leading
+back to the interaction — the same evidence `get_causal_chain` names — and,
+the part no single recording can supply on its own, whether the thing that
+failed has failed before, and how often, from the accumulated graph. An
+endpoint that has failed twice in a hundred and forty observations and failed
+here points somewhere different from one that fails six times in ten, and the
+graph is the only thing that can tell those apart. It names no cause: every
+link carries the basis it rests on, "we have never seen this fail" and "we
+have not seen it enough to say" are kept as different answers, and whatever
+the recording cannot decide is left undecided. Omit `id` for the most recent
+recording; `limit` caps how many failures it diagnoses (default 5).
+
+```json
+{ "id": "flow-1755000000000", "limit": 3 }
+```
 
 Screenshots are written to disk and referenced by absolute path. Claude Code
 reads them with its own file tools, one at a time, so a 500-step recording costs

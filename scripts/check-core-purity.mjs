@@ -49,15 +49,24 @@
  * `const chrome = globalThis.chrome`, which is why `globalThis` itself is banned
  * below rather than just its DOM-flavoured properties.
  *
- * ## What this does not check
+ * ## The clock, and why it is not in `BANNED`
  *
- * ADR 0001 also forbids a clock and randomness, and that half is deliberately
- * absent: `core/flow/index.ts`'s `defaultFilename(now = new Date())` violates it
- * today (report.md §3.6 P2, a separate finding and a separate fix). Turning the
- * rule on before the violation is fixed would land a gate that is red on arrival
- * — so `CLOCK` below is written out, unenforced, ready for the change that
- * removes that default parameter. `tests/audit-core-purity.test.ts` pins that
- * the list is still one line away from being live.
+ * ADR 0001 also forbids a clock and randomness. That half sat here unenforced
+ * until `core/flow/index.ts`'s `defaultFilename(now = new Date())` was fixed
+ * (report.md §3.6 P2); it is live now, but not as a banned identifier, because
+ * `Date` is not what impurity looks like. Six modules in `core/` read `Date`
+ * today and every one of them is pure: `deploy/`, `forensics/`, `telemetry/`,
+ * `export/markdown.ts` and `export/json.ts` write `now?: Date` as a type or
+ * format a timestamp they were handed with `new Date(ms)`, and `state/snapshot`
+ * calls `Date.prototype.toISOString` on a value it was given. Banning the name
+ * would report all six and the gate would be off by Friday.
+ *
+ * What is impure is the *zero-argument* call — the one that asks the host what
+ * time it is, or for a number nobody passed in: `new Date()` with no arguments,
+ * `Date.now`, `performance.now`, `Math.random`, `crypto.randomUUID`. So the
+ * arguments decide for the constructor, and `CLOCK` below keys the rest by the
+ * member rather than the object. `Date.parse(s)` and `new Date(ms)` stay legal
+ * for the same reason they are pure: the instant comes in as an argument.
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
@@ -111,12 +120,23 @@ const BANNED = new Map([
 ]);
 
 /**
- * The other half of ADR 0001, held back until §3.6 P2 is fixed.
+ * The other half of ADR 0001: the clock and randomness, keyed by member.
  *
- * Written here rather than in a comment so that turning it on is adding one
- * name to `BANNED`, not rediscovering which names were meant.
+ * `Date`, `performance`, `Math` and `crypto` are all fine to name — see the
+ * header. `Date.now` is not, and neither is a `new Date()` with nothing in the
+ * parentheses, which `clockRead()` below handles separately because there the
+ * arguments are the rule.
  */
-export const CLOCK = ['Date', 'performance', 'Math.random', 'crypto'];
+export const CLOCK = new Map([
+  ['Date.now', 'the clock; take the timestamp as an argument, or read it in src/features/'],
+  ['performance.now', 'the clock; take the timestamp as an argument, or read it in src/features/'],
+  ['Math.random', 'randomness; take the value as an argument, or generate it in src/features/'],
+  ['crypto.randomUUID', 'randomness; take the id as an argument, or generate it in src/features/'],
+  [
+    'crypto.getRandomValues',
+    'randomness; take the bytes as an argument, or generate them in src/features/',
+  ],
+]);
 
 /** Directories under `src/` that exist precisely because they are not pure. */
 const IMPURE_DIRS = ['chrome', 'background', 'content', 'injected', 'ui', 'features'];
@@ -185,6 +205,42 @@ function isName(node) {
   return parent.name === node && !ts.isShorthandPropertyAssignment(parent);
 }
 
+/**
+ * The clock or randomness this node reads, as a message, or null.
+ *
+ * Two shapes, and the difference between them is the entire rule. `new Date()`
+ * with no arguments asks the host for the time; `new Date(ms)` formats an
+ * instant the caller passed in, and `now?: Date` names a type — both pure, both
+ * present in `core/` today. The rest are flagged on the property access rather
+ * than on the call, so that `const now = Date.now;` followed by `now()` two
+ * lines later is not a way around the gate.
+ *
+ * `shadowed` is the same file-scoped exemption `BANNED` uses: a module that
+ * declares its own `Date` or `performance` is talking about its own binding.
+ */
+function clockRead(node, shadowed) {
+  if (
+    ts.isNewExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === 'Date' &&
+    !shadowed.has('Date') &&
+    (node.arguments?.length ?? 0) === 0
+  ) {
+    return (
+      'constructs `new Date()` with no argument — the host clock; construct from an ' +
+      'explicit timestamp, or read the clock in src/features/'
+    );
+  }
+
+  if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
+    const name = `${node.expression.text}.${node.name.text}`;
+    const why = CLOCK.get(name);
+    if (why && !shadowed.has(node.expression.text)) return `reads \`${name}\` — ${why}`;
+  }
+
+  return null;
+}
+
 /** The module specifier of any import or export that names one. */
 function specifierOf(node) {
   if (
@@ -234,6 +290,12 @@ for (const file of modules) {
       }
     }
 
+    const clock = clockRead(node, shadowed);
+    if (clock) {
+      const { where, text: line } = at(node);
+      errors.push(`${where} ${clock}\n      ${line}`);
+    }
+
     const specifier = specifierOf(node);
     if (specifier) {
       if (BUILTIN.test(specifier)) {
@@ -265,6 +327,8 @@ if (errors.length) {
     '\ncore/ is bundled into mcp-server/core.js and imported by a Node process\n' +
       'with no chrome object, no window and no DOM. A reference like this passes\n' +
       'the build and throws on the server’s first tool call that reaches it.\n' +
+      'A clock or a random number does not throw there — it quietly makes the\n' +
+      'same input give a different answer twice, which is worse to find.\n' +
       'Pass the capability in as an argument, or put it behind a provider in\n' +
       'src/features/. See ADR 0001 (.ctx/decisions/0001-src-core-stays-pure.md).',
   );

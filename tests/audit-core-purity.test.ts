@@ -269,33 +269,89 @@ describe('the one deliberate crossing into src/features/', () => {
   });
 });
 
-describe('the half of ADR 0001 this gate does not enforce yet', () => {
+describe('the other half of ADR 0001: the clock and randomness', () => {
   /*
-   * The ADR also forbids a clock and randomness, and `core/flow/index.ts`'s
-   * `defaultFilename(now = new Date())` breaks it today — report.md §3.6 P2, a
-   * separate finding. Turning the rule on now would land a gate red on arrival,
-   * so the names are written out unenforced. This pins that they are still
-   * written out, so the fix for P2 finds them instead of rediscovering them.
+   * The names live in the script rather than in a comment, so the rule and the
+   * thing the rule is about cannot drift apart. `§3.6 P2` stays cited because
+   * `defaultFilename(now = new Date())` is why this half shipped unenforced for
+   * a release, and a reader who finds the table deserves the reason it exists.
    */
-  it('still names the clock it is waiting on', () => {
+  it('still names the clock it enforces', () => {
     const source = read('scripts/check-core-purity.mjs');
 
-    expect(source).toMatch(/export const CLOCK = \[/);
+    expect(source).toMatch(/export const CLOCK = new Map\(/);
     expect(source).toContain("'Math.random'");
     expect(source).toContain('§3.6 P2');
   });
 
   /*
-   * Written as an equivalence rather than as "this file still says
-   * `new Date()`", so that fixing P2 does not break this test for the wrong
-   * reason: it fails on the day the violation goes and the rule has not been
-   * turned on, which is the only day the deferral stops being justified.
+   * Kept as the equivalence unit 19 wrote — the rule is enforced exactly when
+   * the violation is absent — because it is the assertion that fails in either
+   * direction: on the day someone reintroduces a defaulted clock into `core/`
+   * with the gate still on, and on the day someone switches the gate off to
+   * make one land. It now resolves to `true === !false`, which is the fix.
    */
-  it('defers the clock rule exactly as long as the violation exists', () => {
+  it('enforces the clock rule now that the violation it waited on is gone', () => {
     const violation = read('src/core/flow/index.ts').includes('now = new Date()');
     const enforced = core('export const a = () => Date.now();\n').code === 1;
 
+    expect(violation).toBe(false);
     expect(enforced).toBe(!violation);
+  });
+
+  it('requires the caller to supply the date it used to default', () => {
+    expect(read('src/core/flow/index.ts')).toContain('export function defaultFilename(now: Date)');
+    expect(read('src/ui/viewer/export-view.ts')).toContain('defaultFilename(new Date())');
+  });
+
+  it.each([
+    ['new Date()', 'export const a = () => new Date();\n'],
+    // `new Date` without the parentheses is the same clock read.
+    ['a parenthesis-free new Date', 'export const a = () => new Date;\n'],
+    ['Date.now()', 'export const a = () => Date.now();\n'],
+    ['performance.now()', 'export const a = () => performance.now();\n'],
+    ['Math.random()', 'export const a = () => Math.random();\n'],
+    ['crypto.randomUUID()', 'export const a = () => crypto.randomUUID();\n'],
+    // Flagged on the property access, not the call, so lifting the function out
+    // to a local is not a way around the gate.
+    ['the clock aliased to a local', 'const n = Date.now;\nexport const a = () => n();\n'],
+  ])('fails %s', (_what, body) => {
+    expect(core(body).code).toBe(1);
+  });
+
+  /*
+   * The reason the rule is the zero-argument *call* and not the name `Date`:
+   * every line below is pure, and every line below exists in `core/` today. A
+   * gate that banned the identifier would report all of them.
+   */
+  it.each([
+    ['a timestamp passed in', 'export const a = (ms: number) => new Date(ms).toISOString();\n'],
+    ['Date as a type annotation', 'export interface A {\n  now?: Date;\n}\n'],
+    ['a date parsed from a string', 'export const a = (s: string) => Date.parse(s);\n'],
+    [
+      'a prototype method borrowed onto a value',
+      'export const a = (o: object) => Date.prototype.toISOString.call(o as Date);\n',
+    ],
+    ['the pure half of Math', 'export const a = (x: number[]) => Math.max(...x);\n'],
+    ['a locally declared Date', 'const Date = { now: () => 1 };\nexport const a = () => Date.now();\n'],
+  ])('leaves %s alone', (_what, body) => {
+    expect(core(body).code).toBe(0);
+  });
+
+  /*
+   * The same claim against the shipped files rather than against samples of
+   * them: these six are every module in `core/` that names `Date`, and a false
+   * positive on any one of them is how this rule gets switched back off.
+   */
+  it.each([
+    'src/core/deploy/index.ts',
+    'src/core/forensics/index.ts',
+    'src/core/state/snapshot.ts',
+    'src/core/telemetry/index.ts',
+    'src/core/export/markdown.ts',
+    'src/core/export/json.ts',
+  ])('passes %s, which uses Date purely, as shipped', (file) => {
+    expect(gate({ [file]: read(file) }).code).toBe(0);
   });
 });
 
