@@ -53,6 +53,25 @@ Setting up at user scope (`--scope user`) ensures DevFlow is available globally 
 | `npx devflow-server uninstall` | Remove the user-scope registration |
 | `npx devflow-server` | Run the server — what Claude Code does |
 
+**The command name is `devflow-mcp`, not `devflow-server`, if you install globally.**
+This package's `bin` entry — the one thing on this page still named for the npm
+name this server published under before the name freeze above ("the binary...
+keep[s] the name it was published under") — is `devflow-mcp`, while the package
+itself is `devflow-server`. The two invocation paths this leaves:
+
+- **`npx devflow-server ...`** (every command on this page) always works,
+  regardless of the mismatch: `npx` resolves a package name to its sole `bin`
+  entry and runs that, whatever it is called.
+- **`npm install -g devflow-server`** installs a global command named
+  `devflow-mcp`, not `devflow-server` — the natural guess after a global
+  install fails with `command not found`. Run `devflow-mcp` (or
+  `devflow-mcp install`, `devflow-mcp regression`, …) instead.
+
+`npx` is what every instruction above and the one-line installer at the top of
+this file use, so most readers never hit this. It is called out here because
+the mismatch is real and undocumented anywhere else, not because the global
+path is the recommended one.
+
 If a project has its own `.mcp.json` naming `devflow`, that local entry takes precedence inside that directory. `install` detects this and gives you the line to remove it if you want to use the global registration instead.
 
 Then record a flow in DevFlow and press **Send to Claude**. It lands in

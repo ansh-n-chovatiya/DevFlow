@@ -1,0 +1,38 @@
+version: 2
+
+# Two published npm packages live in this one repo, each with its own
+# lockfile (see CLAUDE.md's "Layout" — there are no workspaces, deliberately,
+# because `mcp-server` ships to npm on its own). Dependabot's `directory` is
+# where it reads a manifest and lockfile from, so each gets its own entry
+# rather than one entry silently missing the second lockfile's advisories.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # `npm audit`'s five inherited findings (report.md §3.1) are the reason
+      # this exists at all; a weekly batch PR is easier to review than one PR
+      # per transitive bump, and does not change what gets flagged.
+      production-dependencies:
+        dependency-type: production
+      development-dependencies:
+        dependency-type: development
+
+  - package-ecosystem: npm
+    directory: /mcp-server
+    schedule:
+      interval: weekly
+    groups:
+      production-dependencies:
+        dependency-type: production
+      development-dependencies:
+        dependency-type: development
+
+  # The release workflow holds `contents: write`/`id-token: write` (report.md
+  # §3.5) — keeping the actions it runs current is part of that job's own
+  # blast radius, not a separate concern from the two npm packages above.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

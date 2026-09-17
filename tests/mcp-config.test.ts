@@ -13,7 +13,7 @@
  *   - the origin rule the receiver already had, unchanged;
  *   - a body ceiling of its own, three orders of magnitude under the flow cap;
  *   - one path, no part of which can come from the request;
- *   - three keys, taken from the extension's own field table.
+ *   - four keys, taken from the extension's own field table.
  *
  * Driven against real spawned servers over real HTTP, for the reason
  * `helpers/mcp-server.ts` gives: this file's subject is a process with top-level
@@ -127,11 +127,11 @@ describe('what it writes', () => {
     expect(Object.keys(configOf(session))).toEqual(['mcp.port']);
   });
 
-  it('writes only the three keys the field table marks machine-wide', () => {
+  it('writes only the four keys the field table marks machine-wide', () => {
     // The allow-list is `fields.ts`, imported into the server through
     // `core/mcp-bundle.ts`, so a key renamed there cannot leave the endpoint
     // accepting a name nothing reads.
-    expect([...MACHINE_KEYS]).toEqual(['mcp.port', 'mcp.maxFlows', 'mcp.maxFlowBytes']);
+    expect([...MACHINE_KEYS]).toEqual(['mcp.port', 'mcp.maxFlows', 'mcp.maxFlowBytes', 'mcp.maxFlowAgeDays']);
   });
 });
 
@@ -268,7 +268,7 @@ describe('what bounds it', () => {
     expect(fs.readdirSync(session.home).sort()).toEqual([...before, 'config.json'].sort());
     expect(fs.existsSync(outside)).toBe(false);
     expect(fs.existsSync('/tmp/devflow-escaped')).toBe(false);
-    // Nothing but the three keys survives, and `__proto__` is a key like any
+    // Nothing but the four keys survives, and `__proto__` is a key like any
     // other on the way in and dropped like any other on the way out.
     expect(configOf(session)).toEqual({ 'mcp.maxFlows': '../../devflow-escaped' });
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();

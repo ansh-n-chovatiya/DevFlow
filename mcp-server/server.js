@@ -418,6 +418,7 @@ const ENV_SETTINGS = {
   DEVFLOW_PORT: 'mcp.port',
   DEVFLOW_MAX_FLOWS: 'mcp.maxFlows',
   DEVFLOW_MAX_BYTES: 'mcp.maxFlowBytes',
+  DEVFLOW_MAX_FLOW_AGE_DAYS: 'mcp.maxFlowAgeDays',
 };
 
 /**
@@ -2248,6 +2249,51 @@ async function readBody(req, limit) {
   return { tooLarge: false, text: Buffer.concat(chunks).toString('utf8') };
 }
 
+/**
+ * Bounds how often, not just how much — report.md §3.7 (informational): size
+ * caps exist on every write route above, but nothing bounded frequency, so a
+ * caller past the origin/key checks could still hammer the receiver as fast
+ * as the loopback socket allows.
+ *
+ * A fixed window per source IP, kept in memory. Deliberately not
+ * sophisticated: this is one machine's local receiver (or, in `MCP_MODE=remote`,
+ * one small deployment) fielding one extension's traffic, not a service behind
+ * a load balancer that needs a shared store or a sliding log. `RATE_LIMIT_MAX`
+ * is generous enough that no legitimate caller — the extension's own retries,
+ * or this repo's own tests, which save dozens of flows in a tight loop — is
+ * ever close to it; it exists to turn "unbounded" into "bounded", not to
+ * throttle real use.
+ *
+ * Swept on its own window rather than on every request, so a burst of many
+ * distinct IPs (only reachable in remote mode; loopback is always one) cannot
+ * grow this map forever between sweeps.
+ */
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 300;
+const rateLimitBuckets = new Map();
+
+function rateLimited(req) {
+  const key = req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const bucket = rateLimitBuckets.get(key);
+  if (!bucket || now - bucket.windowStart >= RATE_LIMIT_WINDOW_MS) {
+    rateLimitBuckets.set(key, { count: 1, windowStart: now });
+    return false;
+  }
+  bucket.count += 1;
+  return bucket.count > RATE_LIMIT_MAX;
+}
+
+// `unref()` so a lingering sweep timer never keeps the process alive on its
+// own — the same reason nothing else in this file needing a repeating timer
+// would either.
+setInterval(() => {
+  const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
+  for (const [key, bucket] of rateLimitBuckets) {
+    if (bucket.windowStart < cutoff) rateLimitBuckets.delete(key);
+  }
+}, RATE_LIMIT_WINDOW_MS).unref();
+
 const httpServer = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, DELETE, OPTIONS');
@@ -2259,6 +2305,17 @@ const httpServer = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(200);
     res.end();
+    return;
+  }
+
+  // The write routes below — `/flows`, `/config`, `/webhooks/sentry`,
+  // `/v1/traces`, `/arkg/ingest-component`, `/architecture`, and
+  // `DELETE /flows/:id` — are what this bounds. `GET`/`OPTIONS` (health
+  // checks, the SSE stream itself) are read paths already bounded by what
+  // they can return, not what they accept.
+  if (req.method !== 'GET' && rateLimited(req)) {
+    res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+    res.end(JSON.stringify({ error: 'Too many requests — try again in a minute.' }));
     return;
   }
 

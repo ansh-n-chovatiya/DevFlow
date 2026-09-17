@@ -102,8 +102,8 @@ describe('what is sent, and where', () => {
     expect(configUrl('nonsense')).toBeNull();
   });
 
-  it('is three keys, and the field table is where they are named', () => {
-    expect([...MACHINE_KEYS]).toEqual(['mcp.port', 'mcp.maxFlows', 'mcp.maxFlowBytes']);
+  it('is four keys, and the field table is where they are named', () => {
+    expect([...MACHINE_KEYS]).toEqual(['mcp.port', 'mcp.maxFlows', 'mcp.maxFlowBytes', 'mcp.maxFlowAgeDays']);
     for (const key of MACHINE_KEYS) expect(fieldFor(key)!.consumers).toContain('mcp');
   });
 });

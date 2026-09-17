@@ -18,7 +18,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import * as constants from '../src/shared/constants.js';
-import { DEFAULTS, FIELDS, RECORDED, type SettingKey } from '../src/features/settings/fields.js';
+import {
+  DEFAULTS,
+  FIELDS,
+  MACHINE,
+  RECORDED,
+  RENDERED,
+  type SettingKey,
+} from '../src/features/settings/fields.js';
+import { compactBody } from '../src/core/schema/index.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -70,6 +78,7 @@ const SOURCE: Record<SettingKey, unknown> = {
   'network.bodyCap': constants.BODY_CAP,
   'network.summariseBodies': constants.SUMMARISE_BODIES,
   'network.schemaThreshold': constants.SCHEMA_THRESHOLD,
+  'network.redactSecrets': constants.REDACT_SECRETS,
   // The three that change what the recorded page *sends*. Off and empty, and
   // that is the assertion worth having here more than anywhere else in this
   // table: a `true` reaching either switch by way of a typo would change
@@ -136,6 +145,7 @@ const SOURCE: Record<SettingKey, unknown> = {
   'mcp.maxConsoleEntries': constants.MAX_CONSOLE_ENTRIES,
   'mcp.maxFlows': constants.MCP_MAX_FLOWS,
   'mcp.maxFlowBytes': constants.MCP_MAX_FLOW_BYTES,
+  'mcp.maxFlowAgeDays': constants.MCP_MAX_FLOW_AGE_DAYS,
   'mcp.sendTimeoutMs': constants.SEND_TIMEOUT_MS,
   'mcp.healthTimeoutMs': constants.HEALTH_TIMEOUT_MS,
   'mcp.remoteTimeoutMs': constants.REMOTE_TIMEOUT_MS,
@@ -203,6 +213,95 @@ describe('the trace headers ship off, whichever file is edited', () => {
 });
 
 /**
+ * The switch that turns masking *off*, and the four paths it governs.
+ *
+ * `network.redactSecrets` is the opposite shape from the three above: those must
+ * ship off, this one must ship on, and the failure it guards is the same either
+ * way — an upgrade that quietly moves the default. A recording whose body
+ * carried a token is not something the reader can undo later, so the only value
+ * that can ship is the masking one, and the row exists so that turning it off is
+ * a thing somebody chose in the Settings screen rather than a side effect of
+ * turning summarising off, which is what it used to be.
+ *
+ * Asserted through `compactBody` rather than against the flag, because the flag
+ * is not the behaviour: the two gates that let a body through untouched are size
+ * (a body under the schema threshold) and failure (a body on a failed call, the
+ * one `get_flow_errors` reaches for first), and neither of them is a judgement
+ * about whether the body holds a credential.
+ */
+describe('body redaction ships on, and off is the only way to get the bytes', () => {
+  const TOKEN = 'sTok_live_9f3a2b7c4d8e';
+  const body = `{"ok":true,"session_token":"${TOKEN}"}`;
+
+  it('ships on, whichever file is edited', () => {
+    expect(DEFAULTS['network.redactSecrets']).toBe(true);
+  });
+
+  it('masks a body small enough that size alone would have quoted it', () => {
+    expect(compactBody(body)).not.toContain(TOKEN);
+  });
+
+  it('masks a failed call’s body, which is kept whole regardless of size', () => {
+    expect(compactBody(body, { diagnostic: true, bytes: body.length })).not.toContain(TOKEN);
+  });
+
+  it('masks the verbatim path that turning summarising off opens', () => {
+    // Summarising and masking are two decisions. A person who wants the raw
+    // bytes of a serialisation bug did not thereby ask for the token in them.
+    expect(compactBody(body, undefined, { summarise: false })).not.toContain(TOKEN);
+  });
+
+  it('hands every one of those over untouched when the setting is off', () => {
+    const off = { redactSecrets: false };
+    expect(compactBody(body, undefined, off)).toBe(body);
+    expect(compactBody(body, { diagnostic: true, bytes: body.length }, off)).toBe(body);
+    expect(compactBody(body, undefined, { ...off, summarise: false })).toBe(body);
+  });
+
+  it('reads a missing answer as on, so an older flow’s stamp still masks', () => {
+    // A stamp holds overrides only, and one written before this row existed
+    // carries no opinion at all. `undefined` is not `false`.
+    expect(compactBody(body, undefined, { threshold: 4096 })).not.toContain(TOKEN);
+  });
+
+  it('travels with the flow it rendered, not with the recording', () => {
+    // Masking happens on the way out, like summarising: a flow recorded
+    // yesterday is masked under today's answer, and the stamp says which.
+    expect(RENDERED.map((field) => field.key)).toContain('network.redactSecrets');
+    expect(RECORDED.map((field) => field.key)).not.toContain('network.redactSecrets');
+  });
+});
+
+/**
+ * Age-based retention, which is a property of this machine's disk rather than of
+ * any one recording — so it reaches the server through `POST /config`, and the
+ * allow-list that endpoint writes is exactly the `machine` rows of this table.
+ *
+ * `mcp-server/server.js`'s `maxFlowAgeDays()` already prefers
+ * `MACHINE_RESOLVED['mcp.maxFlowAgeDays']` over its environment fallback, with
+ * its own header saying the key is not in the table yet. Registering the row is
+ * what makes that first line answer.
+ */
+describe('the retention TTL is reachable from the Settings screen', () => {
+  it('is a machine setting, not something a flow can carry', () => {
+    expect(MACHINE.map((field) => field.key)).toContain('mcp.maxFlowAgeDays');
+  });
+
+  it('ships off, because it deletes recordings inside every other ceiling', () => {
+    expect(DEFAULTS['mcp.maxFlowAgeDays']).toBe(0);
+  });
+
+  it('cannot ask for an age the server would clamp away', () => {
+    // `clampDays` in server.js caps at 3650; a field whose max was higher would
+    // offer a number the server silently refuses.
+    const field = FIELDS.find((entry) => entry.key === 'mcp.maxFlowAgeDays');
+    expect(field?.type).toBe('number');
+    expect(field && 'max' in field ? field.max : null).toBe(3650);
+    expect(field && 'min' in field ? field.min : null).toBe(0);
+  });
+});
+
+/**
  * The MCP server is a separate npm package in a separate process, and what it
  * can and cannot share with the extension is the whole subject of delivery.
  *
@@ -255,6 +354,9 @@ describe('the MCP server’s own numbers match the mirror in constants.ts', () =
     // until the next restart with nothing saying so.
     expect(server).toMatch(/MACHINE_RESOLVED\['mcp\.maxFlows'\]/);
     expect(server).toMatch(/MACHINE_RESOLVED\['mcp\.maxFlowBytes'\]/);
+    // The third cap is age, and it is read the same way — through the table
+    // rather than from the `DEVFLOW_MAX_FLOW_AGE_DAYS` fallback it shipped with.
+    expect(server).toMatch(/MACHINE_RESOLVED\['mcp\.maxFlowAgeDays'\]/);
   });
 
   it('the schema version the server accepts is the one the extension writes', () => {

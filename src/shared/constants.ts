@@ -823,6 +823,16 @@ export const MCP_MAX_FLOWS = 200;
 /** Total bytes kept in `~/.devflow/flows` before the oldest is evicted. */
 export const MCP_MAX_FLOW_BYTES = 2 * 1024 * 1024 * 1024;
 
+/**
+ * Days a flow is kept before the sweep evicts it regardless of the two ceilings
+ * above. `0` is off, and off is the shipped answer: the count and byte caps are
+ * runaway guards, and an age limit is a policy — one that deletes a recording
+ * somebody is still working from, on a schedule they did not ask for. It exists
+ * because a flow that captured a credential sits under those caps for years on
+ * the disk of anybody whose working set never reaches them.
+ */
+export const MCP_MAX_FLOW_AGE_DAYS = 0;
+
 /** The loopback port the server listens on. `DEVFLOW_PORT`. */
 export const MCP_PORT = 7734;
 
@@ -878,6 +888,17 @@ export const CAPTURE_BODIES = true;
 
 /** Whether bodies over `SCHEMA_THRESHOLD` are replaced by an inferred schema. */
 export const SUMMARISE_BODIES = true;
+
+/**
+ * Whether secret-shaped content inside a body is masked before the body leaves
+ * the extension — `redactSecretShapes` in `core/redact`.
+ *
+ * On by default, and the setting behind it is a way to turn a safety feature
+ * *off*, not a way to opt into one: the only person who should reach for it is
+ * someone debugging the masker itself, or someone whose bodies legitimately
+ * carry `*_token` fields that are not credentials.
+ */
+export const REDACT_SECRETS = true;
 
 /** Whether uncaught errors and unhandled rejections become console entries. */
 export const CAPTURE_UNCAUGHT = true;

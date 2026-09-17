@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**Body-content secret redaction had no off switch, and no way to know it existed.** `redactSecretShapes` ran unconditionally with nothing in Settings naming it. A new `network.redactSecrets` field (on by default) is the only way to turn it off — per this repo's own rule, a setting not in the field table doesn't exist, and now it does.
+
+**Recordings had no age-based expiry, only size and count caps.** `enforceRetention` now also evicts by age when an operator sets `mcp.maxFlowAgeDays` (off by default; a flow with no readable timestamp is never aged out on a guess).
+
+**Ops hardening:** Dependabot now covers both npm packages; CI generates a CycloneDX SBOM for each on release; the one mutable-tag-pinned GitHub Action is pinned to a commit SHA; the `mcp-server` `bin`/package-name mismatch (`npx devflow-server` works, `npm install -g devflow-server` installs a command called `devflow-mcp`) is documented rather than silently risking a rename; `SECURITY.md` points at GitHub's private vulnerability reporting instead of nothing; `CONTRIBUTING.md` and a standard `CODE_OF_CONDUCT.md` now exist; the flow/OTel receiver has a per-IP rate limit on writes; release zips are now byte-reproducible (file mtimes pinned to the commit date instead of build time).
+
 **Two concurrent saves to the same flow id could corrupt it outright, not just describe it inconsistently.** `writeAtomic`'s temp file used a fixed sibling name, so two `saveFlow` calls racing to the same id wrote and renamed the same `flow.json.tmp` — the loser's rename died with `ENOENT` on a path the winner had already moved, returning a 500 for a save the extension was told had failed, sometimes leaving `flow.json` unparseable. Reproduced 12/12 broken on the unmodified server; a per-id lock (synchronous on the uncontended path, so ordinary saves pay nothing) now serializes same-id writes and closes the race cleanly.
 
 **The ARKG SQLite connection's `PRAGMA busy_timeout` alone didn't fix concurrent-write contention** — every write there runs inside a deferred transaction, and SQLite doesn't run the busy handler on a deferred write's lock upgrade. A contended write failed in 0ms flat, timeout or not. Ingest now also retries `SQLITE_BUSY` with backoff inside the same budget, which is what actually lets a second process's write succeed instead of silently dropping "knowledge graph: flow ingest failed."

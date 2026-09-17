@@ -153,11 +153,31 @@ jobs:
       - name: Package
         run: node scripts/package.mjs
 
-      - uses: softprops/action-gh-release@v2
+      # CycloneDX SBOMs for both published npm packages, from `npm sbom` —
+      # built into the npm CLI already installed above, so this is not a
+      # second dependency doing the same job a tool already on the runner
+      # could do. One per package because each has its own lockfile (see the
+      # `npm ci` comment above); `mcp-server`'s covers what actually ships in
+      # `files:` there, not this repo's devDependencies.
+      - name: Generate SBOMs
+        run: |
+          npm sbom --sbom-format cyclonedx > releases/devflow-sbom.cdx.json
+          npm sbom --sbom-format cyclonedx --prefix mcp-server > releases/devflow-server-sbom.cdx.json
+
+      # Pinned to a commit SHA rather than the mutable `v2` tag: this job holds
+      # `contents: write`/`id-token: write` (report.md §3.5), and a tag can be
+      # moved by whoever controls it upstream. `3bb1273…` is `v2.6.2` — the
+      # commit `v2` currently resolves to — confirmed via the GitHub API, not
+      # guessed. Every other `actions/*` step in this file stays tag-pinned on
+      # purpose; that's a separate, lower-risk convention this line is not
+      # meant to unify with.
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         if: env.TAG_NAME != ''
         with:
           tag_name: ${{ env.TAG_NAME }}
-          files: releases/*.zip
+          files: |
+            releases/*.zip
+            releases/*.cdx.json
           generate_release_notes: true
           body: |
             ### Install the extension

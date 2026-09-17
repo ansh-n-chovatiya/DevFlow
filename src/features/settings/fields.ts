@@ -72,6 +72,7 @@ import {
   MAX_SCRIPTS_PER_ORIGIN,
   MAX_STEPS,
   MCP_BODY_LIMIT,
+  MCP_MAX_FLOW_AGE_DAYS,
   MCP_MAX_FLOW_BYTES,
   MCP_MAX_FLOWS,
   MCP_MAX_IMAGES,
@@ -86,6 +87,7 @@ import {
   REACT_CHAIN_TIMEOUT_MS,
   REACT_PREWARM_TTL_MS,
   REACT_SETTING_DEFAULTS,
+  REDACT_SECRETS,
   RELOAD_TIMEOUT_MS,
   REMOTE_TIMEOUT_MS,
   STATE_MAX_DEPTH,
@@ -299,6 +301,7 @@ interface NumberField extends Common {
     | "px"
     | "%"
     | "flows"
+    | "days"
     | "chars"
     | "keys"
     | "entries"
@@ -1063,6 +1066,25 @@ export const FIELDS = [
     unit: "bytes",
     title: "Summarise bodies larger than",
     description: "The schema/verbatim tradeoff is genuinely per-app.",
+    consumers: ["ui", "mcp"],
+    rendered: true,
+    wired: true,
+  },
+  {
+    key: "network.redactSecrets",
+    group: "network",
+    tier: 1,
+    type: "boolean",
+    default: REDACT_SECRETS,
+    title: "Mask secrets inside bodies",
+    // `rendered`, not `recorded`, for the same reason summarisation is: masking
+    // happens on the way out, so a flow recorded yesterday is masked under the
+    // answer in force when it is handed over, and the stamp says which.
+    description:
+      "A JWT, a `Bearer …` token or a field named like a credential is replaced with a mask wherever it appears in a request or response body — including the two places size alone would have let through, a body small enough to quote verbatim and a body on a failed call.",
+    consequence:
+      "Off means those bodies leave the browser exactly as captured, and a token in one of them is written to disk and read into Claude’s context. Turn it off only to debug the masker, or for an app whose `*_token` fields are not credentials.",
+    consequenceWhen: { is: false },
     consumers: ["ui", "mcp"],
     rendered: true,
     wired: true,
@@ -1985,6 +2007,25 @@ export const FIELDS = [
     consequence:
       "Lowering it deletes, and this is the ceiling that bites first on a library of screenshot-heavy flows: the sweep after the next send removes the oldest recordings until the rest fit.",
     consequenceWhen: { below: MCP_MAX_FLOW_BYTES },
+    consumers: ["mcp"],
+    machine: true,
+    wired: true,
+  },
+  {
+    key: "mcp.maxFlowAgeDays",
+    group: "mcp",
+    tier: 1,
+    type: "number",
+    default: MCP_MAX_FLOW_AGE_DAYS,
+    min: 0,
+    max: 3650,
+    unit: "days",
+    title: "Delete flows older than",
+    description:
+      "The third ceiling, and the only one that is a policy rather than a runaway guard: the two above are about how much disk a library may take, and this one is about how long a recording that captured something sensitive is allowed to sit there. Zero is off, which is what ships — nobody’s recordings are deleted on a clock they did not set.",
+    consequence:
+      "Above zero this deletes on age alone: the sweep after the next send removes every recording in ~/.devflow older than this, however few there are and however small.",
+    consequenceWhen: { above: 0 },
     consumers: ["mcp"],
     machine: true,
     wired: true,

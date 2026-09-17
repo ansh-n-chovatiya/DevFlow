@@ -197,8 +197,10 @@ function repairJson(prefix: string): string | null {
 }
 
 /**
- * The two settings that decide whether a body is summarised, and above what
- * size — `network.summariseBodies` and `network.schemaThreshold`.
+ * The three settings that decide what a body looks like once it is handed over
+ * — whether it is summarised and above what size (`network.summariseBodies`,
+ * `network.schemaThreshold`), and whether secret shapes in whatever survives
+ * are masked (`network.redactSecrets`).
  *
  * Passed in rather than read here, because this module is pure and is bundled
  * into the MCP server, which has no `chrome.storage` to read from. The defaults
@@ -210,6 +212,13 @@ export interface BodyLimits {
   threshold?: number;
   /** `false` quotes every body verbatim, however large. */
   summarise?: boolean;
+  /**
+   * `false` hands a body over exactly as captured — `redactSecretShapes` is not
+   * run on it. `network.redactSecrets`, and `undefined` means on, because an
+   * older flow's stamp predates the field and the safe reading of a missing
+   * answer is the shipped one.
+   */
+  redactSecrets?: boolean;
 }
 
 export function compactBody(
@@ -222,6 +231,16 @@ export function compactBody(
   const threshold = limits?.threshold ?? SCHEMA_THRESHOLD;
 
   /*
+   * Masking is one decision, taken here, rather than a property of which gate
+   * let the body through. Every verbatim path below goes through `mask`, so
+   * turning `network.redactSecrets` off is the only way to get raw bytes and
+   * turning some other setting off cannot get them by accident — which is what
+   * "quote every body verbatim" used to do, silently, on its way past the
+   * masker.
+   */
+  const mask = limits?.redactSecrets === false ? (text: string) => text : redactSecretShapes;
+
+  /*
    * Summarising switched off: the bytes, as they were captured.
    *
    * "Someone debugging a serialisation bug needs the bytes" is the whole reason
@@ -232,29 +251,30 @@ export function compactBody(
    * infinite threshold: the stamp would go with it.
    */
   if (limits?.summarise === false) {
-    if (!meta?.truncated) return bodyStr;
+    if (!meta?.truncated) return mask(bodyStr);
     const cut = ((meta.bytes ?? bodyStr.length) / 1024).toFixed(1);
-    return `${bodyStr}\n\n[${cut}KB total, truncated at capture]`;
+    return `${mask(bodyStr)}\n\n[${cut}KB total, truncated at capture]`;
   }
 
-  if (!meta?.truncated && bodyStr.length <= threshold) return redactSecretShapes(bodyStr);
+  if (!meta?.truncated && bodyStr.length <= threshold) return mask(bodyStr);
 
   /*
    * A failed call's body is kept, not summarised. Truncation is still stamped
    * rather than silent — the same rule the rest of this file follows — so a
    * stack trace cut at the limit cannot read as one that ended there. Kept
-   * verbatim is never kept raw, though: `redactSecretShapes` runs on it first,
-   * because `get_flow_errors` — the tool most likely to be called right after
-   * something broke — is exactly where a body this size lands untouched.
+   * verbatim is not kept raw, though, unless the user asked for that in so many
+   * words: `mask` runs on it first, because `get_flow_errors` — the tool most
+   * likely to be called right after something broke — is exactly where a body
+   * this size lands untouched.
    */
   if (meta?.diagnostic) {
     const size = ((meta.bytes ?? bodyStr.length) / 1024).toFixed(1);
     if (bodyStr.length <= DIAGNOSTIC_LIMIT) {
       return meta.truncated
-        ? `${redactSecretShapes(bodyStr)}\n\n[${size}KB total, truncated at capture]`
-        : redactSecretShapes(bodyStr);
+        ? `${mask(bodyStr)}\n\n[${size}KB total, truncated at capture]`
+        : mask(bodyStr);
     }
-    return `${redactSecretShapes(bodyStr.slice(0, DIAGNOSTIC_LIMIT))}\n\n[${size}KB total, truncated]`;
+    return `${mask(bodyStr.slice(0, DIAGNOSTIC_LIMIT))}\n\n[${size}KB total, truncated]`;
   }
 
   // The size the caller cares about is the body the server sent, not the slice
