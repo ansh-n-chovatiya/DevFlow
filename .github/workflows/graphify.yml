@@ -21,9 +21,9 @@ jobs:
   graph:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -61,7 +61,7 @@ jobs:
 
       # graph.html is a self-contained interactive view of this exact commit.
       # Download it from the run and open it — no install needed to look around.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: graphify-${{ github.sha }}
           path: |
