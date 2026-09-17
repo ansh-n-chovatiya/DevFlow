@@ -109,13 +109,66 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * The `detail` a caller switches on to tell "the wrong tab was on screen" apart
+ * from the other things Chrome refuses a capture for.
+ *
+ * A code of its own would be the honest shape, but `FlowErrorCode` is frozen
+ * (`shared/errors.ts`), so the distinction rides in `detail` — which is the
+ * field that already exists to say *which* `CAPTURE_FAILED` this was. The
+ * `message` is the reader's half and says the same thing in words.
+ */
+export const CAPTURE_TAB_CHANGED = 'capture-tab-changed';
+
+/**
+ * The id of the tab actually on screen in a window, or `undefined` when Chrome
+ * will not say.
+ *
+ * `undefined` is not "it matches" — the caller treats an unanswerable question
+ * as a mismatch, because a screenshot nobody can attribute to a tab is the
+ * exact thing the re-check exists to refuse.
+ */
+async function visibleTabId(windowId: number | undefined): Promise<number | undefined> {
+  try {
+    const tabs = await chrome.tabs.query(
+      // A service worker has no current window, so with no `windowId` the best
+      // available answer is the window the user last touched.
+      windowId == null ? { active: true, lastFocusedWindow: true } : { active: true, windowId },
+    );
+    return tabs[0]?.id;
+  } catch {
+    return undefined;
+  }
+}
+
 async function captureNow(
   windowId: number | undefined,
   quality: number,
   minIntervalMs: number,
+  expectedTabId: number | undefined,
 ): Promise<Result<string>> {
   const wait = minIntervalMs - (Date.now() - lastCaptureAt);
   if (wait > 0) await sleep(wait);
+
+  /*
+   * Which tab is on screen *now*, not when the step arrived.
+   *
+   * `captureVisibleTab` photographs a window, and by the time it fires the step
+   * has waited out a settle delay, this chain's backlog and the rate-limit
+   * sleep above — seconds, in which the user can switch tabs. The check has to
+   * happen here, in the last statement before the shutter, or it is a check of
+   * a fact that has since stopped being true, and the flow gets a photograph of
+   * a page the step never touched, presented as evidence.
+   */
+  if (expectedTabId != null && (await visibleTabId(windowId)) !== expectedTabId) {
+    return err(
+      flowError(
+        'CAPTURE_FAILED',
+        CAPTURE_TAB_CHANGED,
+        'Another tab was on screen by the time the screenshot was taken.',
+      ),
+    );
+  }
 
   try {
     const dataUrl =
@@ -145,15 +198,22 @@ async function captureNow(
  * capture belongs to — passed in rather than read here because this module is
  * called from the worker at capture time and a value read at import would be
  * the compiled-in default forever. See `features/settings/recording.ts`.
+ *
+ * `expectedTabId` is the tab the caller believes it is photographing. Given
+ * one, the capture is refused with `CAPTURE_TAB_CHANGED` unless that tab is
+ * still the visible one at the instant the API is called — see `captureNow`.
+ * Optional because a caller with no tab in mind (there is none today) would
+ * otherwise have to invent one, and a wrong expectation is worse than none.
  */
 export function captureVisibleTab(
   windowId: number | undefined,
   quality: number,
   minIntervalMs = CAPTURE_MIN_INTERVAL_MS,
+  expectedTabId?: number,
 ): Promise<Result<string>> {
   // Serialise: two concurrent captures would both see the same `lastCaptureAt`
   // and neither would wait.
-  const next = captureChain.then(() => captureNow(windowId, quality, minIntervalMs));
+  const next = captureChain.then(() => captureNow(windowId, quality, minIntervalMs, expectedTabId));
   captureChain = next.catch(() => undefined);
   return next;
 }

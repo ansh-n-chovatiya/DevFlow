@@ -31,7 +31,7 @@ import { isMachineKey } from '../features/settings/fields.js';
 import { deliverMachineSettings } from '../features/mcp/machine.js';
 import type { RecordingSettings } from '../features/settings/fields.js';
 import { shotPatch, sweep as sweepShots, withoutImages } from '../features/flows/shots.js';
-import { captureVisibleTab, sendToTab } from '../chrome/tabs.js';
+import { CAPTURE_TAB_CHANGED, captureVisibleTab, sendToTab } from '../chrome/tabs.js';
 import { fetchText } from '../chrome/fetch.js';
 import { openPopup, paintAction as paint } from '../chrome/action.js';
 import type { Result } from '../shared/result.js';
@@ -68,7 +68,7 @@ import type { Framework } from '../core/locate/adapter.js';
 import type { ComponentNeedle, ComponentSource } from '../shared/types.js';
 import { isPlaceholderId } from '../core/locate/id.js';
 import { stripReactRef } from '../core/react/attribution.js';
-import { flowHost, mergeTrailing, type Pending } from '../core/flow/index.js';
+import { flowHost, mergeTrailing, stepKey, type Pending } from '../core/flow/index.js';
 import { mergeComponents } from '../core/react/table.js';
 import { mergeScripts } from '../features/react/inventory.js';
 import { clearResolverCaches, resolvePending } from '../features/react/resolver.js';
@@ -213,8 +213,175 @@ function claimPrecapture(tabId: number | undefined, ttlMs: number): string | nul
   return Date.now() - held.at <= ttlMs ? held.dataUrl : null;
 }
 
-/** Capture, annotate and persist one step, enforcing the step limit. */
+/*
+ * ── The capture-pending marker ───────────────────────────────────────────────
+ *
+ * A step is not written when the user clicks. It is written after the settle
+ * delay, the screenshot, and the annotation — up to several seconds later — and
+ * all of that lived only in the worker's memory. Chrome kills an idle service
+ * worker whenever it likes, and when it did, the in-flight step simply ceased
+ * to exist: the next step was numbered `recordedSteps.length + 1` from storage,
+ * so the flow renumbered contiguously and nothing anywhere said a step was
+ * lost. A recording that quietly drops the interaction that broke the app is
+ * worse than one that refuses to record, because the reader believes it.
+ *
+ * So the intent is written down before the wait, in `chrome.storage.session` —
+ * the one area that survives a worker restart and does not survive a browser
+ * one, which is exactly the lifetime of the hazard. `reconcilePendingCapture`
+ * reads it on the next wake and turns a marker with no step behind it into a
+ * visible gap in the flow.
+ *
+ * `chrome.storage.session` is the one storage area `chrome/storage.ts` does not
+ * wrap, and these three calls are the only use of it in the product. They read
+ * `chrome.runtime.lastError` in the callback the way that wrapper does, because
+ * that — not the promise form — is where Chrome makes a failure readable.
+ */
+const CAPTURE_PENDING_KEY = 'capturePending';
+
+interface PendingCapture {
+  /** `stepKey` of the step being captured: how the reconciler tells if it landed. */
+  key: string;
+  /** The page it happened on, so the gap note can say where. */
+  url: string;
+  /** The step's own timestamp, so the note sorts where the step would have. */
+  at: number;
+}
+
+function isPendingCapture(value: unknown): value is PendingCapture {
+  if (typeof value !== 'object' || value === null) return false;
+  const held = value as Partial<PendingCapture>;
+  return typeof held.key === 'string' && typeof held.url === 'string' && typeof held.at === 'number';
+}
+
+/** Say that a step is being captured, before anything can be lost. */
+function markCapturePending(step: DraftStep): Promise<void> {
+  const marker: PendingCapture = { key: stepKey(step), url: step.url, at: step.timestamp };
+  return new Promise((resolve) => {
+    chrome.storage.session.set({ [CAPTURE_PENDING_KEY]: marker }, () => {
+      const failed = chrome.runtime.lastError;
+      // A marker that will not write costs a lost step no one is told about —
+      // the state this exists to end — so it is said out loud, but it is not the
+      // step's problem and must not stop the capture.
+      if (failed) console.warn(`DevFlow: capture marker not written — ${failed.message}`);
+      resolve();
+    });
+  });
+}
+
+function clearCapturePending(): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.session.remove(CAPTURE_PENDING_KEY, () => {
+      const failed = chrome.runtime.lastError;
+      if (failed) console.warn(`DevFlow: capture marker not cleared — ${failed.message}`);
+      resolve();
+    });
+  });
+}
+
+function readCapturePending(): Promise<PendingCapture | null> {
+  return new Promise((resolve) => {
+    chrome.storage.session.get(CAPTURE_PENDING_KEY, (items: Record<string, unknown>) => {
+      const failed = chrome.runtime.lastError;
+      const held = failed ? undefined : items[CAPTURE_PENDING_KEY];
+      resolve(isPendingCapture(held) ? held : null);
+    });
+  });
+}
+
+/**
+ * Capture, annotate and persist one step, between a marker and its removal.
+ *
+ * The marker goes down before the first `await` of the work — the settle delay
+ * is the longest part of the window but not the whole of it — and comes up in a
+ * `finally`, so every way this can end (the step written, the recording already
+ * over, the step limit reached, a storage read that failed, a throw) clears it
+ * exactly once.
+ *
+ * The marker and the step land in two different storage areas, so they cannot
+ * be one write, and a worker killed between them would leave a marker for a
+ * step that was in fact saved. That is why the marker carries the step's
+ * `stepKey` rather than a bare flag: the reconciler looks for the step before
+ * it reports a gap, so the harmless interleaving stays silent and only a real
+ * loss is announced.
+ */
 async function captureAndSave(
+  step: DraftStep,
+  elementBox: BoundingBox | null,
+  dpr: number,
+  sender: chrome.runtime.MessageSender,
+  components?: CapturedComponent[],
+  componentsPageUrl?: string,
+  measuredScroll?: { x: number; y: number },
+  frameworkComponents?: FrameworkComponentTable[],
+): Promise<void> {
+  await markCapturePending(step);
+  try {
+    await writeCapturedStep(
+      step,
+      elementBox,
+      dpr,
+      sender,
+      components,
+      componentsPageUrl,
+      measuredScroll,
+      frameworkComponents,
+    );
+  } finally {
+    await clearCapturePending();
+  }
+}
+
+/**
+ * Turn a leftover marker into a step the reader can see, on the next wake.
+ *
+ * Runs from `reconcileRecordingTab` — the worker's one wake-up reconciliation —
+ * rather than from a second entry point of its own, because there is one moment
+ * to ask all of these questions and one place a reader should look for them.
+ *
+ * Three things have to be true before a note is written: a marker survived, the
+ * step it names is not in `recordedSteps` (the capture really did not finish),
+ * and a recording is still live (a marker left over from a recording that has
+ * since ended and been cleared must not resurrect a flow that is gone).
+ */
+async function reconcilePendingCapture(): Promise<void> {
+  const pending = await readCapturePending();
+  if (!pending) return;
+
+  // Cleared first, whatever is decided below: a marker that survives its own
+  // reconciliation would report the same gap on every wake for as long as the
+  // browser stays open.
+  await clearCapturePending();
+
+  const stored = await getLocal(['recordedSteps', 'recordingActive']);
+  if (!stored.ok) return;
+  if (stored.value.recordingActive !== true) return;
+
+  const recordedSteps = stored.value.recordedSteps ?? [];
+  // The capture finished and the marker outlived it by a millisecond. Nothing
+  // was lost, so nothing is said.
+  if (recordedSteps.some((saved) => stepKey(saved) === pending.key)) return;
+
+  recordedSteps.push({
+    type: 'note',
+    url: pending.url,
+    timestamp: pending.at,
+    action: 'step-lost',
+    value:
+      'One interaction was being saved when Chrome shut DevFlow down in the ' +
+      'background, and was lost. The steps either side of this note were not ' +
+      'consecutive.',
+    screenshot: null,
+    screenshotOmitted:
+      'The step this note stands in for never finished being captured, so there is no image of it.',
+    stepNumber: recordedSteps.length + 1,
+  });
+
+  const written = await setLocal({ recordedSteps });
+  if (!written.ok) await reportError(written.error);
+}
+
+/** The work itself: capture, annotate and persist, enforcing the step limit. */
+async function writeCapturedStep(
   step: DraftStep,
   elementBox: BoundingBox | null,
   dpr: number,
@@ -341,13 +508,24 @@ async function captureAndSave(
   } else if (!dataUrl && !senderVisible) {
     omitted = 'The tab was not on screen when this step was captured, so no screenshot was taken.';
   } else if (!dataUrl) {
+    // The tab this step came from, handed to the capture so it can check that
+    // the tab is *still* the visible one at the instant the shutter fires. The
+    // `senderVisible` test above is a fact about when the message arrived, and
+    // by now a settle delay, a queue and a rate-limit sleep have gone by.
     const captured = await captureVisibleTab(
       sender.tab?.windowId,
       recording['screenshots.quality'],
       recording['screenshots.minIntervalMs'],
+      sender.tab?.id,
     );
     if (captured.ok) {
       dataUrl = captured.value;
+    } else if (captured.error.detail === CAPTURE_TAB_CHANGED) {
+      // Not `reportError`: nothing failed and there is nothing to fix. The user
+      // switched tabs, which they are allowed to do, and the only consequence
+      // that matters belongs in the flow beside the step it is about.
+      omitted =
+        'The user switched to another tab before this step could be photographed, so no screenshot was taken — it would have shown a different page.';
     } else {
       // A step with no image still carries its selectors, timing and network —
       // losing the whole step because the screenshot failed would be worse.
@@ -766,6 +944,11 @@ function tabIsOpen(tabId: number): Promise<boolean> {
  * step re-establishes it either way.
  */
 async function reconcileRecordingTab(): Promise<void> {
+  // The other thing a wake has to settle, and for the same reason: the worker
+  // may have been killed part-way through a capture, and only storage knows.
+  // One reconciliation, not two — see `reconcilePendingCapture`.
+  await reconcilePendingCapture();
+
   const stored = await getLocal(['recordingActive', 'recordingTabId']);
   if (!stored.ok) return;
 
@@ -1626,6 +1809,10 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
           sender.tab?.windowId,
           recording['screenshots.quality'],
           recording['screenshots.minIntervalMs'],
+          // Checked again inside, at the shutter: this call queues behind the
+          // capture chain's rate limit like any other, and a pointerdown is
+          // exactly the moment a user may be about to leave the tab.
+          tabId,
         ).then(
           (captured) => {
             if (captured.ok) precaptures.set(tabId, { dataUrl: captured.value, at: Date.now() });

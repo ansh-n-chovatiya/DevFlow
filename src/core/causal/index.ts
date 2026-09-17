@@ -602,6 +602,32 @@ export function buildCausalGraph(flow: CausalFlow): CausalGraph {
   }
 
   /*
+   * The tie-break ADR 0007 says this file owes: two different events racing to
+   * explain the same one under the same basis — two calls whose bodies both
+   * echo one delta's value, two calls a log's text both names — are exactly the
+   * ambiguity `named`'s own comment above describes, and this file will not
+   * guess which one the reader meant. But claiming `'high'` confidence for each
+   * is claiming a certainty neither earns once a second candidate exists for
+   * the identical conclusion; the count of competing candidates *is* the
+   * evidence a tie-break has, so it downgrades both rather than picking one.
+   * `attributed` and `followed` are untouched — they already score honestly and
+   * carry no such comment.
+   */
+  const explanationsFor = new Map<string, Set<EventRef>>();
+  for (const candidate of candidates) {
+    if (candidate.confidence !== 'high') continue;
+    const key = `${candidate.basis} ${candidate.to}`;
+    const froms = explanationsFor.get(key);
+    if (froms) froms.add(candidate.from);
+    else explanationsFor.set(key, new Set([candidate.from]));
+  }
+  for (const candidate of candidates) {
+    if (candidate.confidence !== 'high') continue;
+    const key = `${candidate.basis} ${candidate.to}`;
+    if ((explanationsFor.get(key)?.size ?? 0) > 1) candidate.confidence = 'medium';
+  }
+
+  /*
    * One link per pair, and the strongest wins.
    *
    * A `named` edge and a `followed` edge over the same two events are one piece

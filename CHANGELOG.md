@@ -10,6 +10,16 @@
 
 **`DELETE /flows/:id` had no test exercising it over HTTP at all** — the route that was built specifically to fix a past "delete looked successful but the flow was still there" incident could regress to a no-op and the full suite would stay green. It now has one, driven against a real running server.
 
+**A step in flight when Chrome killed the background worker vanished into a contiguous renumbering, with nothing saying a step was ever lost.** A pending-capture marker is now written to `chrome.storage.session` before the settle delay and cleared when the step lands; a worker restart that finds a stale marker for a step that never made it into `recordedSteps` appends a visible gap note instead of silently closing over the hole.
+
+**A screenshot could show a different tab than the step it was filed under.** Tab identity used to be checked only when the capture message first arrived — not at the moment `captureVisibleTab` actually fired, several hundred milliseconds to seconds later once the settle delay and the capture queue's backlog had run. A tab switch in that window now omits the screenshot with a stated reason instead of attaching the wrong page's picture.
+
+**Two requests racing to explain the same log line or state change both earned `confidence: 'high'`,** silently picking a winner with no way to tell the reader it was a coin flip. Causal derivation now downgrades both candidates to `'medium'` when the ambiguity is real, and leaves every unambiguous match at `'high'` exactly as before.
+
+**`lint:vocab` didn't actually check the "flow, not session" / "component, not element" distinction it was documented as enforcing** — renaming a real UI string from "flow" to "session" passed clean. It now extracts only what a person reads (strings and HTML text, not identifiers or comments) and checks the noun pairing for real, with an exemption list for the few honest exceptions (recording, capture, trace — and one sentence in the settings copy that names a store called "the session," not a flow).
+
+**Several stale documentation claims corrected:** `compiler-plugin/` has been published as `devflow-compiler-plugin` since v4.0.0, not "optional and unpublished" as CLAUDE.md and ROADMAP_AND_PHASES.md still said; CLAUDE.md's `src/core/` layout and Gates table now match the live tree instead of an 8-directory, nine-step snapshot; `docs/CONTRACTS.md` notes which four cited paths moved under ADR 0026 without touching the frozen contract itself; the `FlowSnap` → `DevFlow` rename — which silently reversed `CONTRACTS.md` §4.5's brand-name ban with no record — now has a superseding ADR (0029).
+
 First wave of fixes from a production-readiness audit; more follow.
 
 ## 4.1.2 — 2026-09-15

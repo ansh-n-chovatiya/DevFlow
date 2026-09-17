@@ -20,19 +20,39 @@ src/
                  Svelte — ADR 0026. Nothing here may import `core/react/`.
     react/       React-SPECIFIC only: the fiber walk, the owner rule, the
                  attribution built on them, classification and the build stamp
-    flow/ export/ redact/ schema/ selector/ describe/
+    vue/ svelte/ rsc/     the other three adapters, framework-specific in the
+                 same way `react/` is — ADR 0017 takes them as one set
+    flow/ export/ redact/ schema/ selector/ describe/ source/ dom/
+                 one recording: its shape, the specs it compiles to, what it may
+                 keep, the selector and the sentence for a picked element, the
+                 lines around a source, what a MutationObserver saw
+    state/ render/ cascade/ causal/ a11y/
+                 one step: the stores it read, what re-rendered, the cascade it
+                 set off, what plausibly caused what, what the page scored
+    otel/ trace/ telemetry/ git/ deploy/ provenance/ forensics/ diagnose/
+    architecture/ navigator/ actions/ replay/ regression/
+                 what the MCP server asks of a recording once it is stored —
+                 spans and the one rule for who may carry a trace header, a
+                 production crash reduced to what may be kept, the commit a
+                 recording was made at and what that claim is worth, two
+                 recordings of one flow at two commits, where a value came from,
+                 which commits the graph has never seen run, the living map and
+                 finding things in it, an action offered again, replay
     mcp-bundle.ts   the one entry point bundled into mcp-server/core.js
   features/      impure application logic — settings, flows, providers, MCP send
     react/providers/{devtools,worker}.ts   the two ways to read a page's bundles
     settings/fields.ts                     the one settings table
-  injected/      MAIN-world page agent: recorder and picker in one file
+  injected/      MAIN-world page agent: the recorder and the picker, plus the
+                 overlay, the roots registry and one reader per framework
   chrome/        every chrome.* call, wrapped, so nothing else makes one raw
   background/    the MV3 service worker
   ui/            popup/ viewer/ locator/ settings/ components/ styles/
   shared/        types, messages, constants, errors — frozen in Wave 0
 mcp-server/      a second npm package, published on its own
-compiler-plugin/ a third, optional and unpublished: the Babel build stamp
-scripts/         the build steps and the three lint gates
+compiler-plugin/ a third, published as `devflow-compiler-plugin` since v4.0.0:
+                 the Babel build stamp. Optional — nothing requires it, and the
+                 source-map path works without it.
+scripts/         the build steps, the release cutter and seven `check-*.mjs` gates
 tests/           vitest, node + jsdom
 docs/CONTRACTS.md   FROZEN. The interface freeze the parallel work was built against.
 ```
@@ -103,9 +123,16 @@ npm run verify     # everything below, in order
 | `npm run lint:settings-ui` | settings DOM stays encapsulated |
 | `npm run lint:graphify` | the graph config is committed, not just present locally |
 | `npm run lint:brand` | the other products' names and page globals stay gone — `docs/CONTRACTS.md` §4.5 |
-| `npm run lint:vocab` | the frozen glossary — a flow is not a session, a component is not an element |
+| `npm run lint:vocab` | the frozen glossary — §4.4's labels over the raw file, §4.1's nouns over extracted prose: a flow is not a session, a component is not an element |
+| `npm run lint:locate` | `src/core/locate/` imports no framework — the neutrality claim ADR 0026 moved it for |
 | `npm test` | vitest — `pretest` builds `mcp-server/core.js` first, which two suites need on disk |
 | `npm run build` | five builds: the generated settings JSON, pages + worker, content script, page agent, MCP core |
+
+Ten steps, and the table is the whole list: `lint:locate` shipped inside
+`verify` and was missing from here for a release, which is the same drift the
+gates exist to stop one level down. `lint:changelog` is deliberately *not* in
+`verify` — it reads a commit range, so it belongs to CI and to the release
+cutter, not to a working tree.
 
 `npm run verify` is also what `npm run package` runs before it writes a zip, so
 a release cannot be cut past a red gate.
@@ -175,15 +202,19 @@ edit anyone else's. That pattern **is** L2; its units are the same thing with
 the ownership and the merge written down instead of held in one head.
 
 **L2's dispatch half is installed — but keep checking rather than trusting this.**
-The `ctx` plugin pinned on this machine is `0.1.1`, and its CLI carries `plan`,
-`plan-unit`, `plan-check`, `start`, `merge`, `unit`, `worktree` and `handoff`, so
-`.ctx/plans/` can be filled and `/ctx:plan` exists. This paragraph said the
-opposite until 2026-09-04, and it was right when it was written: `0.1.0`'s CLI
-stopped at `spec`, so L2 here meant the spec plus the disjoint-ownership subagent
-pattern run by hand. It went stale silently, which is the failure mode it warned
-about — an installed copy upgrading underneath a sentence that describes it.
-Confirm with `ctx plan --help` and read the exit code, the way the old paragraph
-told you to; that instruction was the half of it that stayed true.
+The `ctx` plugin on this machine answers `ctx --version` with `1.0.0` as of
+2026-09-17, and its CLI carries `plan`, `plan-unit`, `plan-check`, `start`,
+`merge`, `unit`, `worktree` and `handoff`, so `.ctx/plans/` can be filled and
+`/ctx:plan` exists. This paragraph said the opposite until 2026-09-04, and it
+was right when it was written: `0.1.0`'s CLI stopped at `spec`, so L2 here meant
+the spec plus the disjoint-ownership subagent pattern run by hand. It went stale
+silently, which is the failure mode it warned about — an installed copy
+upgrading underneath a sentence that describes it. It then did it a second time:
+the version written here stayed `0.1.1` through the upgrade to `1.0.0`, and an
+audit found the number rather than the sentence being wrong. **A version in this
+file is a reading with a date on it, not a pin** — confirm with `ctx --version`
+and `ctx plan --help`, and read the exit code, the way the paragraph has told
+you to twice now.
 
 `plan-check` is worth knowing about specifically: it computes waves and collision
 sets from the unit files, so the ownership table a parallel dispatch runs on can

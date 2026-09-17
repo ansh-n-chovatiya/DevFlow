@@ -23,6 +23,23 @@ against each of them:
 §6 records what `docs/SHARED-CORE.md` and `scripts/core-drift.mjs` used to do, and
 why neither is coming across.
 
+> **Note, added 2026-09-17 — four file paths below are historical.** This
+> document is frozen and is not being rewritten; this is a signpost for a reader
+> who lands here directly, because every path in it was written before **ADR
+> 0026** moved the framework-neutral engine out of `core/react/`:
+>
+> | Cited here | Lives at |
+> | --- | --- |
+> | `src/core/react/positions.ts` (§1) | `src/core/locate/positions.ts` |
+> | `src/core/react/provider.ts` (§2) | `src/core/locate/provider.ts` |
+> | `core/react/sourcemap.ts` (§2) | `src/core/locate/sourcemap.ts` |
+> | `core/react/editor.ts` (§3.4) | `src/core/locate/editor.ts` |
+>
+> **The contracts themselves are unchanged** — same types, same signatures, same
+> keys; only the directory moved, and `npm run lint:locate` now guards the
+> neutrality claim the move was made for. `src/core/react/` still exists and
+> still holds the fiber walk and the attribution built on it.
+
 ---
 
 ## 1 · Positions
