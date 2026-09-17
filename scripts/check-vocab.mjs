@@ -71,7 +71,19 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** Each frozen label, and the spellings of it that are not the frozen one. */
+/**
+ * Each frozen label, and the spellings of it that are not the frozen one.
+ *
+ * Matching below is case-*insensitive*, which is exactly why some of these
+ * "wrong" spellings differ from the frozen one only by case — `Pick
+ * Component` for `Pick component`, `Open In Editor` / `Open in editor` for
+ * `Open in Editor` — those entries exist to *name* the casing that is wrong,
+ * not to widen what gets matched; the search itself already catches every
+ * casing of every entry here, wrong noun or wrong case alike. The one
+ * exception a case-insensitive search has to carve out by hand is the
+ * frozen spelling's *own* exact casing, which must keep passing even though
+ * it case-folds identically to its own case-variant entry — see `badCasing`.
+ */
 const FROZEN = [
   ['Pick component', ['Pick Element', 'Pick element', 'Pick Component']],
   ['Pick another', ['Pick Another']],
@@ -126,11 +138,11 @@ const PAIRS = [
     'CONTRACTS §4.2: a locate resolves a *component* to its source; an element is what you pick.',
   ],
   [
-    /\bReact\s+elements?\b/g,
+    /\bReact\s+elements?\b/gi,
     "CONTRACTS §4.1: React's noun is component — element is the DOM's.",
   ],
   [
-    /\bDOM\s+components?\b/g,
+    /\bDOM\s+components?\b/gi,
     "CONTRACTS §4.1: the DOM's noun is element — component is React's.",
   ],
   [
@@ -313,6 +325,31 @@ function speech(text, html) {
   return out.join('');
 }
 
+/**
+ * True if `line` carries `spelling` anywhere, matched case-insensitively —
+ * except when the only occurrence found is spelled *exactly* like `frozen`
+ * itself.
+ *
+ * A wrong-case entry (`Pick Component` for the frozen `Pick component`)
+ * case-folds to the same text as the frozen label it exists to catch, so a
+ * plain case-insensitive search would flag the correct spelling too — the
+ * false positive a blanket fix would have introduced. `frozen` is `null` for
+ * the retired-label row, which has no correct spelling to protect, so every
+ * casing there is simply wrong.
+ */
+function badCasing(line, spelling, frozen) {
+  const needle = spelling.toLowerCase();
+  const haystack = line.toLowerCase();
+
+  for (let from = 0, at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, from)) {
+    from = at + 1;
+    const actual = line.slice(at, at + spelling.length);
+    if (!frozen || actual !== frozen) return true;
+  }
+
+  return false;
+}
+
 const files = [
   ...globSync('src/**/*.{ts,tsx,html}', { cwd: root }),
   ...globSync('public/**/*.html', { cwd: root }),
@@ -346,11 +383,25 @@ for (const file of files) {
   });
 
   for (const [frozen, wrong] of FROZEN) {
+    // Matching is case-insensitive, so two entries in `wrong` that differ
+    // only by case (`Open In Editor` / `Open in editor`) now find the same
+    // text. Skip the repeat rather than report — and, from EXEMPT below,
+    // rather than let the un-exempted twin flag a file the other entry was
+    // explicitly excused for.
+    const seen = new Set();
+
     for (const spelling of wrong) {
-      if (EXEMPT.get(spelling)?.includes(file)) continue;
+      const casefold = spelling.toLowerCase();
+      if (seen.has(casefold)) continue;
+      seen.add(casefold);
+
+      const exempt = wrong
+        .filter((s) => s.toLowerCase() === casefold)
+        .some((s) => EXEMPT.get(s)?.includes(file));
+      if (exempt) continue;
 
       lines.forEach((line, index) => {
-        if (!line.includes(spelling)) return;
+        if (!badCasing(line, spelling, frozen)) return;
         console.error(
           `${file}:${index + 1}  ${spelling} — ` +
             (frozen

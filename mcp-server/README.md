@@ -409,8 +409,11 @@ is still in the extension's library, so sending it again later works.
 
 ## Privacy
 
-Everything stays on your machine. The server binds to loopback and writes to
-your home directory.
+Everything stays on your machine **in the default local mode**: the server binds
+to loopback and writes to your home directory. The one exception is
+`MCP_MODE=remote` below, which binds `0.0.0.0` and puts everything in this
+section on whatever host you deployed it to — that mode is opt-in and nothing
+uses it unless you started the server that way.
 
 Captured **request and response bodies are not redacted** — only headers are. A
 recorded flow can therefore contain whatever your app sent, including tokens in
@@ -431,12 +434,73 @@ belong to whoever launched it, so they come from the environment.
 ## Remote mode
 
 ```sh
-MCP_MODE=remote PORT=8080 npx devflow-server
+MCP_MODE=remote PORT=8080 MCP_API_KEY="$(openssl rand -hex 32)" npx devflow-server
 ```
 
 Serves MCP over SSE at `/mcp` and accepts flows at `/flows`, for use as a custom
-connector. There is no authentication — anything that can reach it can read
-every flow — so treat it as single-tenant and put it behind something.
+connector. Unlike local mode it binds `0.0.0.0`, so the boundary is the key
+below rather than the loopback interface.
+
+### `MCP_API_KEY`
+
+Set it to a long random string, and send it on every request to this server:
+
+```sh
+curl -H "Authorization: Bearer $MCP_API_KEY" https://your-host/mcp
+curl -H "X-DevFlow-Key: $MCP_API_KEY"        https://your-host/mcp   # same thing
+```
+
+Both headers are accepted, and the check applies to `GET /mcp` (the SSE
+session — every tool, every flow), `POST /mcp/message`, `POST /flows`,
+`POST /arkg/ingest-component`, `POST /architecture`, `DELETE /flows/:id` and
+`POST /v1/traces`. It is *additional* to the extension-`Origin` rule those write
+routes already have, not a replacement: a caller with the key but without an
+extension `Origin` still gets a 403.
+
+`GET /health` is deliberately open, so an uptime probe or a container health
+check does not need the deployment's secret to ask whether the process is up. It
+reports `"auth":"api-key"` or `"auth":"none"` — which is how you check, from
+outside, that the deployment you just rolled is the authenticated one.
+
+**If `MCP_API_KEY` is unset the check is off**, the server says so on stderr on
+every start, and anything that can reach the port can read every flow and post
+its own. That is the weaker default, kept for one release so an existing
+`MCP_MODE=remote` command does not turn into a silent hard failure; do not run a
+public deployment without the key. Local mode ignores the variable entirely —
+the extension has no way to know its value, and the boundary there is loopback
+plus `Origin`.
+
+Bodies are not redacted (see **Privacy** above), so a remote deployment is
+single-tenant by construction: everyone with the key sees everyone's
+recordings. Put it behind TLS — the key is a bearer token and travels in a
+header.
+
+### Docker
+
+The image is built from this directory, and `core.js` — the bundle of
+`src/core/` that `server.js` imports — is a build artifact rather than a file in
+git, so build it first from the repository root:
+
+```sh
+npm run build:mcp                       # writes mcp-server/core.js
+docker build -t devflow-server mcp-server
+docker run -p 8080:8080 \
+  -e MCP_API_KEY="$(openssl rand -hex 32)" \
+  -v devflow-flows:/data \
+  devflow-server
+curl -s localhost:8080/health           # {"ok":true,...,"mode":"remote","auth":"api-key"}
+```
+
+Skipping the first command fails the build at the `COPY` line rather than
+producing an image that crashes on start — which is what the image used to do,
+since it copied `server.js` alone and `node server.js` threw
+`ERR_MODULE_NOT_FOUND` on `./core.js` before binding a port.
+
+Recordings live on the `/data` volume (`DEVFLOW_DIR`), not in the image. The key
+is passed at run time on purpose: one baked into an image is not a key.
+
+`fly.toml` deploys the same image (`fly launch --dockerfile mcp-server/Dockerfile`,
+then `fly secrets set MCP_API_KEY=…`).
 
 ## Licence
 

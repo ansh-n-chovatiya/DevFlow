@@ -30,7 +30,7 @@ import { applyPending } from '../features/settings/pending.js';
 import { isMachineKey } from '../features/settings/fields.js';
 import { deliverMachineSettings } from '../features/mcp/machine.js';
 import type { RecordingSettings } from '../features/settings/fields.js';
-import { shotPatch, sweep as sweepShots, withoutImages } from '../features/flows/shots.js';
+import { hydrate, shotPatch, sweep as sweepShots, withoutImages } from '../features/flows/shots.js';
 import { CAPTURE_TAB_CHANGED, captureVisibleTab, sendToTab } from '../chrome/tabs.js';
 import { fetchText } from '../chrome/fetch.js';
 import { openPopup, paintAction as paint } from '../chrome/action.js';
@@ -566,6 +566,26 @@ async function writeCapturedStep(
   let screenshot: string | null = null;
   let screenshotOriginal: string | null = null;
 
+  /*
+   * The one field this step's element carries that names a box worth closing
+   * before anyone else sees it — a password input's own bounding box, in the
+   * same coordinate space `elementBox` is in. `content/index.ts` already masks
+   * this field's *value* in the step JSON (`el.type === 'password'`); this is
+   * the same field's pixels, redacted the same way `annotateScreenshot`'s
+   * `passwordBoxes` was built to take (`annotator.ts`).
+   *
+   * A zero-area box (an element with `display:none`, or no box at all) is left
+   * for `annotateScreenshot`'s own filter to drop — this only decides *whether*
+   * a password field was in play, for `screenshotOriginal` below, not whether
+   * its box is worth drawing.
+   */
+  const passwordRedacted =
+    step.element?.type === 'password' &&
+    !!elementBox &&
+    elementBox.width > 0 &&
+    elementBox.height > 0;
+  const passwordBoxes = passwordRedacted ? [elementBox] : undefined;
+
   if (dataUrl) {
     screenshot = await annotateScreenshot(
       dataUrl,
@@ -574,12 +594,20 @@ async function writeCapturedStep(
       recording['screenshots.quality'],
       recording['annotation.stroke'],
       scrollDelta,
+      passwordBoxes,
     );
     // Only when annotating changed the image — otherwise the two are identical
     // and every capture rewrites both. Readers resolve null as `?? screenshot`.
     // Compared, not inferred from `elementBox`: the annotator also returns the
     // source unchanged when it cannot get a canvas.
-    screenshotOriginal = screenshot === dataUrl ? null : dataUrl;
+    //
+    // A password box redacted for this step is the one case that overrides the
+    // comparison: `screenshot` and `dataUrl` still differ, but `dataUrl` is the
+    // frame with the field's pixels intact, and storing it as "the original"
+    // anywhere is exactly the leak the redaction exists to close. Nulled here
+    // rather than left for a reader to resolve — there is no honest fallback
+    // value for it to resolve to.
+    screenshotOriginal = passwordRedacted ? null : screenshot === dataUrl ? null : dataUrl;
   }
 
   /*
@@ -1979,16 +2007,45 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
        * a recording captured, and this is not capture. Loaded per message for
        * the same reason everything else here is.
        */
-      loadSettings()
-        .then((settings) =>
-          annotateScreenshot(
+      Promise.all([loadSettings(), getLocal('recordedSteps')])
+        .then(async ([settings, stored]) => {
+          /*
+           * The message carries only the image and the highlight box — nothing
+           * that names which step it came from, and adding that is a message-
+           * shape change this unit does not own (`shared/messages.ts`). The
+           * screenshot string itself is that identifier in practice: it is a
+           * freshly re-encoded JPEG unique to one step's capture, so the step
+           * whose *current* `screenshot` matches it byte-for-byte is the one
+           * being recoloured. `recordedSteps` itself carries no image — see
+           * `withoutImages` — so the steps are hydrated first, the same way
+           * `GET_STEPS` reads them.
+           *
+           * Not found — an import, a step whose image lives only inline in an
+           * archived flow the worker never loaded, or a step this lookup missed
+           * some other way — means no `passwordBoxes` go in, exactly the
+           * behaviour this call had before redaction existed. It never means a
+           * password field this step recorded gets un-redacted: the source
+           * image itself already carries the block baked into its pixels from
+           * capture time (see `writeCapturedStep`), and a second highlight pass
+           * paints over that, not instead of it.
+           */
+          const stepsRaw = stored.ok ? (stored.value.recordedSteps ?? []) : [];
+          const steps = await hydrate(stepsRaw);
+          const owner = steps.find((candidate) => candidate.screenshot === screenshot);
+          const passwordBoxes =
+            owner?.element?.type === 'password' && owner.highlightBox
+              ? [owner.highlightBox]
+              : undefined;
+          return annotateScreenshot(
             screenshot,
             box,
             dpr || 1,
             settings['screenshots.quality'],
             settings['annotation.stroke'],
-          ),
-        )
+            undefined,
+            passwordBoxes,
+          );
+        })
         .then((annotated) => sendResponse({ screenshot: annotated }))
         .catch(() => sendResponse({ screenshot: null }));
       return true;

@@ -42,8 +42,12 @@
  *   - **Lowercase `devflow`.** `~/.devflow`, `devflow-server` and
  *     `devflow/settings-1` are identifiers a shipped, installed thing already
  *     answers to; renaming them would break every existing install for a word
- *     no user reads as a brand. The `DevFlow` rule is case-sensitive on
- *     purpose, and that is a real hole: `Devflow` in a sentence would pass.
+ *     no user reads as a brand. Matching is now case-*insensitive* on the
+ *     banned strings themselves — `flowsnap`, `FLOWSNAP` and `react SOURCE`
+ *     are all caught the same as their canonical spellings — but it still
+ *     cannot touch these identifiers, because none of them ever contains the
+ *     text being matched in the first place; no amount of folding case finds
+ *     a string that is not there.
  *   - **An image, an icon or a screenshot** that has the old name drawn in it.
  *
  * So a green run means "no banned string is written literally in shipped text".
@@ -89,7 +93,27 @@ const EXEMPT = new Map([
   ['rst:settings', ['src/features/settings/migrate.ts']],
 ]);
 
-/** The former product name, banned in text a person reads. Case-sensitive. */
+/**
+ * Lines where `React Source` is not the other product's name at all, but
+ * this codebase's *own* compound noun — `source` is core DevFlow vocabulary
+ * (CONTRACTS §4.1: "a source is the file and line a component was written
+ * in"), and these two section-header comments are naming a pass that
+ * resolves or attributes one. Case-sensitive matching told the two apart for
+ * free, because the banned name is Title Case (`React Source`) and this
+ * codebase's own phrase is not (`React source`); matching case-insensitively
+ * to catch real evasions (`REACT SOURCE`, `react source` used as the brand)
+ * needs these two named explicitly instead, the same way `check-vocab.mjs`'s
+ * `NOT_OURS` exempts the inspected page's own "session".
+ *
+ * **An entry here is a claim that the phrase is this codebase's own, not a
+ * debt** — unlike `EXEMPT`, above, which is a debt this pass does not own.
+ */
+const NOT_BANNED = [
+  { file: 'src/background/index.ts', line: /React source resolution/ },
+  { file: 'src/shared/constants.ts', line: /React source attribution/ },
+];
+
+/** The former product name, banned in text a person reads. Case-insensitive. */
 const FORMER = 'FlowSnap';
 
 /**
@@ -109,12 +133,20 @@ const FORMER = 'FlowSnap';
  */
 const PENDING = [];
 
-/** Every occurrence of `needle` in `text`, as `{ line, source }`. */
+/**
+ * Every occurrence of `needle` in `text`, as `{ line, source }` — matched
+ * case-*insensitively*, so `FlowSnap`, `flowsnap` and `FLOWSNAP` are all the
+ * same violation. A brand name is not an identifier a person types carefully;
+ * it is a word a person reads, and a reader does not see the difference
+ * between "the recorder was called Flowsnap" and "…was called FlowSnap" —
+ * only the gate did, before this.
+ */
 function hits(text, needle) {
   const found = [];
+  const target = needle.toLowerCase();
 
   text.split('\n').forEach((line, index) => {
-    if (line.includes(needle))
+    if (line.toLowerCase().includes(target))
       found.push({ line: index + 1, source: line.trim() });
   });
 
@@ -138,6 +170,8 @@ for (const file of files) {
     if (EXEMPT.get(needle)?.includes(file)) continue;
 
     for (const hit of hits(raw, needle)) {
+      if (NOT_BANNED.some((entry) => entry.file === file && entry.line.test(hit.source))) continue;
+
       console.error(`${file}:${hit.line}  ${needle} — ${why}`);
       console.error(`    ${hit.source}`);
       failed++;

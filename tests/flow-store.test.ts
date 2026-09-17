@@ -16,7 +16,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deleteFlow,
   listFlows,
@@ -26,6 +26,8 @@ import {
   updateFlowSteps,
   writeCurrent,
 } from '../src/features/flows/store.js';
+// The whole module as a type, for the second instance a second entry point has.
+import type * as StoreModule from '../src/features/flows/store.js';
 import { withoutImages } from '../src/features/flows/shots.js';
 import { bytesInUse, getAllLocal } from '../src/chrome/storage.js';
 import { deriveLibraryView } from '../src/ui/viewer/library-view.js';
@@ -45,6 +47,16 @@ interface Stub {
   /** Return a message to refuse `getBytesInUse`. */
   failBytes: string | null;
   bytes: number;
+  /**
+   * Return a promise to park this read on until it resolves.
+   *
+   * What the read answers with is snapshotted when it is made, not when it is
+   * delivered — which is the whole of a stale-snapshot race, and the only way
+   * to force one at a chosen moment rather than hope for it.
+   */
+  delayGet: ((keys: string[]) => Promise<void> | null) | null;
+  /** Every read of the index, in order, so a test can see who got that far. */
+  indexReads: number;
 }
 
 let stub: Stub;
@@ -74,12 +86,15 @@ function installChrome(initial: Record<string, unknown> = {}): void {
     failRemove: null,
     failBytes: null,
     bytes: 4096,
+    delayGet: null,
+    indexReads: 0,
   };
 
   const local = {
     get(keys: string | string[] | null, done: (items: Record<string, unknown>) => void) {
       const list = keyList(keys);
       const refusal = stub.failGet?.(list) ?? null;
+      if (list.includes('savedFlowsMeta')) stub.indexReads += 1;
 
       const picked: Record<string, unknown> = {};
       if (!refusal) {
@@ -87,7 +102,11 @@ function installChrome(initial: Record<string, unknown> = {}): void {
           if (key in stub.store) picked[key] = structuredClone(stub.store[key]);
         }
       }
-      withError(refusal, () => done(picked));
+      const deliver = () => withError(refusal, () => done(picked));
+
+      const parked = stub.delayGet?.(list) ?? null;
+      if (parked) void parked.then(deliver);
+      else deliver();
     },
     set(items: Record<string, unknown>, done: () => void) {
       const refusal = stub.failSet?.(Object.keys(items)) ?? null;
@@ -426,6 +445,173 @@ describe('concurrent index writes', () => {
 
     expect(flows.value.find((flow) => flow.id === 'flow_1')?.stepCount).toBe(4);
     expect(flows.value.find((flow) => flow.id === 'flow_2')?.name).toBe('Search v2');
+  });
+});
+
+// ── Bug 6, the other half: two index writes from two module instances ────────
+
+/**
+ * The same race, from the pair of callers the promise chain cannot reach.
+ *
+ * `background.js`, `popup.js` and `viewer.js` are separate Vite entry points,
+ * so each holds its own copy of the store and its own `indexQueue`. Two viewer
+ * tabs open at once — an ordinary way to browse a library — is therefore two
+ * chains that know nothing of each other, and the "silently reverted" defect
+ * the chain closes reappears whole. `vi.resetModules()` plus a second dynamic
+ * import is what a second entry point looks like from here: a module instance
+ * with its own state over the same storage.
+ *
+ * The lock is Web Locks, which the browser shares across every page and the
+ * worker of one origin, so the stub for it is shared by the two instances in
+ * exactly the way the real one is.
+ */
+describe('concurrent index writes across module instances', () => {
+  const nativeNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+
+  /** One lock manager for every instance, as one origin has one. */
+  function installSharedLocks(): void {
+    const chains = new Map<string, Promise<unknown>>();
+    const locks = {
+      request<T>(name: string, callback: () => Promise<T>): Promise<T> {
+        const prior = chains.get(name) ?? Promise.resolve();
+        const run = prior.then(() => callback());
+        // A rejected critical section must not wedge the lock, which is the
+        // real API's behaviour too.
+        chains.set(
+          name,
+          run.then(
+            () => undefined,
+            () => undefined,
+          ),
+        );
+        return run;
+      },
+    };
+
+    Object.defineProperty(globalThis, 'navigator', { value: { locks }, configurable: true });
+  }
+
+  /** A context with no Web Locks at all — the fallback, and the control below. */
+  function installNoLocks(): void {
+    Object.defineProperty(globalThis, 'navigator', { value: {}, configurable: true });
+  }
+
+  /** A store instance of its own, as a second entry point has. */
+  async function separateInstance(): Promise<typeof StoreModule> {
+    vi.resetModules();
+    return import('../src/features/flows/store.js');
+  }
+
+  /** Park the first index read, so a caller can be held inside its own write. */
+  function holdFirstIndexRead(): () => void {
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    let parked = false;
+    stub.delayGet = (keys) => {
+      if (parked || !keys.includes('savedFlowsMeta')) return null;
+      parked = true;
+      return held;
+    };
+
+    return () => release();
+  }
+
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  function names(flows: FlowMeta[]): Record<string, string> {
+    return Object.fromEntries(flows.map((flow) => [flow.id, flow.name]));
+  }
+
+  beforeEach(() => {
+    stub.store.savedFlowsMeta = [meta(), meta({ id: 'flow_2', name: 'Search' })];
+  });
+
+  afterEach(() => {
+    if (nativeNavigator) Object.defineProperty(globalThis, 'navigator', nativeNavigator);
+    else delete (globalThis as { navigator?: unknown }).navigator;
+    vi.resetModules();
+  });
+
+  it('does not let one tab revert a rename made in another', async () => {
+    installSharedLocks();
+
+    const tabA = await separateInstance();
+    const tabB = await separateInstance();
+    const release = holdFirstIndexRead();
+
+    const renamedA = tabA.renameFlow('flow_1', 'Checkout — mobile');
+    await tick();
+    expect(stub.indexReads).toBe(1);
+
+    const renamedB = tabB.renameFlow('flow_2', 'Search v2');
+    await tick();
+    // The point of the whole unit: tab B has not read the index yet, so it
+    // cannot be holding the snapshot tab A is about to invalidate. Asserting on
+    // the read rather than on the result is deliberate — a result that happens
+    // to survive says nothing about whether the two were ever serialised.
+    expect(stub.indexReads).toBe(1);
+
+    release();
+    expect((await renamedA).ok).toBe(true);
+    expect((await renamedB).ok).toBe(true);
+
+    const flows = await listFlows();
+    expect(flows.ok).toBe(true);
+    if (!flows.ok) return;
+
+    expect(names(flows.value)).toEqual({ flow_1: 'Checkout — mobile', flow_2: 'Search v2' });
+  });
+
+  it('serialises two writes from one instance through the lock as well', async () => {
+    // The in-instance chain and the lock are two mechanisms over one write, and
+    // the way that goes wrong is a deadlock rather than a lost edit: a queue
+    // entry waiting on a lock the entry ahead of it never released.
+    installSharedLocks();
+    const tab = await separateInstance();
+
+    await Promise.all([
+      tab.renameFlow('flow_1', 'Checkout — mobile'),
+      tab.renameFlow('flow_2', 'Search v2'),
+    ]);
+
+    const flows = await listFlows();
+    expect(flows.ok).toBe(true);
+    if (!flows.ok) return;
+
+    expect(names(flows.value)).toEqual({ flow_1: 'Checkout — mobile', flow_2: 'Search v2' });
+  });
+
+  it('reproduces the revert when the instances share no lock, which is the control', async () => {
+    // Without this the test above proves nothing: an interleaving that never
+    // actually collides passes whether the lock is there or not. Here the two
+    // instances fall back to their own chains — which is also what an old
+    // runtime with no Web Locks gets — and the defect §3.4 describes appears.
+    installNoLocks();
+
+    const tabA = await separateInstance();
+    const tabB = await separateInstance();
+    const release = holdFirstIndexRead();
+
+    const renamedA = tabA.renameFlow('flow_1', 'Checkout — mobile');
+    await tick();
+    const renamedB = tabB.renameFlow('flow_2', 'Search v2');
+    await tick();
+    // Two reads of one snapshot, which is the shape of the bug.
+    expect(stub.indexReads).toBe(2);
+
+    release();
+    expect((await renamedA).ok).toBe(true);
+    expect((await renamedB).ok).toBe(true);
+
+    const flows = await listFlows();
+    expect(flows.ok).toBe(true);
+    if (!flows.ok) return;
+
+    // Both writes reported success; one of them is simply gone.
+    expect(names(flows.value)).toEqual({ flow_1: 'Checkout — mobile', flow_2: 'Search' });
   });
 });
 

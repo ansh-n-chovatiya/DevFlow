@@ -105,6 +105,60 @@ function writeIndex(flows: FlowMeta[]): Promise<Result<void>> {
 let indexQueue: Promise<unknown> = Promise.resolve();
 
 /**
+ * The name the index lock is taken under.
+ *
+ * Web Locks are scoped to an origin, and every surface that writes the index —
+ * the popup, each viewer tab, the service worker — is a document or a worker on
+ * `chrome-extension://<id>`, so one name is one lock for all of them.
+ */
+const INDEX_LOCK = 'devflow.savedFlowsMeta';
+
+/** The whole of the Web Locks API this uses, so nothing depends on the rest. */
+interface IndexLocks {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+}
+
+/**
+ * `navigator.locks`, when the context running this has one.
+ *
+ * Read per call rather than captured at module scope: the service worker is
+ * torn down and rebuilt under this module, and a Node test importing the store
+ * has no `navigator` at all until one is installed.
+ */
+function crossContextLock(): IndexLocks | null {
+  const locks = (globalThis as { navigator?: { locks?: unknown } }).navigator?.locks;
+  return typeof (locks as IndexLocks | undefined)?.request === 'function'
+    ? (locks as IndexLocks)
+    : null;
+}
+
+/**
+ * Run the read-modify-write with nothing else in the extension inside it.
+ *
+ * The promise chain below only orders the callers that share a module instance,
+ * and `background.js`, `popup.js` and `viewer.js` are separate Vite entry
+ * points with a copy of this module each. Two viewer tabs open at once — an
+ * ordinary way to browse a library — are two chains that know nothing of one
+ * another, which is the same stale-snapshot revert the chain exists to close,
+ * reached from a different pair of callers.
+ *
+ * Web Locks is the cross-context half because it is the only mutual exclusion
+ * the platform actually offers here: `chrome.storage` has no compare-and-swap,
+ * so a lock built out of it is a read-then-write with the very race it is meant
+ * to remove. A lock held by a page that is closed, or by a worker Chrome kills
+ * mid-write, is released by the browser — which a lock key left in storage
+ * would not be.
+ *
+ * Absent (a Node import, an old runtime), the in-instance chain stands alone
+ * and behaves exactly as it did before. That is a weaker guarantee, not a
+ * broken one: it is the guarantee this had everywhere until now.
+ */
+function exclusively(critical: () => Promise<Result<void>>): Promise<Result<void>> {
+  const locks = crossContextLock();
+  return locks ? locks.request(INDEX_LOCK, critical) : critical();
+}
+
+/**
  * Apply a change to `savedFlowsMeta` — one at a time, against a fresh copy.
  *
  * The index is a single key rewritten whole, and the paths that rewrite it are
@@ -116,16 +170,23 @@ let indexQueue: Promise<unknown> = Promise.resolve();
  * Every mutation here used to be that unguarded read-modify-write.
  *
  * So the caller no longer supplies a list, it supplies a change: a function of
- * whatever the index holds at the moment the write is made. The queue is what
- * guarantees nothing lands between that read and that write.
+ * whatever the index holds at the moment the write is made. The queue and the
+ * lock are what guarantee nothing lands between that read and that write — the
+ * queue for this module instance, the lock for every other one.
+ *
+ * Only the read-modify-write is inside the lock. The thumbnail decode that
+ * makes the window wide happens in the caller, before the change is handed
+ * over, so no page ever waits on another page's JPEG.
  */
 function mutateIndex(mutate: (flows: FlowMeta[]) => FlowMeta[]): Promise<Result<void>> {
-  const run = indexQueue.then(async (): Promise<Result<void>> => {
-    const flows = await listFlows();
-    if (!flows.ok) return flows;
+  const run = indexQueue.then(() =>
+    exclusively(async (): Promise<Result<void>> => {
+      const flows = await listFlows();
+      if (!flows.ok) return flows;
 
-    return writeIndex(mutate(flows.value));
-  });
+      return writeIndex(mutate(flows.value));
+    }),
+  );
 
   // The chain must survive a rejection, or one failed write blocks every index
   // change for the life of the page.

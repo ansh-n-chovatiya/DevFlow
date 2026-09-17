@@ -5,7 +5,10 @@
 **Record what your app actually did in the browser, and hand it to Claude Code.**
 
 Every step carries the component that rendered it, resolved through your own
-source maps to a real file and line — even on a minified production build.
+source maps to a real file and line — including minified production builds of
+React and Vue. [What each framework gives up in production](#what-it-can-see-by-framework)
+is a table below, and where the trail is gone DevFlow says so rather than
+guessing.
 
 <br>
 
@@ -181,7 +184,8 @@ throughout.
 ## Your data
 
 - **Nothing leaves your browser until you press Send.** Recording writes to local storage only.
-- **Send goes to your own machine** — a local server on port 7734, not the internet. Recordings live in `~/.devflow/flows`.
+- **Send goes to your own machine by default** — a local server on port 7734, not the internet. Recordings live in `~/.devflow/flows`.
+- **The one exception is a remote server, and only if you set one up.** The MCP server has an opt-in `MCP_MODE=remote` mode that you can host, and the **MCP server URL** setting can be pointed at it. Then a flow you send does go over the internet, with bodies unredacted, to whoever can reach that host — so set `MCP_API_KEY` and put it behind TLS. Nothing switches this on for you; [the server's README](mcp-server/README.md#remote-mode) has the full terms.
 - **Passwords and credentials are removed** — password fields, authorization headers, cookies, credential-bearing URL parameters.
 - **Response bodies are kept as they arrived.** If your API returns a customer's email address, that email is in the recording. Worth knowing before you share a flow file.
 - **The send dialog shows what is about to go**, and you can switch parts off.

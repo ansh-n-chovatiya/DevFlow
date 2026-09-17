@@ -27,6 +27,7 @@ import http from 'node:http';
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 /*
  * The renderer, the body compaction and the source formatting all come from
@@ -120,6 +121,25 @@ if (process.argv.length > 2) {
 
 const { version: VERSION } = createRequire(import.meta.url)('./package.json');
 const REMOTE = process.env.MCP_MODE === 'remote';
+/*
+ * The shared secret a remote deployment authenticates its callers with.
+ *
+ * Local mode has a trust boundary it can actually enforce: the port is on
+ * loopback and every write carries an extension `Origin`. Remote mode has
+ * neither — it binds `0.0.0.0`, so `extensionOrigin` alone stops a browser page
+ * and nothing else, since anyone able to reach the URL can set whatever header
+ * they like. The SSE session at `GET /mcp` is worse again: it is the whole tool
+ * surface, and it was not behind any check at all.
+ *
+ * Unset, the check is off and the server says so on stderr on every start, in
+ * the imperative. That is the weaker default, and it is the honest one to ship
+ * first: `MCP_MODE=remote npx devflow-server` is a documented command people
+ * already run, and turning it into an immediate hard failure with no warning
+ * release is how a fix gets reverted rather than adopted. The warning names the
+ * variable, so the step from "insecure but running" to "secured" is one `-e`
+ * away. Both READMEs now set the key in every remote example.
+ */
+const API_KEY = process.env.MCP_API_KEY ?? '';
 const HOME = process.env.DEVFLOW_DIR
   ? path.resolve(process.env.DEVFLOW_DIR)
   : path.join(os.homedir(), '.devflow');
@@ -1873,6 +1893,60 @@ function extensionOrigin(req) {
 }
 
 /**
+ * The key a caller presented, from either header a client is likely to send.
+ *
+ * `Authorization: Bearer …` is what an MCP client configured with credentials
+ * sends; `X-DevFlow-Key` is what a `curl` or a proxy can set without the word
+ * "Bearer" getting in the way. Accepting both costs one branch and saves the
+ * class of failure where the key is right and the header was not.
+ */
+function presentedKey(req) {
+  const bearer = req.headers.authorization;
+  if (typeof bearer === 'string' && /^Bearer /i.test(bearer)) return bearer.slice(7).trim();
+  const direct = req.headers['x-devflow-key'];
+  if (typeof direct === 'string') return direct.trim();
+  return '';
+}
+
+/**
+ * Whether this caller may be served at all, on a server reachable over a network.
+ *
+ * Additive to `extensionOrigin`, never a replacement: the Origin rule says the
+ * request came from the extension rather than a page, and this says the caller
+ * knows the deployment's secret. Locally there is no secret to know — the
+ * boundary there is loopback plus Origin — so this is `true` and `MCP_API_KEY`
+ * is ignored even if it is set, rather than quietly adding a second thing that
+ * has to be right before a recording can be sent.
+ *
+ * The comparison is `timingSafeEqual` over SHA-256 digests rather than the raw
+ * bytes: digests are always the same length, so a wrong key of a different
+ * length is refused by the same code path and in the same time as a wrong key
+ * of the right length, and no length is leaked by the shape of the failure.
+ */
+function remoteKeyOk(req) {
+  if (!REMOTE || !API_KEY) return true;
+  const presented = presentedKey(req);
+  if (!presented) return false;
+  return crypto.timingSafeEqual(
+    crypto.createHash('sha256').update(presented).digest(),
+    crypto.createHash('sha256').update(API_KEY).digest(),
+  );
+}
+
+/** The one refusal for a missing or wrong key, so every route words it identically. */
+function refuseKey(res) {
+  res.writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' });
+  res.end(
+    JSON.stringify({
+      error:
+        'This DevFlow server runs in remote mode and requires an API key. Send it as ' +
+        '`Authorization: Bearer <key>` or `X-DevFlow-Key: <key>`, matching the MCP_API_KEY ' +
+        'the server was started with.',
+    }),
+  );
+}
+
+/**
  * A whole request body, as text, refused past `limit` bytes.
  *
  * The buffers are kept and decoded **once**, at the end. Appending each chunk to
@@ -1902,7 +1976,10 @@ async function readBody(req, limit) {
 const httpServer = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // `Authorization`/`X-DevFlow-Key` are named here because a preflight that
+  // does not allow them fails in the browser *before* the request is made —
+  // the key would look wrong when it was never sent.
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-DevFlow-Key');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(200);
@@ -1918,13 +1995,27 @@ const httpServer = http.createServer(async (req, res) => {
         service: 'devflow-mcp',
         version: VERSION,
         mode: REMOTE ? 'remote' : 'local',
+        // Named so an operator can see, from outside, whether the deployment
+        // they just rolled is the authenticated one. A container that starts is
+        // not the same as a container that is safe to point at the internet.
+        auth: REMOTE ? (API_KEY ? 'api-key' : 'none') : 'local',
         flowsDir: FLOWS_DIR,
       }),
     );
     return;
   }
 
+  /*
+   * The SSE session is the entire tool surface — every flow, every body, every
+   * screenshot — so it is the one route where "reachable" must not mean
+   * "entitled". Checked before the transport is constructed: a refused caller
+   * should never get a session id.
+   */
   if (REMOTE && req.method === 'GET' && req.url === '/mcp') {
+    if (!remoteKeyOk(req)) {
+      refuseKey(res);
+      return;
+    }
     const transport = new SSEServerTransport('/mcp/message', res);
     sseTransports[transport.sessionId] = transport;
     res.on('close', () => delete sseTransports[transport.sessionId]);
@@ -1933,6 +2024,13 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   if (REMOTE && req.method === 'POST' && req.url?.startsWith('/mcp/message')) {
+    // Keyed as well as the stream it belongs to. A session id is a capability
+    // once it exists, and it travels in a query string — through proxy logs,
+    // browser history and anywhere else a URL ends up.
+    if (!remoteKeyOk(req)) {
+      refuseKey(res);
+      return;
+    }
     const sessionId = new URL(req.url, 'http://localhost').searchParams.get('sessionId');
     const transport = sseTransports[sessionId];
     if (!transport) {
@@ -1955,6 +2053,10 @@ const httpServer = http.createServer(async (req, res) => {
    * something.
    */
   if (req.method === 'DELETE' && req.url?.startsWith('/flows/')) {
+    if (!remoteKeyOk(req)) {
+      refuseKey(res);
+      return;
+    }
     if (!extensionOrigin(req)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Flows may only be deleted by the DevFlow extension.' }));
@@ -2180,6 +2282,10 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/flows') {
+    if (!remoteKeyOk(req)) {
+      refuseKey(res);
+      return;
+    }
     if (!extensionOrigin(req)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Flows may only be posted by the DevFlow extension.' }));
@@ -2412,6 +2518,17 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/v1/traces') {
+    /*
+     * Span ingest has no `Origin` rule — the sender is an application's OTLP
+     * exporter, not the extension — so on a network-reachable server the key is
+     * the only thing standing between the graph and anyone who can POST to it.
+     * Checked ahead of the "is ingest even on" answer, so a refused caller
+     * cannot use this route to learn the deployment's configuration.
+     */
+    if (!remoteKeyOk(req)) {
+      refuseKey(res);
+      return;
+    }
     if (!otelmod || !otelmod.OTEL_ENABLED) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(
@@ -2486,6 +2603,10 @@ const httpServer = http.createServer(async (req, res) => {
    * guard against rather than a guard to get right.
    */
   if (req.method === 'POST' && req.url === '/arkg/ingest-component') {
+    if (!remoteKeyOk(req)) {
+      refuseKey(res);
+      return;
+    }
     if (!extensionOrigin(req)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(
@@ -2589,6 +2710,10 @@ const httpServer = http.createServer(async (req, res) => {
    * somebody exercised, and `get_anomalies` reads those counts.
    */
   if (req.method === 'POST' && req.url === '/architecture') {
+    if (!remoteKeyOk(req)) {
+      refuseKey(res);
+      return;
+    }
     if (!extensionOrigin(req)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(
@@ -2730,6 +2855,19 @@ httpServer.on('error', (error) => {
 
 httpServer.listen(HTTP_PORT, REMOTE ? '0.0.0.0' : '127.0.0.1', () => {
   log(`listening on ${HTTP_PORT} (${REMOTE ? 'remote/SSE' : 'local/stdio'}) — flows in ${FLOWS_DIR}`);
+  /*
+   * Said on every start, not once at install: a deployment that is open to the
+   * internet should have to read this line in its logs every time it rolls, and
+   * an operator scanning for why a connector stopped working should find the
+   * variable's name here rather than in a README they have not opened.
+   */
+  if (REMOTE && !API_KEY) {
+    log(
+      'WARNING: no MCP_API_KEY is set. This server is bound to 0.0.0.0 with no authentication — ' +
+        'anything that can reach this port can read every recorded flow and post its own. ' +
+        'Set MCP_API_KEY to a long random string and send it as `Authorization: Bearer <key>`.',
+    );
+  }
 });
 
 // ── The drill-down tools ───────────────────────────────────────────────────
