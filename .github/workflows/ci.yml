@@ -109,7 +109,7 @@ jobs:
       - name: Package
         run: node scripts/package.mjs --sha ${{ github.sha }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: devflow-${{ github.sha }}
           path: releases/*.zip
