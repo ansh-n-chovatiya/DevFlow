@@ -176,7 +176,7 @@ jobs:
       # guessed. Every other `actions/*` step in this file stays tag-pinned on
       # purpose; that's a separate, lower-risk convention this line is not
       # meant to unify with.
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         if: env.TAG_NAME != ''
         with:
           tag_name: ${{ env.TAG_NAME }}
